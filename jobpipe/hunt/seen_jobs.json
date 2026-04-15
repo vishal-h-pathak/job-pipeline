@@ -1,0 +1,623 @@
+{
+  "04f8f2814a61941f": {
+    "action": "disqualify",
+    "company": "Linus Health",
+    "location": "Boston",
+    "score": 2,
+    "source": "remoteok",
+    "tier": "disqualify",
+    "title": "Executive Assistant The CEO",
+    "url": "https://remoteOK.com/remote-jobs/remote-executive-assistant-the-ceo-linus-health-1131078"
+  },
+  "060764a6b2bdda48": {
+    "action": "notify",
+    "company": "CHEManager International",
+    "location": "Alameda, CA",
+    "notified": true,
+    "score": 10,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "E11 Bio",
+    "url": "https://us.trabajo.org/job-4112-490255a20fa723a575910d4a131760e0?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "0721a7185836b9bb": {
+    "action": "disqualify",
+    "company": "University of South Carolina School of Medicine",
+    "location": "Spartanburg, SC",
+    "score": 3,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Research Assistant Professor",
+    "url": "https://www.learn4good.com/jobs/spartanburg/south-carolina/healthcare/5000178087/e/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "0feed81b4ccfdef1": {
+    "action": "notify",
+    "company": "Intel Corporation",
+    "location": "Anywhere",
+    "notified": true,
+    "score": 10,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Senior Neuromorphic Processor Design Engineer",
+    "url": "https://earnbetter.com/app/job/01JG0XKJTHZTMM874BBMSDRVP5/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "10ebc01f1d71cc0d": {
+    "action": "disqualify",
+    "company": "Smartsheet",
+    "location": "Remote",
+    "score": 3,
+    "source": "remoteok",
+    "tier": "disqualify",
+    "title": "Senior Director Field Engineering",
+    "url": "https://remoteOK.com/remote-jobs/remote-senior-director-field-engineering-smartsheet-1131050"
+  },
+  "14822b552cd71274": {
+    "action": "notify",
+    "company": "Innatera",
+    "location": "Anywhere",
+    "notified": true,
+    "score": 9,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Staff Digital Design Engineer - CPU Architecture & RISC-V (S)",
+    "url": "https://weworkremotely.com/remote-jobs/innatera-staff-digital-design-engineer-cpu-architecture-risc-v-s?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "14d63a2e0775699a": {
+    "action": "notify",
+    "company": "Limitless",
+    "location": "Anywhere",
+    "notified": true,
+    "score": 9,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Researcher, Consciousness and Connectomics",
+    "url": "https://careervault.io/de/remote/limitless-44739/other/researcher-consciousness-and-connectomics-remote-5254863?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "18ff64e4492aed21": {
+    "action": "skip",
+    "company": "Escape Technologies",
+    "location": "Anywhere",
+    "score": 6,
+    "source": "serpapi",
+    "tier": 2,
+    "title": "Sales Engineer |  AI AppSec",
+    "url": "https://jobs.ashbyhq.com/escape/f46cccef-5b1f-49e4-b8c4-f42f79b8cadd?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "1f572d3a389440e5": {
+    "action": "disqualify",
+    "company": "University of South Carolina",
+    "location": "Richland, SC",
+    "score": 3,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Assistant Professor in Computational Neurolinguistics/Psycholinguistics",
+    "url": "https://www.indeed.com/viewjob?jk=d2ee1e3b2720e5ec&utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "1fa96ea9286e25a1": {
+    "action": "notify",
+    "company": "Lakera",
+    "location": "Anywhere",
+    "notified": true,
+    "score": 8,
+    "source": "serpapi",
+    "tier": 2,
+    "title": "Solutions Engineer (Atlanta, Georgia)",
+    "url": "https://www.lakera.ai/careers?ashby_jid=f067c681-12d8-4125-95c8-5f5ed0bdd565&utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "21ea23f05a977edd": {
+    "action": "disqualify",
+    "company": "University of South Carolina School of Medicine",
+    "location": "West Columbia, SC",
+    "score": 3,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Postdoctoral Fellow",
+    "url": "https://www.learn4good.com/jobs/west-columbia/south-carolina/healthcare/5000259442/e/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "223c2ce076669943": {
+    "action": "notify",
+    "company": "Dolby Laboratories",
+    "location": "Atlanta, GA",
+    "notified": true,
+    "score": 8,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Senior AI Neuroscience Researcher",
+    "url": "https://www.jobzmall.com/dolby-laboratories/job/senior-ai-neuroscience-researcher?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "27c32a364144cdd3": {
+    "action": "disqualify",
+    "company": "HHAeXchange",
+    "location": "United States",
+    "score": 2,
+    "source": "remoteok",
+    "tier": "disqualify",
+    "title": "Fraud Waste and Abuse Data Analyst",
+    "url": "https://remoteOK.com/remote-jobs/remote-fraud-waste-and-abuse-data-analyst-hhaexchange-1131012"
+  },
+  "28576cb2329dfb27": {
+    "action": "skip",
+    "company": "Stacksync",
+    "location": "Anywhere",
+    "score": 5,
+    "source": "serpapi",
+    "tier": 2,
+    "title": "Full-Cycle Forward Deployed Sales Engineer - The Closer of All Closers.",
+    "url": "https://www.ycombinator.com/companies/stacksync/jobs/bFNqI4U-full-cycle-forward-deployed-sales-engineer-the-closer-of-all-closers?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "2d9ef536b85aa495": {
+    "action": "notify",
+    "company": "Beacon Biosignals",
+    "location": "Anywhere",
+    "notified": true,
+    "score": 9,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "[Hiring] Neuroscientist, External Scientific Programs @Beacon Biosignals",
+    "url": "https://remotive.com/remote/jobs/data/neuroscientist-external-scientific-programs-3699473?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "3375ffd908f8602a": {
+    "action": "disqualify",
+    "company": "Gilder Search Group",
+    "location": "Arlington, VA (+1 other)",
+    "score": 3,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Tech Sales SDR AI Cybersecurity (Hybrid)",
+    "url": "https://www.talent.com/view?id=614420450187413785&utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "38f3dcd0eeed34e5": {
+    "action": "disqualify",
+    "company": "Portnox Access Layers Ltd.",
+    "location": "Anywhere",
+    "score": 3,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Director of Sales Engineering \u2014 Remote, Global Enablement",
+    "url": "https://www.talent.com/view?id=611145905182019242&utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "3ab1a8e34e67976d": {
+    "action": "notify",
+    "company": "Quiq",
+    "location": "Anywhere",
+    "notified": true,
+    "score": 7,
+    "source": "serpapi",
+    "tier": 2,
+    "title": "Senior Solutions Engineer, Enterprise AI & CX (US Remote)",
+    "url": "https://dailyremote.com/remote-job/senior-solutions-engineer-enterprise-ai-cx-us-remote-4857115?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "42cf025654df9259": {
+    "action": "disqualify",
+    "company": "Symmetry Systems",
+    "location": "Remote",
+    "score": 4,
+    "source": "remoteok",
+    "tier": "disqualify",
+    "title": "Associate Forward Deployed Engineer",
+    "url": "https://remoteOK.com/remote-jobs/remote-associate-forward-deployed-engineer-symmetry-systems-1130994"
+  },
+  "4b7cae2673073dfa": {
+    "action": "disqualify",
+    "company": "Cactus Communications",
+    "location": "Georgia",
+    "score": 3,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Editorial Reviewer & Neuroimaging and Computational Neuroscience",
+    "url": "https://www.jobleads.com/us/job/editorial-reviewer-neuroimaging-and-computational-neuroscience--georgia--e7d775b5f71e1585d6db9c702f6dedcba?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "5178077249ad2839": {
+    "action": "notify",
+    "company": "Intel",
+    "location": "Folsom, CA",
+    "notified": true,
+    "score": 9,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Physical Design Engineer - Neuromorphic Computing",
+    "url": "https://www.linkedin.com/jobs/view/physical-design-engineer-neuromorphic-computing-at-intel-4399118135?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "58eefcfa31158154": {
+    "action": "notify",
+    "company": "Axiomatic_AI",
+    "location": "Boston, KY",
+    "notified": true,
+    "score": 9,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "AI Research Scientist \u2013 Photonic & Neuromorphic Computing",
+    "url": "https://www.linkedin.com/jobs/view/ai-research-scientist-%E2%80%93-photonic-neuromorphic-computing-at-axiomatic-ai-4366876694?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "5d553208aec6ff50": {
+    "action": "notify",
+    "company": "Snowflake",
+    "location": "Menlo Park, CA",
+    "notified": true,
+    "score": 8,
+    "source": "serpapi",
+    "tier": 2,
+    "title": "Sales Engineer, Observe",
+    "url": "https://careers.snowflake.com/us/en/job/SNCOUS01C8BF126BF7473CB4C66D4A35C11524EXTERNALENUS86570858E42541449AEF8838CEFD18C3/Sales-Engineer-Observe?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "6020e64929be4a03": {
+    "action": "skip",
+    "company": "Accenture LLP",
+    "location": "Anywhere",
+    "score": 6,
+    "source": "serpapi",
+    "tier": 2,
+    "title": "Azure Pre Sales Engineer - Data & AI",
+    "url": "https://www.dice.com/job-detail/77fdeb77-5d8e-4905-95a9-70c2b05341a1?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "60e9b93cd705708e": {
+    "action": "disqualify",
+    "company": "Upwork",
+    "location": "Anywhere",
+    "score": 3,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "AI Engineer \u2013 Sales Intelligence & Personalized Outreach Engine (LLMs + Automation)",
+    "url": "https://www.upwork.com/freelance-jobs/apply/Engineer-Sales-Intelligence-Personalized-Outreach-Engine-LLMs-Automation_~022041525124319816868/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "747873840a66e20f": {
+    "action": "disqualify",
+    "company": "Sezzle",
+    "location": "Brazil",
+    "score": 2,
+    "source": "remoteok",
+    "tier": "disqualify",
+    "title": "Senior Security Infrastructure Engineer",
+    "url": "https://remoteOK.com/remote-jobs/remote-senior-security-infrastructure-engineer-sezzle-1131054"
+  },
+  "7663efe89faa36f1": {
+    "action": "notify",
+    "company": "Allen Institute for Brain Science",
+    "location": "Seattle, WA",
+    "notified": true,
+    "score": 9,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Scientist I - Connectomics",
+    "url": "https://career.io/job/scientist-i-connectomics-seattle-allen-institute-for-brain-c9dfa739c8a44bcc7c9ca0d1ea6a47b5?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "7f6f25eb85ccffa8": {
+    "action": "disqualify",
+    "company": "Proofpoint",
+    "location": "Washington (+1 other)",
+    "score": 4,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Principal Sales Engineer (SE) \u2013 AI Security Solutions",
+    "url": "https://www.talent.com/view?id=614358974414915865&utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "802a7e24c98dd123": {
+    "action": "disqualify",
+    "company": "Horizon3.ai",
+    "location": "Anywhere",
+    "score": 4,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Sales Engineer \u2013 Central",
+    "url": "https://www.remoterocketship.com/company/horizon3-ai/jobs/sales-engineer-central-united-states-remote/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "8320a8226562b24d": {
+    "action": "disqualify",
+    "company": "LogicMonitor",
+    "location": "Anywhere",
+    "score": 4,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Remote GSI Sales Engineer \u2014 AI-First Pre-Sales",
+    "url": "https://www.learn4good.com/jobs/online_remote/info_technology/5020361339/e/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "8cdd4b52dc30e50a": {
+    "action": "disqualify",
+    "company": "Carrier",
+    "location": "Anywhere",
+    "score": 3,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "[Remote] Regional Consulting Sales Engineer \u2013 ALC",
+    "url": "https://jobright.ai/jobs/info/69c58f88aa9a29199e80725b?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "93791382a56775d9": {
+    "action": "disqualify",
+    "company": "Eloquent AI",
+    "location": "Anywhere",
+    "score": 2,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Remote Sales Engineer - Scientific Markets Growth",
+    "url": "https://www.recruit.net/job/sales-engineer-scientific-markets-growth-jobs/D1260A4D52F0DFC0?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "97865b0eae24cebe": {
+    "action": "notify",
+    "company": "Second Renaissance",
+    "location": "Mission, KS",
+    "notified": true,
+    "score": 10,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Machine Learning Scientist",
+    "url": "https://talents.vaia.com/companies/second-renaissance/machine-learning-scientist-25340116/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "9afd2808a639bdec": {
+    "action": "disqualify",
+    "company": "Zintellect",
+    "location": "Adelphi, MD",
+    "score": 2,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Neuromorphic device development",
+    "url": "https://www.zintellect.com/Opportunity/Details/ARL-C-SEDD-300053?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "a21e900b7ad1151f": {
+    "action": "notify",
+    "company": "ClearCompany Talent Management Software",
+    "location": "Allen, TX",
+    "notified": true,
+    "score": 10,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Scientist I \u2013 Barcoded Connectomics",
+    "url": "https://talents.vaia.com/companies/clearcompany-talent-management-software/scientist-i-barcoded-connectomics-31745683/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "a45150eb731d3e53": {
+    "action": "disqualify",
+    "company": "Convergent Research",
+    "location": "Alameda, CA",
+    "score": 3,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Lead Light-Sheet Microscopist for Brain Connectomics",
+    "url": "https://jooble.org/jdp/-8175885989530924874?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "ab5f0c2c38e6bf9c": {
+    "action": "disqualify",
+    "company": "Digital.ai",
+    "location": "Remote, OR",
+    "score": 4,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Sales Engineer, Testing",
+    "url": "https://www.ziprecruiter.com/c/Digital.ai/Job/Sales-Engineer,-Testing/-in-Remote,OR?jid=568fcd9a78314c6f&utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "ac0665fe676f7b55": {
+    "action": "disqualify",
+    "company": "Koniku",
+    "location": "Anywhere",
+    "score": 4,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Lead Computational Neuroscientist",
+    "url": "https://www.ventureloop.com/jobdetail.php?jobid=2971807&utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "afeecc3c2865a227": {
+    "action": "disqualify",
+    "company": "\u57c3\u9ed8\u91cc\u5927\u5b66",
+    "location": "Atlanta, GA",
+    "score": 4,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Cognitive and Computational Sciences (Psychology)",
+    "url": "https://kdphd.com/job/cognitive-and-computational-sciences-psychology?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "b2d58bac1986bdcf": {
+    "action": "notify",
+    "company": "Convergent Research",
+    "location": "Alameda, CA",
+    "notified": true,
+    "score": 9,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "E11 Bio - Scientist, Tissue & Imaging Quality",
+    "url": "https://jobs.lever.co/convergentresearch/0ffc5537-3eb4-43b1-aa7e-c32da0db35de?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "b4c31229b0532cf4": {
+    "action": "disqualify",
+    "company": "Axiomatic-AI Inc.",
+    "location": "Anywhere",
+    "score": 6,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Remote AI Scientist: Photonic & Neuromorphic Computing",
+    "url": "https://jooble.org/jdp/8972459693637575877?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "b70b8ba64ae1b7b8": {
+    "action": "disqualify",
+    "company": "Anduril Industries",
+    "location": "Remote",
+    "score": 2,
+    "source": "remoteok",
+    "tier": "disqualify",
+    "title": "Senior Technical Sourcer Software",
+    "url": "https://remoteOK.com/remote-jobs/remote-senior-technical-sourcer-software-anduril-industries-1131039"
+  },
+  "b7a37753c5d934d8": {
+    "action": "skip",
+    "company": "Accenture",
+    "location": "Atlanta, GA",
+    "score": 4,
+    "source": "serpapi",
+    "tier": 2,
+    "title": "AI and Data Mid-Market Sales Engineer",
+    "url": "https://www.indeed.com/viewjob?jk=2c7bb2d20ffb1c61&utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "ba28b5365d691fb5": {
+    "action": "disqualify",
+    "company": "Convergent Research",
+    "location": "Alameda, CA",
+    "score": 8,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Machine Learning Scientist, Connectomics & Brain Mapping",
+    "url": "https://talents.vaia.com/companies/convergent-research/alameda/machine-learning-scientist-connectomics-brain-mapping-83118644/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "c06e1134acb95dab": {
+    "action": "disqualify",
+    "company": "Go Fractional",
+    "location": "United States",
+    "score": 5,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Founding Engineer (Full Time Role)",
+    "url": "https://www.gofractional.com/job/founding-engineer-cmn3ybjl?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "ce720505b0bdf84c": {
+    "action": "disqualify",
+    "company": "SupportFinity\u2122",
+    "location": "West Columbia, SC",
+    "score": 2,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Postdoctoral Fellow",
+    "url": "https://www.learn4good.com/jobs/west-columbia/south-carolina/healthcare/4995137452/e/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "d1dc941b8640aaa1": {
+    "action": "notify",
+    "company": "Intel",
+    "location": "Santa Clara, CA",
+    "notified": true,
+    "score": 10,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "AI Software Architect - Neuromorphic Computing",
+    "url": "https://www.ziprecruiter.com/c/Intel/Job/AI-Software-Architect-Neuromorphic-Computing/-in-Santa-Clara,CA?jid=7232e701b44debfd&utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "d547dad693a4629c": {
+    "action": "disqualify",
+    "company": "Huzzle",
+    "location": "Remote",
+    "score": 3,
+    "source": "remoteok",
+    "tier": "disqualify",
+    "title": "Senior Sales Development Representative",
+    "url": "https://remoteOK.com/remote-jobs/remote-senior-sales-development-representative-huzzle-1130989"
+  },
+  "d6c382518fd7046c": {
+    "action": "disqualify",
+    "company": "Overview",
+    "location": "Anywhere",
+    "score": 4,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Vision Sales Engineer (Monterrey) - Field-based (Travel locally for 60 to 80%)",
+    "url": "https://www.ycombinator.com/companies/overview/jobs/R74S5yW-vision-sales-engineer-monterrey-field-based-travel-locally-for-60-to-80?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "d7b62f82e6afca38": {
+    "action": "notify",
+    "company": "100 Intel Corporation",
+    "location": "Hillsboro, OR",
+    "notified": true,
+    "score": 9,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Physical Design Engineer - Neuromorphic Computing",
+    "url": "https://intel.wd1.myworkdayjobs.com/en-US/External/job/Physical-Design-Engineer---Neuromorphic-Computing_JR0282554?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "dce8ff85c87d7190": {
+    "action": "notify",
+    "company": "Radformation",
+    "location": "Remote",
+    "notified": true,
+    "score": 8,
+    "source": "remoteok",
+    "tier": 3,
+    "title": "Machine Learning Engineer",
+    "url": "https://remoteOK.com/remote-jobs/remote-machine-learning-engineer-radformation-1131082"
+  },
+  "de02c01fb967220d": {
+    "action": "skip",
+    "company": "lemlist",
+    "location": "Anywhere",
+    "score": 4,
+    "source": "serpapi",
+    "tier": 2,
+    "title": "Sales Engineer: AI-Driven Pre-Sales & Onboarding",
+    "url": "https://www.learn4good.com/jobs/online_remote/info_technology/4973534104/e/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "e05daa391af69513": {
+    "action": "notify",
+    "company": "100 Intel Corporation",
+    "location": "Hillsboro, OR",
+    "notified": true,
+    "score": 9,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Design Engineer - Neuromorphic Computing",
+    "url": "https://intel.wd1.myworkdayjobs.com/en-US/External/job/Design-Engineer---Neuromorphic-Computing_JR0282551?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "e44f96ae08e211dd": {
+    "action": "disqualify",
+    "company": "Forschungszentrum J\u00fclich",
+    "location": "Ohio",
+    "score": 3,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "PhD in Neuromorphic Computing: Spiking Networks & Learning",
+    "url": "https://www.learn4good.com/jobs/ohio/info_technology/5019520926/e/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "ea520ef2884783bd": {
+    "action": "disqualify",
+    "company": "HHAeXchange",
+    "location": "United States",
+    "score": 2,
+    "source": "remoteok",
+    "tier": "disqualify",
+    "title": "Product Manager Data Management &amp; Platform",
+    "url": "https://remoteOK.com/remote-jobs/remote-product-manager-data-management-amp-platform-hhaexchange-1131017"
+  },
+  "ecd1683f0ef372b4": {
+    "action": "disqualify",
+    "company": "Zintellect",
+    "location": "United States",
+    "score": 3,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Neuromorphic Materials and Ion-Gated Devices",
+    "url": "https://www.zintellect.com/Opportunity/Details/ARL-C-SEDD-300191?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "efe571b4c33bfd9c": {
+    "action": "notify",
+    "company": "SprinD GmbH",
+    "location": "Ohio",
+    "notified": true,
+    "score": 9,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Senior Analog Designer \u2013 Memristor & Neuromorphic",
+    "url": "https://www.learn4good.com/jobs/ohio/info_technology/5021051442/e/?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "f5e46d9b4067b843": {
+    "action": "notify",
+    "company": "CP00001 Washington University in St Louis",
+    "location": "Anywhere",
+    "notified": true,
+    "score": 8,
+    "source": "serpapi",
+    "tier": 1,
+    "title": "Staff Scientist (Computational \u2013 Connectome) - Genetics",
+    "url": "https://wustl.wd1.myworkdayjobs.com/en-US/External/job/Washington-University-Medical-Campus/Staff-Scientist--Computational---Connectome----Genetics_JR92208/apply/applyManually?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "f680c8cc28aec403": {
+    "action": "disqualify",
+    "company": "Zintellect",
+    "location": "Adelphi, MD",
+    "score": 2,
+    "source": "serpapi",
+    "tier": "disqualify",
+    "title": "Neuromorphic materials and computing Devices and platforms",
+    "url": "https://www.zintellect.com/Opportunity/Details/ARL-R-PEQS-400013-F1?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  },
+  "fe85e0074d34e870": {
+    "action": "skip",
+    "company": "Veeam Software",
+    "location": "Washington",
+    "score": 3,
+    "source": "serpapi",
+    "tier": 2,
+    "title": "Senior Sales Engineer - Data & AI Security",
+    "url": "https://careers.veeam.com/job/washington/senior-sales-engineer-data-and-ai-security/22681/93172411744?utm_campaign=google_jobs_apply&utm_source=google_jobs_apply&utm_medium=organic"
+  }
+}

@@ -1,0 +1,5 @@
+anthropic
+supabase
+python-dotenv
+playwright
+apscheduler

@@ -117,15 +117,25 @@ class BaseApplicant(ABC):
         finally:
             self.stop_browser()
 
-    def submit(self, job: dict) -> dict:
+    def submit(self, job: dict,
+               resume_path: str = None,
+               cover_letter_path: str = None,
+               headless: bool = True) -> dict:
         """
         Resume the application and click submit.
 
-        Called after human approval of the ready_to_submit state.
-        Re-navigates and re-fills the form since browser sessions don't persist.
+        Called after human approval (submit_confirmed status).  Re-navigates
+        and re-fills the form since browser sessions don't persist between
+        runs, then clicks the ATS's submit button and waits for confirmation.
+
+        Subclasses should override with platform-specific submit logic.
+
+        Returns dict with:
+            - success: bool
+            - submitted: bool   (True only if confirmation detected)
+            - screenshot_path: str | None
+            - notes: str
         """
-        # For now, this re-runs apply() then finds and clicks the submit button.
-        # Subclasses should override with specific submit logic.
         raise NotImplementedError(
             f"{self.name} applicant does not yet support automated submission. "
             "Mark as applied manually."

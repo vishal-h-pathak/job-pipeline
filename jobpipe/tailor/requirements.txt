@@ -3,3 +3,6 @@ supabase
 python-dotenv
 playwright
 apscheduler
+httpx
+beautifulsoup4
+reportlab

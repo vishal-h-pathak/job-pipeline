@@ -22,7 +22,7 @@ EE background with a long-running focus on neuromorphic hardware and brain-inspi
 Good communicator, creative problem-solver, works best with clear direction and a compelling reason to solve the problem. Self-aware about needing external structure to stay focused. Strong once pointed at something.
 
 ## Key technical skills
-FlyGym, MuJoCo, Brian2, Gymnasium API, VHDL SNN implementation, Intel Kapoho Bay, memristive hardware, DNN->SNN conversion, PyTorch, TensorFlow, HPC training, RT-DETRv2, embedded ML (Jetson Orin), PCB design (EagleCAD/Altium), C++, Python.
+FlyGym, MuJoCo, Brian2, Gymnasium API, VHDL SNN implementation, Intel Kapoho Bay (Loihi 1/2), memristive hardware, DNN->SNN conversion, PyTorch, TensorFlow, HPC training, RT-DETRv2, embedded ML (Jetson Orin), PCB design (EagleCAD/Altium), PyQt6 desktop GUI development, serial protocol integration (RS-232, RS-485), ruggedized sensor + cable deployment, AFSIM surrogate modeling, C++, Python.
 
 ## Portfolio goal
 vishal.pa.thak.io should feel like a person with a specific long-running obsession, not a generated candidate page. The thread from Hodgkin-Huxley to memristors to spiking networks to connectomics should be legible. Prioritize personality and genuine content over polish.

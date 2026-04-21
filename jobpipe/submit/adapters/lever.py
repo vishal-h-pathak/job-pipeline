@@ -33,6 +33,9 @@ from router import register
 logger = logging.getLogger("submitter.adapter.lever")
 
 
+# Mandatory-only policy: survey covers only the core identity fields, the
+# resume slot, and the cover-letter textarea. LinkedIn / GitHub / website /
+# current-company are intentionally not surveyed or filled.
 _SURVEY_SCHEMA: dict = {
     "type": "object",
     "properties": {
@@ -43,10 +46,6 @@ _SURVEY_SCHEMA: dict = {
         "phone_present":                {"type": "boolean"},
         "resume_present":               {"type": "boolean"},
         "cover_letter_textarea_present":{"type": "boolean"},
-        "linkedin_present":             {"type": "boolean"},
-        "github_present":               {"type": "boolean"},
-        "website_present":              {"type": "boolean"},
-        "current_company_present":      {"type": "boolean"},
         "custom_questions": {
             "type": "array",
             "items": {
@@ -84,12 +83,12 @@ class LeverAdapter(Adapter):
                 sess,
                 instruction=(
                     "Examine the Lever application form and report which "
-                    "fields are present: full name (single field) OR "
-                    "first/last name, email, phone, resume upload, a cover "
-                    "letter textarea (often labelled 'Additional information' "
-                    "or similar), LinkedIn, GitHub, personal website, current "
-                    "company. Plus list any additional custom questions with "
-                    "their label and type."
+                    "core fields are present: full name (single field) OR "
+                    "first/last name, email, phone, resume upload, and a "
+                    "cover letter textarea (often labelled 'Additional "
+                    "information' or similar). Plus list any additional "
+                    "custom questions with their label, type, and whether "
+                    "they are required."
                 ),
                 schema=_SURVEY_SCHEMA,
                 page=page,
@@ -118,12 +117,8 @@ class LeverAdapter(Adapter):
             if not survey.get("first_name_present") and not survey.get("last_name_present") and not survey.get("full_name_present"):
                 result.skipped_fields.append(FieldSkipped(label="name", reason="no name field found on form"))
 
-        await fill_text_if_present(sess, page, result, "email",           app["email"],           survey.get("email_present"))
-        await fill_text_if_present(sess, page, result, "phone",           app["phone"],           survey.get("phone_present"))
-        await fill_text_if_present(sess, page, result, "linkedin",        app["linkedin"],        survey.get("linkedin_present"))
-        await fill_text_if_present(sess, page, result, "github",          app["github"],          survey.get("github_present"))
-        await fill_text_if_present(sess, page, result, "website",         app["website"],         survey.get("website_present"))
-        await fill_text_if_present(sess, page, result, "current company", app["current_company"], survey.get("current_company_present"))
+        await fill_text_if_present(sess, page, result, "email", app["email"], survey.get("email_present"))
+        await fill_text_if_present(sess, page, result, "phone", app["phone"], survey.get("phone_present"))
 
         # Resume: required. Missing input slot is a hard skip that drops into review.
         if survey.get("resume_present"):

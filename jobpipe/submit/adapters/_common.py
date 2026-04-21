@@ -181,22 +181,34 @@ async def handle_custom_question(
     sess: Any, page: Any, result: SubmissionResult,
     ctx: SubmissionContext, q: dict, *, ats_name: str,
 ) -> None:
-    """Best-effort custom-question filler.
+    """Best-effort custom-question filler — mandatory-only policy.
 
-    File uploads are never auto-answered. Everything else goes through
-    Stagehand extract() with the applicant profile context; the model
-    returns an answer-or-skip decision which we honor.
+    Policy (per Vishal, 2026-04): only required custom questions are ever
+    answered. Optional questions (e.g. "how to pronounce your name",
+    "favorite hobby", pronouns, demographic self-ID) are unconditionally
+    skipped before any LLM call — both to keep runs fast and to keep the
+    submitted application surface minimal.
+
+    File uploads are never auto-answered regardless of required-ness.
+    Required non-file questions go through Stagehand extract() with the
+    applicant profile context; the model returns an answer-or-skip
+    decision which we honor.
     """
     label = q.get("label", "?")
     kind = q.get("kind", "text")
     required = bool(q.get("required"))
 
-    if kind == "file":
-        reason = (
-            "required custom question (file upload)"
-            if required else "optional file-upload custom question"
+    # Policy: skip every optional question before burning an LLM call.
+    if not required:
+        result.skipped_fields.append(
+            FieldSkipped(label=label, reason="optional custom question (policy: required-only)")
         )
-        result.skipped_fields.append(FieldSkipped(label=label, reason=reason))
+        return
+
+    if kind == "file":
+        result.skipped_fields.append(
+            FieldSkipped(label=label, reason="required custom question (file upload)")
+        )
         return
 
     try:

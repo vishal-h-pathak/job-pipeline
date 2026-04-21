@@ -179,7 +179,11 @@ class _FakeStagehandSession:
 
 
 def test_greenhouse_adapter_happy_path(monkeypatch, tmp_path):
-    """Core + optional fields all present → confidence 0.95, auto_submit."""
+    """All core fields present → confidence 0.95, auto_submit.
+
+    Mandatory-only policy: the survey no longer reports LinkedIn/website,
+    and even if it did the adapter wouldn't fill them.
+    """
     import asyncio
     from adapters import greenhouse as gh_mod
     from adapters.base import SubmissionContext
@@ -188,7 +192,6 @@ def test_greenhouse_adapter_happy_path(monkeypatch, tmp_path):
         "first_name_present": True, "last_name_present": True,
         "email_present": True, "phone_present": True,
         "resume_present": True, "cover_letter_present": True,
-        "linkedin_present": True, "website_present": False,
         "custom_questions": [],
     }
 
@@ -212,6 +215,7 @@ def test_greenhouse_adapter_happy_path(monkeypatch, tmp_path):
             "applicant_profile": {
                 "first_name": "Vishal", "last_name": "Pathak",
                 "email": "v@example.com", "phone": "555-1212",
+                # LinkedIn intentionally present in profile but never fillable.
                 "linkedin_url": "https://linkedin.com/in/v",
             },
         },
@@ -229,6 +233,8 @@ def test_greenhouse_adapter_happy_path(monkeypatch, tmp_path):
     assert result.confidence >= 0.90
     assert any(f.label == "resume" for f in result.filled_fields)
     assert any(f.label == "cover_letter" for f in result.filled_fields)
+    # Policy: no LinkedIn/website/etc. should ever land in filled_fields.
+    assert not any(f.label in ("linkedin", "website") for f in result.filled_fields)
     # No required-missing skips.
     assert not any(s.reason.startswith("required") for s in result.skipped_fields)
 
@@ -243,7 +249,6 @@ def test_greenhouse_adapter_routes_to_review_on_missing_resume_input(monkeypatch
         "first_name_present": True, "last_name_present": True,
         "email_present": True, "phone_present": True,
         "resume_present": True, "cover_letter_present": False,
-        "linkedin_present": False, "website_present": False,
         "custom_questions": [],
     }
 
@@ -288,7 +293,6 @@ def test_greenhouse_adapter_required_custom_q_routes_to_review(monkeypatch, tmp_
         "first_name_present": True, "last_name_present": True,
         "email_present": True, "phone_present": True,
         "resume_present": True, "cover_letter_present": False,
-        "linkedin_present": False, "website_present": False,
         "custom_questions": [
             {"label": "Are you authorized to work in the US?",
              "kind": "radio", "required": True},
@@ -345,8 +349,6 @@ def test_lever_adapter_full_name_variant(monkeypatch, tmp_path):
         "first_name_present": False, "last_name_present": False,
         "email_present": True, "phone_present": True,
         "resume_present": True, "cover_letter_textarea_present": True,
-        "linkedin_present": False, "github_present": False,
-        "website_present": False, "current_company_present": False,
         "custom_questions": [],
     }
 
@@ -394,8 +396,6 @@ def test_ashby_adapter_missing_location_routes_to_review(monkeypatch, tmp_path):
         "first_name_present": True, "last_name_present": True,
         "email_present": True, "phone_present": True,
         "location_present": True,  # form has it, but applicant profile has no location
-        "linkedin_present": False, "website_present": False,
-        "current_company_present": False, "current_title_present": False,
         "resume_present": True, "cover_letter_textarea_present": False,
         "custom_questions": [],
     }
@@ -432,6 +432,51 @@ def test_ashby_adapter_missing_location_routes_to_review(monkeypatch, tmp_path):
     result = asyncio.run(ab_mod.AshbyAdapter().run(ctx))
     assert result.recommend == "needs_review"
     assert any(s.label == "location" for s in result.skipped_fields)
+
+
+def test_optional_custom_question_skipped_without_llm(monkeypatch):
+    """Mandatory-only policy: optional custom questions must short-circuit
+    before any Stagehand extract() or act() call — they're rejected on
+    policy, not on LLM reasoning."""
+    import asyncio
+    import adapters._common as cmn
+    from adapters.base import SubmissionContext, SubmissionResult
+
+    extract_calls: list = []
+    act_calls: list = []
+
+    async def fake_extract(sess, instruction, schema, *, page=None):
+        extract_calls.append(instruction)
+        return {"decision": "answer", "answer": "yes"}  # would succeed if reached
+    async def fake_act(sess, input, *, page=None):
+        act_calls.append(input)
+        return {"message": "ok"}
+
+    monkeypatch.setattr(cmn, "sh_extract", fake_extract)
+    monkeypatch.setattr(cmn, "sh_act", fake_act)
+
+    result = SubmissionResult()
+    ctx = SubmissionContext(
+        job={"id": "jq", "title": "Eng", "applicant_profile": {}},
+        resume_pdf_path=Path("/tmp/r.pdf"),
+        cover_letter_pdf_path=Path("/tmp/c.pdf"),
+        cover_letter_text="",
+        application_url="https://example.com",
+        stagehand_session=SimpleNamespace(),
+        page=SimpleNamespace(),
+        attempt_n=1,
+    )
+    optional_q = {"label": "How do you pronounce your name?", "kind": "text", "required": False}
+    asyncio.run(cmn.handle_custom_question(
+        sess=ctx.stagehand_session, page=ctx.page, result=result,
+        ctx=ctx, q=optional_q, ats_name="Greenhouse",
+    ))
+    # Must be skipped — and must NOT have made any LLM calls.
+    assert extract_calls == []
+    assert act_calls == []
+    assert len(result.skipped_fields) == 1
+    assert "optional custom question" in result.skipped_fields[0].reason
+    assert "required-only" in result.skipped_fields[0].reason
 
 
 def test_confirm_signals_fire_on_greenhouse_url():

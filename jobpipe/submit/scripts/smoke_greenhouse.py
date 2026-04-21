@@ -45,7 +45,7 @@ FAKE_APPLICANT = {
     "last_name": "Pathak",
     "email": "smoketest@example.invalid",
     "phone": "+1 555 867 5309",
-    "linkedin": "https://www.linkedin.com/in/vishal-pathak",
+    "linkedin": "https://www.linkedin.com/in/vishalhpathak/",
     "website": "https://vishal.pa.thak.io",
     "github": "https://github.com/vshlpthk1",
     "location": "San Francisco, CA",
@@ -84,7 +84,24 @@ async def main(url: str) -> int:
 
             adapter = GreenhouseAdapter()
             print("[smoke] running GreenhouseAdapter.run()...")
-            result = await asyncio.wait_for(adapter.run(ctx), timeout=180)
+
+            # Smoke budget matches the default SESSION_BUDGET_SECONDS but can
+            # be overridden for heavy forms (Anthropic et al) via the env var.
+            budget = int(os.environ.get("SMOKE_BUDGET_SECONDS", "600"))
+            timed_out = False
+            result = None
+            try:
+                result = await asyncio.wait_for(adapter.run(ctx), timeout=budget)
+            except asyncio.TimeoutError:
+                timed_out = True
+                print(f"[smoke] adapter.run() exceeded {budget}s budget — partial result unavailable")
+                print(f"[smoke] replay: {handle.browserbase_replay_url}")
+
+        if timed_out:
+            print()
+            print("HINT: bump SMOKE_BUDGET_SECONDS (e.g. `SMOKE_BUDGET_SECONDS=900 python scripts/smoke_greenhouse.py <url>`)")
+            print("      or pick a smaller Greenhouse posting for first-run validation.")
+            return 2
 
         print()
         print("=" * 60)

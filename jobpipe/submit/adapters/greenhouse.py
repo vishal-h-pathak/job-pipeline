@@ -17,7 +17,6 @@ from adapters.base import Adapter, SubmissionContext, SubmissionResult
 from adapters._common import (
     applicant_fields,
     fill_text_if_present,
-    fill_text,
     handle_custom_question,
     score_and_recommend,
     upload_file,
@@ -29,6 +28,9 @@ from router import register
 logger = logging.getLogger("submitter.adapter.greenhouse")
 
 
+# Mandatory-only policy: we only survey + fill the core identity fields and
+# the file slots. LinkedIn / website / demographic optionals are intentionally
+# not surveyed so they can't be auto-filled even if the form asks for them.
 _SURVEY_SCHEMA: dict = {
     "type": "object",
     "properties": {
@@ -38,8 +40,6 @@ _SURVEY_SCHEMA: dict = {
         "phone_present":         {"type": "boolean"},
         "resume_present":        {"type": "boolean"},
         "cover_letter_present":  {"type": "boolean"},
-        "linkedin_present":      {"type": "boolean"},
-        "website_present":       {"type": "boolean"},
         "custom_questions": {
             "type": "array",
             "items": {
@@ -80,9 +80,9 @@ class GreenhouseAdapter(Adapter):
                 instruction=(
                     "Examine the Greenhouse application form and report which "
                     "standard fields are present (first name, last name, email, "
-                    "phone, resume upload, cover letter upload, LinkedIn URL, "
-                    "personal website), plus the list of additional custom "
-                    "questions below them with each question's label and type."
+                    "phone, resume upload, cover letter upload), plus the list "
+                    "of additional custom questions below them with each "
+                    "question's label, type, and whether it is required."
                 ),
                 schema=_SURVEY_SCHEMA,
                 page=page,
@@ -98,15 +98,11 @@ class GreenhouseAdapter(Adapter):
             result.recommend = "abort"
             return result
 
-        # 2. Core fields.
+        # 2. Core fields. (Mandatory-only: no LinkedIn/website/etc.)
         await fill_text_if_present(sess, page, result, "first name", app["first_name"], survey.get("first_name_present"))
         await fill_text_if_present(sess, page, result, "last name",  app["last_name"],  survey.get("last_name_present"))
         await fill_text_if_present(sess, page, result, "email",      app["email"],      survey.get("email_present"))
         await fill_text_if_present(sess, page, result, "phone",      app["phone"],      survey.get("phone_present"))
-        if survey.get("linkedin_present") and app["linkedin"]:
-            await fill_text(sess, page, result, "linkedin", app["linkedin"])
-        if survey.get("website_present") and app["website"]:
-            await fill_text(sess, page, result, "website", app["website"])
 
         # 3. File uploads.
         if survey.get("resume_present"):

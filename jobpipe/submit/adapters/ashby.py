@@ -21,7 +21,7 @@ from adapters._common import (
     applicant_fields,
     fill_text_if_present,
     fill_text,
-    handle_custom_question,
+    handle_custom_questions,
     paste_textarea,
     score_and_recommend,
     upload_file,
@@ -136,8 +136,11 @@ class AshbyAdapter(Adapter):
             survey.get("cover_letter_textarea_present"),
         )
 
-        for q in survey.get("custom_questions") or []:
-            await handle_custom_question(sess, page, result, ctx, q, ats_name="Ashby")
+        await handle_custom_questions(
+            sess, page, result, ctx,
+            survey.get("custom_questions") or [],
+            ats_name="Ashby",
+        )
 
         score_and_recommend(result, ats_name="ashby", core_labels=_CORE)
         logger.info(

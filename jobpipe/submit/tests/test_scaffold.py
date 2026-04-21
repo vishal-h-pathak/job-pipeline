@@ -304,7 +304,11 @@ def test_greenhouse_adapter_required_custom_q_routes_to_review(monkeypatch, tmp_
     async def fake_survey(sess, instruction, schema, *, page=None):
         return survey
     async def fake_decision(sess, instruction, schema, *, page=None):
-        return {"decision": "skip", "reason": "no mapping"}
+        return {
+            "classification": "required_by_form",
+            "decision": "skip",
+            "reason": "no mapping",
+        }
 
     async def fake_act(sess, input, *, page=None):
         return {"message": "ok"}
@@ -434,10 +438,13 @@ def test_ashby_adapter_missing_location_routes_to_review(monkeypatch, tmp_path):
     assert any(s.label == "location" for s in result.skipped_fields)
 
 
-def test_optional_custom_question_skipped_without_llm(monkeypatch):
-    """Mandatory-only policy: optional custom questions must short-circuit
-    before any Stagehand extract() or act() call — they're rejected on
-    policy, not on LLM reasoning."""
+def test_truly_optional_question_classified_and_skipped(monkeypatch):
+    """Three-tier policy: truly_optional classification ⇒ skip without act().
+
+    The LLM classifier decides the question is truly_optional (e.g., "How do
+    you pronounce your name?") and we honor that with a skip, regardless of
+    what the decision/answer fields say. No form-filling act() call fires.
+    """
     import asyncio
     import adapters._common as cmn
     from adapters.base import SubmissionContext, SubmissionResult
@@ -447,7 +454,12 @@ def test_optional_custom_question_skipped_without_llm(monkeypatch):
 
     async def fake_extract(sess, instruction, schema, *, page=None):
         extract_calls.append(instruction)
-        return {"decision": "answer", "answer": "yes"}  # would succeed if reached
+        # LLM correctly classifies the pronunciation question as optional.
+        return {
+            "classification": "truly_optional",
+            "decision": "skip",
+            "reason": "name pronunciation is opt-in demographic data",
+        }
     async def fake_act(sess, input, *, page=None):
         act_calls.append(input)
         return {"message": "ok"}
@@ -471,12 +483,193 @@ def test_optional_custom_question_skipped_without_llm(monkeypatch):
         sess=ctx.stagehand_session, page=ctx.page, result=result,
         ctx=ctx, q=optional_q, ats_name="Greenhouse",
     ))
-    # Must be skipped — and must NOT have made any LLM calls.
-    assert extract_calls == []
+    # Classify extract fires once, but NO act() because truly_optional skips.
+    assert len(extract_calls) == 1
     assert act_calls == []
     assert len(result.skipped_fields) == 1
-    assert "optional custom question" in result.skipped_fields[0].reason
-    assert "required-only" in result.skipped_fields[0].reason
+    assert result.skipped_fields[0].reason.startswith("truly optional")
+
+
+def test_effectively_required_question_answered(monkeypatch):
+    """Three-tier policy: effectively_required + confident answer ⇒ filled."""
+    import asyncio
+    import adapters._common as cmn
+    from adapters.base import SubmissionContext, SubmissionResult
+
+    act_calls: list = []
+    async def fake_extract(sess, instruction, schema, *, page=None):
+        return {
+            "classification": "effectively_required",
+            "decision": "answer",
+            "answer": "No",
+            "reason": "applicant is a US citizen per profile",
+        }
+    async def fake_act(sess, input, *, page=None):
+        act_calls.append(input); return {"message": "ok"}
+
+    monkeypatch.setattr(cmn, "sh_extract", fake_extract)
+    monkeypatch.setattr(cmn, "sh_act", fake_act)
+
+    result = SubmissionResult()
+    ctx = SubmissionContext(
+        job={"id": "jq", "title": "Eng",
+             "applicant_profile": {"work_authorization": "US citizen"}},
+        resume_pdf_path=Path("/tmp/r.pdf"),
+        cover_letter_pdf_path=Path("/tmp/c.pdf"),
+        cover_letter_text="I am a US citizen, no sponsorship needed.",
+        application_url="https://example.com",
+        stagehand_session=SimpleNamespace(),
+        page=SimpleNamespace(),
+        attempt_n=1,
+    )
+    q = {"label": "Will you require visa sponsorship?", "kind": "radio", "required": False}
+    asyncio.run(cmn.handle_custom_question(
+        sess=ctx.stagehand_session, page=ctx.page, result=result,
+        ctx=ctx, q=q, ats_name="Greenhouse",
+    ))
+    assert len(act_calls) == 1
+    assert len(result.filled_fields) == 1
+    assert result.filled_fields[0].value == "No"
+    # Effectively-required skips don't drop confidence; this one didn't skip.
+    assert result.skipped_fields == []
+
+
+def test_effectively_required_skip_does_not_route_to_review(monkeypatch):
+    """If the LLM can't confidently answer an effectively-required question,
+    we skip it — but the resulting skip reason must NOT start with
+    'required custom question' so score_and_recommend doesn't drop us
+    into review for a question the form never marked as required."""
+    import asyncio
+    import adapters._common as cmn
+    from adapters.base import SubmissionContext, SubmissionResult
+
+    async def fake_extract(sess, instruction, schema, *, page=None):
+        return {
+            "classification": "effectively_required",
+            "decision": "skip",
+            "reason": "applicant has not stated relocation willingness",
+        }
+    async def fake_act(sess, input, *, page=None): return {"message": "ok"}
+
+    monkeypatch.setattr(cmn, "sh_extract", fake_extract)
+    monkeypatch.setattr(cmn, "sh_act", fake_act)
+
+    result = SubmissionResult()
+    ctx = SubmissionContext(
+        job={"id": "jq", "title": "Eng", "applicant_profile": {}},
+        resume_pdf_path=Path("/tmp/r.pdf"),
+        cover_letter_pdf_path=Path("/tmp/c.pdf"),
+        cover_letter_text="",
+        application_url="https://example.com",
+        stagehand_session=SimpleNamespace(),
+        page=SimpleNamespace(),
+        attempt_n=1,
+    )
+    q = {"label": "Are you open to relocation?", "kind": "radio", "required": False}
+    asyncio.run(cmn.handle_custom_question(
+        sess=ctx.stagehand_session, page=ctx.page, result=result,
+        ctx=ctx, q=q, ats_name="Greenhouse",
+    ))
+    assert len(result.skipped_fields) == 1
+    reason = result.skipped_fields[0].reason
+    assert reason.startswith("effectively-required custom question")
+    # Critical: must NOT collide with the 'required custom question' prefix
+    # that score_and_recommend uses to drop confidence.
+    assert not reason.startswith("required custom question")
+
+
+def test_custom_question_phase_cap(monkeypatch):
+    """Hard cap on processed questions: after CUSTOM_Q_MAX (12), remaining
+    questions are flushed as skips and recommend drops to needs_review."""
+    import asyncio
+    import adapters._common as cmn
+    from adapters.base import SubmissionContext, SubmissionResult
+
+    async def fake_extract(sess, instruction, schema, *, page=None):
+        return {
+            "classification": "truly_optional",
+            "decision": "skip",
+            "reason": "policy",
+        }
+    async def fake_act(sess, input, *, page=None): return {"message": "ok"}
+
+    monkeypatch.setattr(cmn, "sh_extract", fake_extract)
+    monkeypatch.setattr(cmn, "sh_act", fake_act)
+
+    result = SubmissionResult()
+    ctx = SubmissionContext(
+        job={"id": "jc", "title": "Eng", "applicant_profile": {}},
+        resume_pdf_path=Path("/tmp/r.pdf"),
+        cover_letter_pdf_path=Path("/tmp/c.pdf"),
+        cover_letter_text="",
+        application_url="https://example.com",
+        stagehand_session=SimpleNamespace(),
+        page=SimpleNamespace(),
+        attempt_n=1,
+    )
+    questions = [
+        {"label": f"Optional question {i}", "kind": "text", "required": False}
+        for i in range(20)  # 20 > CUSTOM_Q_MAX (12)
+    ]
+    asyncio.run(cmn.handle_custom_questions(
+        sess=ctx.stagehand_session, page=ctx.page, result=result,
+        ctx=ctx, questions=questions, ats_name="Greenhouse",
+        max_questions=12,
+    ))
+    # 12 classified-and-skipped + 8 flushed with "cap" abort reason.
+    assert len(result.skipped_fields) == 20
+    cap_skipped = [s for s in result.skipped_fields if "cap" in s.reason]
+    assert len(cap_skipped) == 8
+    assert result.recommend == "needs_review"
+    assert "cap" in result.recommend_reason
+
+
+def test_custom_question_phase_budget(monkeypatch):
+    """Phase wall-clock budget: if processing exceeds the budget, remaining
+    questions land as skips with 'phase budget' reason and recommend drops
+    to needs_review."""
+    import asyncio
+    import adapters._common as cmn
+    from adapters.base import SubmissionContext, SubmissionResult
+
+    async def slow_extract(sess, instruction, schema, *, page=None):
+        # Simulate a 0.1s-per-call classifier against a 0.25s total budget.
+        await asyncio.sleep(0.1)
+        return {
+            "classification": "truly_optional",
+            "decision": "skip",
+            "reason": "slow",
+        }
+    async def fake_act(sess, input, *, page=None): return {"message": "ok"}
+
+    monkeypatch.setattr(cmn, "sh_extract", slow_extract)
+    monkeypatch.setattr(cmn, "sh_act", fake_act)
+
+    result = SubmissionResult()
+    ctx = SubmissionContext(
+        job={"id": "jb", "title": "Eng", "applicant_profile": {}},
+        resume_pdf_path=Path("/tmp/r.pdf"),
+        cover_letter_pdf_path=Path("/tmp/c.pdf"),
+        cover_letter_text="",
+        application_url="https://example.com",
+        stagehand_session=SimpleNamespace(),
+        page=SimpleNamespace(),
+        attempt_n=1,
+    )
+    questions = [
+        {"label": f"Q{i}", "kind": "text", "required": False} for i in range(10)
+    ]
+    asyncio.run(cmn.handle_custom_questions(
+        sess=ctx.stagehand_session, page=ctx.page, result=result,
+        ctx=ctx, questions=questions, ats_name="Greenhouse",
+        phase_budget_s=0.25,
+    ))
+    # 2-3 should have been processed before budget check fires; the rest
+    # flushed. Exact count is timing-dependent but we assert the outcome.
+    budget_skipped = [s for s in result.skipped_fields if "phase budget" in s.reason]
+    assert len(budget_skipped) >= 1
+    assert result.recommend == "needs_review"
+    assert "phase budget" in result.recommend_reason
 
 
 def test_confirm_signals_fire_on_greenhouse_url():

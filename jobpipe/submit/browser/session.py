@@ -43,6 +43,13 @@ logger = logging.getLogger("submitter.browser")
 # but the v3 examples lean on streaming; we wrap it once here.
 _STAGEHAND_STREAM_KWARGS = {"stream_response": True, "x_stream_response": "true"}
 
+# Per-call hard timeout for Stagehand observe/act/extract. A single stalled
+# LLM response must not be able to burn the whole session budget — the phase
+# budget + outer SESSION_BUDGET_SECONDS are the other two layers of defense.
+# 45s is ~2× the slowest observed call in the Anthropic smoke (37s end-to-end
+# with six acts, so ~20s per act worst case); pathological calls trip this.
+SH_CALL_TIMEOUT_SECONDS = 45
+
 
 @dataclass
 class SessionHandle:
@@ -172,15 +179,39 @@ async def open_session(url: str) -> AsyncIterator[SessionHandle]:
 # right frame on multi-frame forms (Greenhouse embeds via iframe sometimes).
 
 
-async def sh_observe(sess: Any, instruction: str, *, page: Any | None = None) -> list[dict]:
-    stream = await sess.observe(instruction=instruction, page=page, **_STAGEHAND_STREAM_KWARGS)
-    result = await _stream_to_result(stream, "observe")
+async def _call_with_timeout(coro_factory, label: str, timeout: float):
+    """Run a Stagehand call with a hard per-call wall-clock cap.
+
+    A stalled observe/act/extract must not be able to eat the whole session
+    budget. asyncio.wait_for cancels the awaitable on timeout, which lets
+    the caller record a FieldSkipped and keep going.
+    """
+    try:
+        return await asyncio.wait_for(coro_factory(), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        logger.warning("stagehand.%s exceeded %.0fs per-call timeout", label, timeout)
+        raise TimeoutError(f"stagehand.{label} timed out after {timeout:.0f}s") from exc
+
+
+async def sh_observe(
+    sess: Any, instruction: str, *, page: Any | None = None,
+    timeout: float = SH_CALL_TIMEOUT_SECONDS,
+) -> list[dict]:
+    async def _run():
+        stream = await sess.observe(instruction=instruction, page=page, **_STAGEHAND_STREAM_KWARGS)
+        return await _stream_to_result(stream, "observe")
+    result = await _call_with_timeout(_run, "observe", timeout)
     return result if isinstance(result, list) else []
 
 
-async def sh_act(sess: Any, input: Any, *, page: Any | None = None) -> dict | str | None:
-    stream = await sess.act(input=input, page=page, **_STAGEHAND_STREAM_KWARGS)
-    return await _stream_to_result(stream, "act")
+async def sh_act(
+    sess: Any, input: Any, *, page: Any | None = None,
+    timeout: float = SH_CALL_TIMEOUT_SECONDS,
+) -> dict | str | None:
+    async def _run():
+        stream = await sess.act(input=input, page=page, **_STAGEHAND_STREAM_KWARGS)
+        return await _stream_to_result(stream, "act")
+    return await _call_with_timeout(_run, "act", timeout)
 
 
 async def sh_extract(
@@ -189,14 +220,17 @@ async def sh_extract(
     schema: dict,
     *,
     page: Any | None = None,
+    timeout: float = SH_CALL_TIMEOUT_SECONDS,
 ) -> Any:
-    stream = await sess.extract(
-        instruction=instruction,
-        schema=schema,
-        page=page,
-        **_STAGEHAND_STREAM_KWARGS,
-    )
-    return await _stream_to_result(stream, "extract")
+    async def _run():
+        stream = await sess.extract(
+            instruction=instruction,
+            schema=schema,
+            page=page,
+            **_STAGEHAND_STREAM_KWARGS,
+        )
+        return await _stream_to_result(stream, "extract")
+    return await _call_with_timeout(_run, "extract", timeout)
 
 
 async def sh_execute(

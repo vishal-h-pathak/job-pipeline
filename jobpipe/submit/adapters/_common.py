@@ -20,12 +20,24 @@ ATS quirks matter.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from adapters.base import FieldFill, FieldSkipped, SubmissionContext, SubmissionResult
 from browser.session import sh_act, sh_extract
 
 logger = logging.getLogger("submitter.adapter.common")
+
+
+# ── Custom-question phase guards ─────────────────────────────────────────
+#
+# These are the abort knobs that keep a pathological form from burning the
+# whole session budget inside the custom-question loop. They're loose enough
+# to let a normal Anthropic/Stripe/Mercor form finish (the 2026-04-20 smoke
+# run hit the Anthropic form's ~18 custom questions in 37s with everything
+# policy-skipped) but tight enough to catch runaway forms.
+CUSTOM_Q_PHASE_BUDGET_SECONDS = 240   # 4 min wall-clock for the whole loop
+CUSTOM_Q_MAX = 12                     # hard cap on questions we'll process
 
 
 # ── Applicant profile access ─────────────────────────────────────────────
@@ -161,97 +173,219 @@ async def paste_textarea(
 
 
 # ── Custom question handling ─────────────────────────────────────────────
+#
+# Three-tier policy (per Vishal, 2026-04-21):
+#
+#   required_by_form    : the form HTML marks the field required. Answer if
+#                         we can; if not, route to review.
+#   effectively_required: not marked required in the DOM, but a hiring
+#                         manager would expect this answered (work auth,
+#                         visa sponsorship, "why <company>", earliest
+#                         start date, relocation / in-person willingness,
+#                         AI usage policy acknowledgments, prior-interview
+#                         history). Answer when we have a confident,
+#                         truthful answer from profile/cover-letter; else
+#                         skip without dropping confidence — we tried.
+#   truly_optional      : demographic / preference data (pronunciation,
+#                         pronouns, hobbies, "how did you hear", social
+#                         URLs when resume is already attached, etc).
+#                         Always skip.
+#
+# The LLM does the classification in the same call that produces the answer
+# text. Truly_optional questions still cost one extract() to classify, but
+# that's the minimum honest surface — without classification we can't tell
+# "Why Anthropic?" from "How do you pronounce your name?".
 
 CUSTOM_Q_ANSWER_SCHEMA: dict = {
     "type": "object",
     "properties": {
-        "answer":   {"type": "string"},
+        "classification": {
+            "type": "string",
+            "enum": ["required_by_form", "effectively_required", "truly_optional"],
+        },
         "decision": {
             "type": "string",
             "enum": ["answer", "skip"],
-            "description": "answer if the question can be confidently answered from the applicant profile; skip otherwise",
+            "description": "must be 'skip' when classification == 'truly_optional'",
         },
-        "reason":   {"type": "string"},
+        "answer": {"type": "string"},
+        "reason": {"type": "string"},
     },
-    "required": ["decision"],
+    "required": ["classification", "decision", "reason"],
 }
+
+
+_CUSTOM_Q_PROMPT_TEMPLATE = """\
+Given this custom application question from a {ats_name} form:
+
+Q: {label}
+Type: {kind}. Marked required in form HTML: {required}.
+
+Applicant context:
+  Role applying for: {title}
+  Cover letter (first 800 chars): {cover_letter_excerpt}
+
+Step 1 — classify the question into exactly one of:
+
+  • required_by_form: the form marks this field required (asterisk or the
+    `required` attribute / aria-required).
+  • effectively_required: not marked required in the DOM, but a hiring
+    manager would expect it answered. Examples: US/country work
+    authorization, visa sponsorship now/future, "Why <company>?",
+    earliest start date, willingness to relocate, willingness to work
+    in-person, AI usage policy acknowledgments, prior-interview history
+    at this company, the address you plan to work from.
+  • truly_optional: demographic or preference data that applicants commonly
+    opt out of. Examples: name pronunciation, pronouns, preferred first
+    name, hobbies, "how did you hear about us", general "additional
+    information" prompts, social URLs (LinkedIn / GitHub / Publications /
+    Website) when a resume is already attached, coding-language preference,
+    "personal preferences", favorite-anything.
+
+Step 2 — decide whether to fill:
+
+  • classification == truly_optional → decision MUST be "skip".
+  • classification in (effectively_required, required_by_form) → decision
+    is "answer" if-and-only-if you have a CONFIDENT, TRUTHFUL answer
+    derivable from the applicant context above. Otherwise "skip".
+  • Never invent facts the applicant hasn't stated. If unsure → skip.
+
+Return: classification, decision, answer (only if decision=="answer"),
+and a brief reason.
+"""
+
+
+async def handle_custom_questions(
+    sess: Any, page: Any, result: SubmissionResult,
+    ctx: SubmissionContext, questions: list[dict], *, ats_name: str,
+    phase_budget_s: float = CUSTOM_Q_PHASE_BUDGET_SECONDS,
+    max_questions: int = CUSTOM_Q_MAX,
+) -> None:
+    """Drive the custom-question loop with phase-level abort guards.
+
+    - Process at most `max_questions` questions (default 12). Extras land
+      in skipped_fields with a "cap reached" reason.
+    - Abort the loop if wall-clock in the phase exceeds `phase_budget_s`
+      (default 240s). Remaining questions land with a "budget exceeded"
+      reason and `recommend` drops to "needs_review".
+
+    Individual per-call timeouts live one layer down in browser.session
+    (SH_CALL_TIMEOUT_SECONDS). This loop guards the aggregate.
+    """
+    start = time.monotonic()
+    for idx, q in enumerate(questions):
+        if idx >= max_questions:
+            _abort_remaining(result, questions[idx:], cause="cap", n_done=idx)
+            return
+        if time.monotonic() - start > phase_budget_s:
+            _abort_remaining(result, questions[idx:], cause="phase budget", n_done=idx)
+            return
+        await handle_custom_question(sess, page, result, ctx, q, ats_name=ats_name)
+
+
+def _abort_remaining(
+    result: SubmissionResult, remaining: list[dict], *, cause: str, n_done: int,
+) -> None:
+    """Flush unreviewed custom questions as skips and force needs_review."""
+    logger.warning(
+        "custom-question phase aborted (%s) after %d questions; %d unreviewed",
+        cause, n_done, len(remaining),
+    )
+    for q in remaining:
+        result.skipped_fields.append(FieldSkipped(
+            label=q.get("label", "?"),
+            reason=f"custom-question phase aborted ({cause}); not reviewed",
+        ))
+    result.recommend = "needs_review"
+    result.recommend_reason = (
+        f"custom-question phase aborted: {cause} after {n_done} questions; "
+        f"{len(remaining)} unreviewed"
+    )
+    # Leave confidence alone so score_and_recommend's core/required logic
+    # can still add its own signal on top.
 
 
 async def handle_custom_question(
     sess: Any, page: Any, result: SubmissionResult,
     ctx: SubmissionContext, q: dict, *, ats_name: str,
 ) -> None:
-    """Best-effort custom-question filler — mandatory-only policy.
+    """Classify one custom question and fill-or-skip per the three-tier policy.
 
-    Policy (per Vishal, 2026-04): only required custom questions are ever
-    answered. Optional questions (e.g. "how to pronounce your name",
-    "favorite hobby", pronouns, demographic self-ID) are unconditionally
-    skipped before any LLM call — both to keep runs fast and to keep the
-    submitted application surface minimal.
-
-    File uploads are never auto-answered regardless of required-ness.
-    Required non-file questions go through Stagehand extract() with the
-    applicant profile context; the model returns an answer-or-skip
-    decision which we honor.
+    File uploads are never auto-answered regardless of classification.
     """
     label = q.get("label", "?")
     kind = q.get("kind", "text")
     required = bool(q.get("required"))
 
-    # Policy: skip every optional question before burning an LLM call.
-    if not required:
-        result.skipped_fields.append(
-            FieldSkipped(label=label, reason="optional custom question (policy: required-only)")
-        )
-        return
-
     if kind == "file":
-        result.skipped_fields.append(
-            FieldSkipped(label=label, reason="required custom question (file upload)")
+        reason = (
+            "required custom question (file upload)"
+            if required else "custom question (file upload, policy: not auto-answered)"
         )
+        result.skipped_fields.append(FieldSkipped(label=label, reason=reason))
         return
 
     try:
         decision = await sh_extract(
             sess,
-            instruction=(
-                f"Given this custom application question from a {ats_name} form:\n"
-                f"Q: {label}\n"
-                f"Type: {kind}. Required: {required}.\n"
-                f"Applicant context:\n"
-                f"  Title: {ctx.job.get('title', '')}\n"
-                f"  Cover letter (first 400 chars): {ctx.cover_letter_text[:400]}\n"
-                f"Decide: answer if-and-only-if the applicant profile supports "
-                f"a confident, truthful answer; otherwise skip."
+            instruction=_CUSTOM_Q_PROMPT_TEMPLATE.format(
+                ats_name=ats_name,
+                label=label,
+                kind=kind,
+                required=required,
+                title=ctx.job.get("title", ""),
+                cover_letter_excerpt=ctx.cover_letter_text[:800],
             ),
             schema=CUSTOM_Q_ANSWER_SCHEMA,
             page=page,
         )
     except Exception as exc:
-        logger.warning("decision for '%s' failed: %s", label, exc)
-        reason_prefix = "required custom question" if required else "optional custom question"
-        result.skipped_fields.append(FieldSkipped(label=label, reason=f"{reason_prefix} (decision failed: {exc})"))
+        logger.warning("classify '%s' failed: %s", label, exc)
+        prefix = "required custom question" if required else "custom question"
+        result.skipped_fields.append(FieldSkipped(
+            label=label, reason=f"{prefix} (classify failed: {exc})",
+        ))
         return
 
-    if (
-        not isinstance(decision, dict)
-        or decision.get("decision") != "answer"
-        or not decision.get("answer")
-    ):
-        reason_prefix = "required custom question" if required else "optional custom question"
-        detail = (decision or {}).get("reason", "no confident answer") if isinstance(decision, dict) else "malformed response"
-        result.skipped_fields.append(FieldSkipped(label=label, reason=f"{reason_prefix} ({detail})"))
+    if not isinstance(decision, dict):
+        result.skipped_fields.append(FieldSkipped(
+            label=label, reason="custom question (classify returned non-dict)",
+        ))
         return
 
-    answer = decision["answer"]
+    classification = decision.get("classification") or "truly_optional"
+    action = decision.get("decision")
+    reason = decision.get("reason") or ""
+    answer = (decision.get("answer") or "").strip()
+
+    # Tier 3: truly optional — always skip, regardless of what the LLM said.
+    if classification == "truly_optional":
+        result.skipped_fields.append(FieldSkipped(
+            label=label, reason=f"truly optional ({reason or 'policy'})",
+        ))
+        return
+
+    # Tiers 1 & 2: either the form said required, or the LLM classified it
+    # as effectively-required. Answer if we have a confident answer.
+    is_form_required = required or classification == "required_by_form"
+    prefix = "required custom question" if is_form_required else "effectively-required custom question"
+
+    if action != "answer" or not answer:
+        detail = reason or "no confident answer"
+        result.skipped_fields.append(FieldSkipped(
+            label=label, reason=f"{prefix} ({detail})",
+        ))
+        return
+
     try:
         await sh_act(sess, f"Answer the question '{label}' with: {answer}", page=page)
         result.filled_fields.append(FieldFill(
             label=label, value=answer, confidence=0.85, kind=kind or "text",
         ))
     except Exception as exc:
-        reason_prefix = "required custom question" if required else "optional custom question"
-        result.skipped_fields.append(FieldSkipped(label=label, reason=f"{reason_prefix} (act failed: {exc})"))
+        result.skipped_fields.append(FieldSkipped(
+            label=label, reason=f"{prefix} (act failed: {exc})",
+        ))
 
 
 # ── Confidence scoring ───────────────────────────────────────────────────

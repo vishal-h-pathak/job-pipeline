@@ -17,7 +17,7 @@ from adapters.base import Adapter, SubmissionContext, SubmissionResult
 from adapters._common import (
     applicant_fields,
     fill_text_if_present,
-    handle_custom_question,
+    handle_custom_questions,
     score_and_recommend,
     upload_file,
 )
@@ -113,9 +113,12 @@ class GreenhouseAdapter(Adapter):
             await upload_file(page, result, "cover_letter", str(ctx.cover_letter_pdf_path))
         # Cover letter is optional on most Greenhouse boards — not-found isn't a skip.
 
-        # 4. Custom questions.
-        for q in survey.get("custom_questions") or []:
-            await handle_custom_question(sess, page, result, ctx, q, ats_name="Greenhouse")
+        # 4. Custom questions — phase-level budget + cap live in the helper.
+        await handle_custom_questions(
+            sess, page, result, ctx,
+            survey.get("custom_questions") or [],
+            ats_name="Greenhouse",
+        )
 
         # 5. Score.
         score_and_recommend(result, ats_name="greenhouse", core_labels=_CORE)

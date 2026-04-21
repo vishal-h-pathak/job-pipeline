@@ -1,0 +1,151 @@
+"""
+adapters/lever.py — Deterministic adapter for Lever ATS (jobs.lever.co).
+
+Lever's application form is structurally similar to Greenhouse's but with
+two notable quirks:
+
+  - A single "full name" field instead of first + last on some boards
+    (respects the board's config — so we survey BOTH and fill whichever
+    the form actually renders).
+  - Cover letter is almost always an optional textarea body (not a file
+    upload) labelled "Additional information" or "Cover letter".
+
+Never clicks submit — that's confirm.click_submit_and_verify's job.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from adapters.base import Adapter, FieldSkipped, SubmissionContext, SubmissionResult
+from adapters._common import (
+    applicant_fields,
+    fill_text_if_present,
+    fill_text,
+    handle_custom_question,
+    paste_textarea,
+    score_and_recommend,
+    upload_file,
+)
+from browser.session import sh_extract
+from router import register
+
+logger = logging.getLogger("submitter.adapter.lever")
+
+
+_SURVEY_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "full_name_present":            {"type": "boolean"},
+        "first_name_present":           {"type": "boolean"},
+        "last_name_present":            {"type": "boolean"},
+        "email_present":                {"type": "boolean"},
+        "phone_present":                {"type": "boolean"},
+        "resume_present":               {"type": "boolean"},
+        "cover_letter_textarea_present":{"type": "boolean"},
+        "linkedin_present":             {"type": "boolean"},
+        "github_present":               {"type": "boolean"},
+        "website_present":              {"type": "boolean"},
+        "current_company_present":      {"type": "boolean"},
+        "custom_questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label":    {"type": "string"},
+                    "kind":     {"type": "string"},
+                    "required": {"type": "boolean"},
+                },
+                "required": ["label", "kind", "required"],
+            },
+        },
+    },
+    "required": ["email_present", "resume_present", "custom_questions"],
+}
+
+# On Lever the name field is one-or-the-other, and we treat "name coverage"
+# as the core requirement rather than both first+last. "name" is used as the
+# skip-label whenever neither full_name nor first_name/last_name can be filled.
+_CORE = ("name", "first name", "last name", "email", "phone", "resume")
+
+
+@register("lever")
+class LeverAdapter(Adapter):
+    ats_kind = "lever"
+
+    async def run(self, ctx: SubmissionContext) -> SubmissionResult:
+        result = SubmissionResult(adapter_name=self.name)
+        sess = ctx.stagehand_session
+        page = ctx.page
+        app = applicant_fields(ctx.job)
+
+        try:
+            survey = await sh_extract(
+                sess,
+                instruction=(
+                    "Examine the Lever application form and report which "
+                    "fields are present: full name (single field) OR "
+                    "first/last name, email, phone, resume upload, a cover "
+                    "letter textarea (often labelled 'Additional information' "
+                    "or similar), LinkedIn, GitHub, personal website, current "
+                    "company. Plus list any additional custom questions with "
+                    "their label and type."
+                ),
+                schema=_SURVEY_SCHEMA,
+                page=page,
+            )
+        except Exception as exc:
+            logger.exception("lever survey failed")
+            result.error = f"survey failed: {exc}"
+            result.recommend = "abort"
+            return result
+
+        if not isinstance(survey, dict):
+            result.error = f"survey returned non-dict: {type(survey).__name__}"
+            result.recommend = "abort"
+            return result
+
+        # Name: prefer full name if that's what the form has; else first+last.
+        full_name = app["full_name"] or f"{app['first_name']} {app['last_name']}".strip()
+        if survey.get("full_name_present"):
+            if full_name:
+                await fill_text(sess, page, result, "full name", full_name)
+            else:
+                result.skipped_fields.append(FieldSkipped(label="name", reason="no applicant name"))
+        else:
+            await fill_text_if_present(sess, page, result, "first name", app["first_name"], survey.get("first_name_present"))
+            await fill_text_if_present(sess, page, result, "last name",  app["last_name"],  survey.get("last_name_present"))
+            if not survey.get("first_name_present") and not survey.get("last_name_present") and not survey.get("full_name_present"):
+                result.skipped_fields.append(FieldSkipped(label="name", reason="no name field found on form"))
+
+        await fill_text_if_present(sess, page, result, "email",           app["email"],           survey.get("email_present"))
+        await fill_text_if_present(sess, page, result, "phone",           app["phone"],           survey.get("phone_present"))
+        await fill_text_if_present(sess, page, result, "linkedin",        app["linkedin"],        survey.get("linkedin_present"))
+        await fill_text_if_present(sess, page, result, "github",          app["github"],          survey.get("github_present"))
+        await fill_text_if_present(sess, page, result, "website",         app["website"],         survey.get("website_present"))
+        await fill_text_if_present(sess, page, result, "current company", app["current_company"], survey.get("current_company_present"))
+
+        # Resume: required. Missing input slot is a hard skip that drops into review.
+        if survey.get("resume_present"):
+            await upload_file(page, result, "resume", str(ctx.resume_pdf_path))
+        else:
+            result.skipped_fields.append(FieldSkipped(label="resume", reason="upload slot not found"))
+
+        # Cover letter on Lever is typically a textarea paste.
+        await paste_textarea(
+            sess, page, result,
+            "cover letter (additional information)",
+            ctx.cover_letter_text,
+            survey.get("cover_letter_textarea_present"),
+        )
+
+        for q in survey.get("custom_questions") or []:
+            await handle_custom_question(sess, page, result, ctx, q, ats_name="Lever")
+
+        score_and_recommend(result, ats_name="lever", core_labels=_CORE)
+        logger.info(
+            "lever: filled=%d skipped=%d confidence=%.2f recommend=%s",
+            len(result.filled_fields), len(result.skipped_fields),
+            result.confidence, result.recommend,
+        )
+        return result

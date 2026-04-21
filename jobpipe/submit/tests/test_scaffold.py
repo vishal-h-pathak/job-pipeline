@@ -183,7 +183,8 @@ def test_greenhouse_adapter_happy_path(monkeypatch, tmp_path):
         return {"message": "ok"}
 
     monkeypatch.setattr(gh_mod, "sh_extract", fake_extract)
-    monkeypatch.setattr(gh_mod, "sh_act", fake_act)
+    import adapters._common as cmn
+    monkeypatch.setattr(cmn, "sh_act", fake_act)
 
     resume = tmp_path / "resume.pdf"; resume.write_bytes(b"%PDF-1.4")
     cover  = tmp_path / "cover.pdf";  cover.write_bytes(b"%PDF-1.4")
@@ -235,7 +236,8 @@ def test_greenhouse_adapter_routes_to_review_on_missing_resume_input(monkeypatch
         return {"message": "ok"}
 
     monkeypatch.setattr(gh_mod, "sh_extract", fake_extract)
-    monkeypatch.setattr(gh_mod, "sh_act", fake_act)
+    import adapters._common as cmn
+    monkeypatch.setattr(cmn, "sh_act", fake_act)
 
     resume = tmp_path / "r.pdf"; resume.write_bytes(b"%PDF")
     cover  = tmp_path / "c.pdf"; cover.write_bytes(b"%PDF")
@@ -275,19 +277,21 @@ def test_greenhouse_adapter_required_custom_q_routes_to_review(monkeypatch, tmp_
              "kind": "radio", "required": True},
         ],
     }
-    # Sequential extract: first survey, then the custom-q decision (skip)
-    calls = {"n": 0}
-    async def fake_extract(sess, instruction, schema, *, page=None):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return survey
+    # Two extract paths now live in different modules: the survey extract is
+    # called from greenhouse.py; the custom-question decision extract is
+    # called from adapters/_common.py. Patch both with the same dispatcher.
+    async def fake_survey(sess, instruction, schema, *, page=None):
+        return survey
+    async def fake_decision(sess, instruction, schema, *, page=None):
         return {"decision": "skip", "reason": "no mapping"}
 
     async def fake_act(sess, input, *, page=None):
         return {"message": "ok"}
 
-    monkeypatch.setattr(gh_mod, "sh_extract", fake_extract)
-    monkeypatch.setattr(gh_mod, "sh_act", fake_act)
+    monkeypatch.setattr(gh_mod, "sh_extract", fake_survey)
+    import adapters._common as cmn
+    monkeypatch.setattr(cmn, "sh_extract", fake_decision)
+    monkeypatch.setattr(cmn, "sh_act", fake_act)
 
     resume = tmp_path / "r.pdf"; resume.write_bytes(b"%PDF")
     cover  = tmp_path / "c.pdf"; cover.write_bytes(b"%PDF")
@@ -310,6 +314,107 @@ def test_greenhouse_adapter_required_custom_q_routes_to_review(monkeypatch, tmp_
     assert result.recommend == "needs_review"
     assert any(s.reason.startswith("required custom question")
                for s in result.skipped_fields)
+
+
+def test_lever_adapter_full_name_variant(monkeypatch, tmp_path):
+    """Lever board with single full-name field + cover letter textarea should
+    auto_submit at 0.90+ with all required fields."""
+    import asyncio
+    from adapters import lever as lv_mod
+    from adapters.base import SubmissionContext
+
+    survey = {
+        "full_name_present": True,
+        "first_name_present": False, "last_name_present": False,
+        "email_present": True, "phone_present": True,
+        "resume_present": True, "cover_letter_textarea_present": True,
+        "linkedin_present": False, "github_present": False,
+        "website_present": False, "current_company_present": False,
+        "custom_questions": [],
+    }
+
+    async def fake_extract(sess, instruction, schema, *, page=None): return survey
+    async def fake_act(sess, input, *, page=None): return {"message": "ok"}
+
+    monkeypatch.setattr(lv_mod, "sh_extract", fake_extract)
+    # Patch sh_act through the _common module since that's where fill helpers live
+    import adapters._common as cmn
+    monkeypatch.setattr(cmn, "sh_act", fake_act)
+
+    resume = tmp_path / "r.pdf"; resume.write_bytes(b"%PDF")
+    cover  = tmp_path / "c.pdf"; cover.write_bytes(b"%PDF")
+
+    ctx = SubmissionContext(
+        job={"id": "lv1", "title": "SWE",
+             "applicant_profile": {
+                 "full_name": "Vishal Pathak",
+                 "email": "v@example.com", "phone": "555"}},
+        resume_pdf_path=resume,
+        cover_letter_pdf_path=cover,
+        cover_letter_text="Dear hiring team, ..." * 20,
+        application_url="https://jobs.lever.co/x/123",
+        stagehand_session=_FakeStagehandSession(survey),
+        page=_FakePage(),
+        attempt_n=1,
+    )
+
+    result = asyncio.run(lv_mod.LeverAdapter().run(ctx))
+    assert result.recommend == "auto_submit"
+    assert result.confidence >= 0.90
+    assert any(f.label == "full name" for f in result.filled_fields)
+    # Textarea fill should have been recorded too
+    assert any("cover letter" in f.label for f in result.filled_fields)
+
+
+def test_ashby_adapter_missing_location_routes_to_review(monkeypatch, tmp_path):
+    """Ashby counts location as a core field — missing it should route to review."""
+    import asyncio
+    from adapters import ashby as ab_mod
+    from adapters.base import SubmissionContext
+
+    survey = {
+        "full_name_present": False,
+        "first_name_present": True, "last_name_present": True,
+        "email_present": True, "phone_present": True,
+        "location_present": True,  # form has it, but applicant profile has no location
+        "linkedin_present": False, "website_present": False,
+        "current_company_present": False, "current_title_present": False,
+        "resume_present": True, "cover_letter_textarea_present": False,
+        "custom_questions": [],
+    }
+
+    async def fake_extract(sess, instruction, schema, *, page=None): return survey
+    async def fake_act(sess, input, *, page=None): return {"message": "ok"}
+
+    monkeypatch.setattr(ab_mod, "sh_extract", fake_extract)
+    import adapters._common as cmn
+    monkeypatch.setattr(cmn, "sh_act", fake_act)
+
+    # Short-circuit the page.wait_for_load_state call by giving it a no-op.
+    class _PageWithWait(_FakePage):
+        async def wait_for_load_state(self, *a, **kw): return None
+    page = _PageWithWait()
+
+    resume = tmp_path / "r.pdf"; resume.write_bytes(b"%PDF")
+    cover  = tmp_path / "c.pdf"; cover.write_bytes(b"%PDF")
+
+    ctx = SubmissionContext(
+        job={"id": "ab1", "title": "SWE",
+             "applicant_profile": {
+                 "first_name": "V", "last_name": "P",
+                 "email": "v@x", "phone": "1"}},  # no location → skip, core_missing
+        resume_pdf_path=resume,
+        cover_letter_pdf_path=cover,
+        cover_letter_text="",
+        application_url="https://jobs.ashbyhq.com/x",
+        stagehand_session=_FakeStagehandSession(survey),
+        page=page,
+        attempt_n=1,
+    )
+
+    result = asyncio.run(ab_mod.AshbyAdapter().run(ctx))
+    assert result.recommend == "needs_review"
+    assert any(s.label == "location" for s in result.skipped_fields)
 
 
 def test_confirm_signals_fire_on_greenhouse_url():

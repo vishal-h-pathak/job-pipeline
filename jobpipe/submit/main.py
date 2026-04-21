@@ -95,6 +95,7 @@ async def process_one(job: dict) -> None:
                 cover_letter_pdf_path=Path(cover_local),
                 cover_letter_text=cover_text,
                 application_url=job["application_url"],
+                stagehand_session=handle.stagehand_session,
                 page=handle.page,
                 attempt_n=attempt_n,
             )

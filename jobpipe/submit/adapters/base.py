@@ -33,7 +33,8 @@ class SubmissionContext:
     cover_letter_pdf_path: Path            # local tmp path
     cover_letter_text: str                 # plain text for form-paste fields
     application_url: str                   # resolved canonical ATS URL
-    page: Any                              # Stagehand Page / BrowserSession handle
+    stagehand_session: Any                 # AsyncStagehand session object (for act/extract/observe/execute)
+    page: Any                              # Playwright async Page attached over CDP (for file uploads + frame-scoped ops)
     attempt_n: int
 
 

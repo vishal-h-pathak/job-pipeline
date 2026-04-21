@@ -33,11 +33,12 @@ logger = logging.getLogger("submitter.adapter.common")
 #
 # These are the abort knobs that keep a pathological form from burning the
 # whole session budget inside the custom-question loop. They're loose enough
-# to let a normal Anthropic/Stripe/Mercor form finish (the 2026-04-20 smoke
-# run hit the Anthropic form's ~18 custom questions in 37s with everything
-# policy-skipped) but tight enough to catch runaway forms.
+# to let a normal Anthropic/Stripe/Mercor form finish (Anthropic's Android
+# SWE posting carries 18 custom questions; other enterprise boards run 15–20)
+# but tight enough to catch runaway forms. The phase BUDGET is the actual
+# runaway guard; the cap is defense-in-depth for an exotic or malicious form.
 CUSTOM_Q_PHASE_BUDGET_SECONDS = 240   # 4 min wall-clock for the whole loop
-CUSTOM_Q_MAX = 12                     # hard cap on questions we'll process
+CUSTOM_Q_MAX = 20                     # hard cap on questions we'll process
 
 
 # ── Applicant profile access ─────────────────────────────────────────────

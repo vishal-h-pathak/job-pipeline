@@ -578,6 +578,121 @@ def test_effectively_required_skip_does_not_route_to_review(monkeypatch):
     assert not reason.startswith("required custom question")
 
 
+def test_applicant_fields_surfaces_expanded_profile_keys():
+    """#18: applicant_fields() must expose the seven new profile keys the
+    classifier needs to answer effectively-required questions."""
+    from adapters._common import applicant_fields
+
+    job = {
+        "id": "jf",
+        "title": "Eng",
+        "applicant_profile": {
+            "first_name": "Vishal",
+            "last_name": "Pathak",
+            "email": "v@example.com",
+            "phone": "555",
+            "work_authorization": "us_citizen",
+            "visa_sponsorship_needed": "no",
+            "earliest_start_date": "as early as possible",
+            "relocation_willingness": "prefer remote/local",
+            "in_person_willingness": "remote or hybrid",
+            "ai_policy_ack": "transparent use with human in the loop",
+            "previous_interview_with_company": {"anthropic": False, "stripe": True},
+        },
+    }
+    app = applicant_fields(job)
+    assert app["work_authorization"]      == "us_citizen"
+    assert app["visa_sponsorship_needed"] == "no"
+    assert app["earliest_start_date"]     == "as early as possible"
+    assert app["relocation_willingness"]  == "prefer remote/local"
+    assert app["in_person_willingness"]   == "remote or hybrid"
+    assert app["ai_policy_ack"].startswith("transparent")
+    # Prior-interview dict is flattened into a human-readable summary; only
+    # the True-valued companies should surface.
+    assert "stripe" in app["previous_interview_summary"]
+    assert "anthropic" not in app["previous_interview_summary"]
+
+
+def test_applicant_fields_prior_interview_all_false():
+    """If the candidate hasn't interviewed anywhere, the summary reports so
+    — empty string would leave the LLM guessing."""
+    from adapters._common import applicant_fields
+
+    app = applicant_fields({
+        "applicant_profile": {
+            "previous_interview_with_company": {"anthropic": False, "stripe": False},
+        }
+    })
+    assert app["previous_interview_summary"] == "no prior interviews with any listed company"
+
+
+def test_applicant_fields_prior_interview_missing():
+    """Missing key → empty string (not crash). Prompt template will render
+    '(not specified)' in that slot."""
+    from adapters._common import applicant_fields
+
+    app = applicant_fields({"applicant_profile": {}})
+    assert app["previous_interview_summary"] == ""
+
+
+def test_custom_question_prompt_includes_profile_facts(monkeypatch):
+    """The classifier prompt must include the applicant profile facts inline,
+    so an LLM can answer e.g. 'Do you need visa sponsorship?' from
+    applicant_profile.visa_sponsorship_needed = 'no'."""
+    import asyncio
+    import adapters._common as cmn
+    from adapters.base import SubmissionContext, SubmissionResult
+
+    captured_instruction: list[str] = []
+
+    async def fake_extract(sess, instruction, schema, *, page=None):
+        captured_instruction.append(instruction)
+        return {
+            "classification": "effectively_required",
+            "decision": "answer",
+            "answer": "No",
+            "reason": "applicant is a US citizen, no sponsorship needed",
+        }
+    async def fake_act(sess, input, *, page=None): return {"message": "ok"}
+
+    monkeypatch.setattr(cmn, "sh_extract", fake_extract)
+    monkeypatch.setattr(cmn, "sh_act", fake_act)
+
+    result = SubmissionResult()
+    ctx = SubmissionContext(
+        job={"id": "jp", "title": "SWE",
+             "applicant_profile": {
+                 "work_authorization": "us_citizen",
+                 "visa_sponsorship_needed": "no",
+                 "relocation_willingness": "prefer remote/local",
+                 "ai_policy_ack": "human in the loop",
+             }},
+        resume_pdf_path=Path("/tmp/r.pdf"),
+        cover_letter_pdf_path=Path("/tmp/c.pdf"),
+        cover_letter_text="",
+        application_url="https://example.com",
+        stagehand_session=SimpleNamespace(),
+        page=SimpleNamespace(),
+        attempt_n=1,
+    )
+    q = {"label": "Do you require visa sponsorship?", "kind": "radio", "required": False}
+    asyncio.run(cmn.handle_custom_question(
+        sess=ctx.stagehand_session, page=ctx.page, result=result,
+        ctx=ctx, q=q, ats_name="Greenhouse",
+    ))
+    assert captured_instruction, "classifier extract() was never called"
+    prompt = captured_instruction[0]
+    # All seven expanded-profile facts must be rendered into the prompt.
+    assert "work_authorization:" in prompt
+    assert "us_citizen" in prompt
+    assert "visa_sponsorship_needed:" in prompt
+    assert "relocation_willingness:" in prompt
+    assert "ai_policy_acknowledgement:" in prompt
+    assert "human in the loop" in prompt
+    # Unspecified keys get a placeholder instead of blank.
+    assert "(not specified)" in prompt
+
+
 def test_custom_question_phase_cap(monkeypatch):
     """Hard cap on processed questions: after CUSTOM_Q_MAX (12), remaining
     questions are flushed as skips and recommend drops to needs_review."""

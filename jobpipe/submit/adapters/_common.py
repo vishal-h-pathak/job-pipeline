@@ -48,6 +48,14 @@ def applicant_fields(job: dict) -> dict[str, str]:
 
     The tailor writes these into a nested applicant_profile blob; keep this
     helper tolerant of older rows that may have top-level keys instead.
+
+    The second bucket of keys (work_authorization onward) was added in #18
+    to power the effectively-required custom-question answers surfaced by
+    the 2026-04-21 Anthropic smoke run. These exist on every form as unasterisked
+    but functionally mandatory fields (work auth, visa sponsorship, earliest
+    start date, relocation / in-person willingness, AI usage policy,
+    prior-interview history). Having truthful values here lets the
+    three-tier classifier answer them instead of routing to review.
     """
     profile = job.get("applicant_profile") or {}
     def pick(*keys: str) -> str:
@@ -58,6 +66,7 @@ def applicant_fields(job: dict) -> dict[str, str]:
         return ""
 
     return {
+        # ── Identity + contact ───────────────────────────────────────────
         "first_name":   pick("first_name", "firstName", "candidate_first_name"),
         "last_name":    pick("last_name", "lastName", "candidate_last_name"),
         "full_name":    pick("full_name", "fullName", "candidate_full_name"),
@@ -69,7 +78,36 @@ def applicant_fields(job: dict) -> dict[str, str]:
         "location":     pick("location", "candidate_location", "city"),
         "current_company": pick("current_company", "candidate_company"),
         "current_title":   pick("current_title", "candidate_title", "job_title"),
+        # ── Effectively-required form facts (#18) ────────────────────────
+        "work_authorization":      pick("work_authorization", "work_auth"),
+        "visa_sponsorship_needed": pick("visa_sponsorship_needed", "visa_needed", "needs_sponsorship"),
+        "earliest_start_date":     pick("earliest_start_date", "start_date", "availability"),
+        "relocation_willingness":  pick("relocation_willingness", "relocation", "open_to_relocation"),
+        "in_person_willingness":   pick("in_person_willingness", "work_mode", "remote_preference"),
+        "ai_policy_ack":           pick("ai_policy_ack", "ai_usage_statement", "ai_disclosure"),
+        "previous_interview_summary": _prior_interview_summary(profile, job),
     }
+
+
+def _prior_interview_summary(profile: dict, job: dict) -> str:
+    """Summarize `previous_interview_with_company` into a one-line statement.
+
+    Profiles store this as a dict keyed by company slug with boolean values,
+    e.g. `{"anthropic": False, "stripe": True}`. We flatten it into a single
+    human-readable sentence the LLM can use when a form asks
+    "Have you interviewed with <company> before?".
+    """
+    blob = (
+        profile.get("previous_interview_with_company")
+        or job.get("previous_interview_with_company")
+        or {}
+    )
+    if not isinstance(blob, dict) or not blob:
+        return ""
+    yes = sorted(c for c, v in blob.items() if v)
+    if not yes:
+        return "no prior interviews with any listed company"
+    return "previously interviewed at: " + ", ".join(yes)
 
 
 # ── Text field filling via Stagehand act() ───────────────────────────────
@@ -226,6 +264,16 @@ Applicant context:
   Role applying for: {title}
   Cover letter (first 800 chars): {cover_letter_excerpt}
 
+Applicant profile facts — use these verbatim to answer effectively-required
+questions. Do NOT invent facts not present here.
+  work_authorization:        {work_authorization}
+  visa_sponsorship_needed:   {visa_sponsorship_needed}
+  earliest_start_date:       {earliest_start_date}
+  relocation_willingness:    {relocation_willingness}
+  in_person_willingness:     {in_person_willingness}
+  ai_policy_acknowledgement: {ai_policy_ack}
+  prior_interviews:          {previous_interview_summary}
+
 Step 1 — classify the question into exactly one of:
 
   • required_by_form: the form marks this field required (asterisk or the
@@ -326,6 +374,7 @@ async def handle_custom_question(
         result.skipped_fields.append(FieldSkipped(label=label, reason=reason))
         return
 
+    app = applicant_fields(ctx.job)
     try:
         decision = await sh_extract(
             sess,
@@ -336,6 +385,13 @@ async def handle_custom_question(
                 required=required,
                 title=ctx.job.get("title", ""),
                 cover_letter_excerpt=ctx.cover_letter_text[:800],
+                work_authorization=app["work_authorization"] or "(not specified)",
+                visa_sponsorship_needed=app["visa_sponsorship_needed"] or "(not specified)",
+                earliest_start_date=app["earliest_start_date"] or "(not specified)",
+                relocation_willingness=app["relocation_willingness"] or "(not specified)",
+                in_person_willingness=app["in_person_willingness"] or "(not specified)",
+                ai_policy_ack=app["ai_policy_ack"] or "(not specified)",
+                previous_interview_summary=app["previous_interview_summary"] or "(not specified)",
             ),
             schema=CUSTOM_Q_ANSWER_SCHEMA,
             page=page,

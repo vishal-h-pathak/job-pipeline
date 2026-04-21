@@ -787,6 +787,186 @@ def test_custom_question_phase_budget(monkeypatch):
     assert "phase budget" in result.recommend_reason
 
 
+def test_router_falls_back_to_generic_for_unknown_kind():
+    """#11 / Milestone 6: unknown ats_kind resolves to the generic adapter
+    now that adapters.generic_stagehand is wired up.
+
+    The earlier test_router_unknown_falls_back_when_generic_exists installs
+    a fake 'generic' in _REGISTRY to test the mechanism in isolation, and
+    that assignment persists across tests. Pin the real class explicitly
+    so this test verifies the real wiring regardless of ordering.
+    """
+    import router
+    from adapters.generic_stagehand import GenericStagehandAdapter
+    router._REGISTRY["generic"] = GenericStagehandAdapter
+    adapter = router.get_adapter("workday")
+    assert adapter.name == "generic"
+    assert isinstance(adapter, GenericStagehandAdapter)
+
+
+def test_generic_adapter_happy_path(monkeypatch, tmp_path):
+    """Generic adapter with agent reporting full success → needs_review 0.75.
+
+    The generic fallback caps at needs_review by design — agent mode has no
+    mechanical guarantee every required field was filled, so we always route
+    to human review on the replay.
+    """
+    import asyncio
+    from adapters import generic_stagehand as gs_mod
+    from adapters.base import SubmissionContext
+
+    async def fake_execute(sess, instruction, *, max_steps=25, model_name=None, timeout=300.0):
+        # Agent reports structured success via its message field.
+        assert "DO NOT click the final submit" in instruction
+        assert "us_citizen" in instruction
+        return {"message": "Filled all 9 fields; form now on review page."}
+
+    async def fake_report_extract(sess, instruction, schema, *, page=None, timeout=60.0):
+        return {
+            "fields_filled": [
+                {"label": "First name", "value": "Vishal"},
+                {"label": "Last name", "value": "Pathak"},
+                {"label": "Work authorization", "value": "US citizen"},
+            ],
+            "fields_skipped": [
+                {"label": "Gender", "reason": "voluntary disclosure"},
+            ],
+            "missing_required": [],
+            "reached_submit_step": True,
+        }
+
+    monkeypatch.setattr(gs_mod, "sh_execute", fake_execute)
+    monkeypatch.setattr(gs_mod, "sh_extract", fake_report_extract)
+
+    resume = tmp_path / "r.pdf"; resume.write_bytes(b"%PDF")
+    cover  = tmp_path / "c.pdf"; cover.write_bytes(b"%PDF")
+
+    ctx = SubmissionContext(
+        job={"id": "wd1", "title": "SWE",
+             "applicant_profile": {
+                 "first_name": "Vishal", "last_name": "Pathak",
+                 "email": "v@example.com", "phone": "555",
+                 "work_authorization": "us_citizen",
+                 "visa_sponsorship_needed": "no",
+             }},
+        resume_pdf_path=resume,
+        cover_letter_pdf_path=cover,
+        cover_letter_text="",
+        application_url="https://workday.myexampleco.com/en-US/jobs/123",
+        stagehand_session=SimpleNamespace(),
+        page=_FakePage(),
+        attempt_n=1,
+    )
+
+    result = asyncio.run(gs_mod.GenericStagehandAdapter().run(ctx))
+    # Always needs_review; but a successful agent run hits 0.75 not 0.55.
+    assert result.recommend == "needs_review"
+    assert result.confidence == 0.75
+    assert "agent reports all fields filled" in result.recommend_reason
+    # Filled fields from report are recorded at 0.70 confidence (agent-level).
+    assert any(f.label == "Work authorization" and f.confidence == 0.70
+               for f in result.filled_fields)
+    # Agent-skipped demographic field shows up with "agent skipped:" prefix.
+    assert any(s.reason.startswith("agent skipped:") and s.label == "Gender"
+               for s in result.skipped_fields)
+    # No "required custom question" skip when agent reports no missing fields.
+    assert not any(s.reason.startswith("required custom question")
+                   for s in result.skipped_fields)
+    # agent_reasoning captured for the review packet.
+    assert result.agent_reasoning is not None
+    assert "Filled all 9 fields" in result.agent_reasoning
+
+
+def test_generic_adapter_missing_required_drops_confidence(monkeypatch, tmp_path):
+    """Generic adapter: agent reports missing required field(s) → 0.55 needs_review.
+
+    The critical invariant: missing_required labels land with the
+    'required custom question' prefix so score consumers can count them.
+    """
+    import asyncio
+    from adapters import generic_stagehand as gs_mod
+    from adapters.base import SubmissionContext
+
+    async def fake_execute(sess, instruction, *, max_steps=25, model_name=None, timeout=300.0):
+        return {"message": "Stopped; two required fields lack profile data."}
+
+    async def fake_report_extract(sess, instruction, schema, *, page=None, timeout=60.0):
+        return {
+            "fields_filled": [{"label": "Email", "value": "v@example.com"}],
+            "fields_skipped": [],
+            "missing_required": [
+                "What is your expected salary?",
+                "Where did you go to high school?",
+            ],
+            "reached_submit_step": False,
+        }
+
+    monkeypatch.setattr(gs_mod, "sh_execute", fake_execute)
+    monkeypatch.setattr(gs_mod, "sh_extract", fake_report_extract)
+
+    resume = tmp_path / "r.pdf"; resume.write_bytes(b"%PDF")
+    cover  = tmp_path / "c.pdf"; cover.write_bytes(b"%PDF")
+
+    ctx = SubmissionContext(
+        job={"id": "ic1", "title": "SWE",
+             "applicant_profile": {"email": "v@example.com"}},
+        resume_pdf_path=resume,
+        cover_letter_pdf_path=cover,
+        cover_letter_text="",
+        application_url="https://careers-myexampleco.icims.com/jobs/123",
+        stagehand_session=SimpleNamespace(),
+        page=_FakePage(),
+        attempt_n=1,
+    )
+
+    result = asyncio.run(gs_mod.GenericStagehandAdapter().run(ctx))
+    assert result.recommend == "needs_review"
+    assert result.confidence == 0.55
+    assert "2 required field" in result.recommend_reason
+    missing = [s for s in result.skipped_fields
+               if s.reason.startswith("required custom question")]
+    assert len(missing) == 2
+    assert {s.label for s in missing} == {
+        "What is your expected salary?",
+        "Where did you go to high school?",
+    }
+
+
+def test_generic_adapter_execute_failure_aborts(monkeypatch, tmp_path):
+    """Generic adapter: sh_execute raising is a hard abort, not a silent skip."""
+    import asyncio
+    from adapters import generic_stagehand as gs_mod
+    from adapters.base import SubmissionContext
+
+    async def fake_execute(sess, instruction, *, max_steps=25, model_name=None, timeout=300.0):
+        raise TimeoutError("stagehand.execute timed out after 300s")
+
+    async def fake_report_extract(sess, instruction, schema, *, page=None, timeout=60.0):
+        raise AssertionError("report extract should not run when execute fails")
+
+    monkeypatch.setattr(gs_mod, "sh_execute", fake_execute)
+    monkeypatch.setattr(gs_mod, "sh_extract", fake_report_extract)
+
+    resume = tmp_path / "r.pdf"; resume.write_bytes(b"%PDF")
+    cover  = tmp_path / "c.pdf"; cover.write_bytes(b"%PDF")
+
+    ctx = SubmissionContext(
+        job={"id": "sr1", "title": "SWE", "applicant_profile": {}},
+        resume_pdf_path=resume,
+        cover_letter_pdf_path=cover,
+        cover_letter_text="",
+        application_url="https://jobs.smartrecruiters.com/x/123",
+        stagehand_session=SimpleNamespace(),
+        page=_FakePage(),
+        attempt_n=1,
+    )
+
+    result = asyncio.run(gs_mod.GenericStagehandAdapter().run(ctx))
+    assert result.recommend == "abort"
+    assert result.error is not None
+    assert "timed out" in result.error
+
+
 def test_confirm_signals_fire_on_greenhouse_url():
     """Deterministic URL-needle match should short-circuit the LLM judge."""
     import asyncio

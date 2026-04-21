@@ -29,3 +29,14 @@ vishal.pa.thak.io should feel like a person with a specific long-running obsessi
 
 ## Personal
 From Cape Canaveral, FL. Moved to Atlanta April 2022. Runs a book club (papercuts.org). Into cooking, audiobooks, agentic AI projects.
+
+## Application form defaults
+These are the canonical answers the job-submitter's three-tier classifier reads (see `adapters/_common.py::applicant_fields` and the `#18` task). When job-tailor populates `applicant_profile` on each jobs row, these values should flow through verbatim. Keep them in sync with `job-submitter/scripts/smoke_greenhouse.py::FAKE_APPLICANT` until the tailor becomes the single writer.
+
+- `work_authorization`: `us_citizen`
+- `visa_sponsorship_needed`: `no`
+- `earliest_start_date`: as early as possible; typical notice is two weeks after offer acceptance
+- `relocation_willingness`: based in Atlanta, GA and strongly prefers remote or local roles; open to relocation only if remote/local options are exhausted and the role + compensation are both exceptional
+- `in_person_willingness`: remote or hybrid acceptable; fully remote strongly preferred
+- `ai_policy_ack`: "I am transparent about my use of AI assistance in my work. I use AI tools (including LLMs) to accelerate drafting, research, and exploration, but I always keep a human in the loop: I review, validate, and take responsibility for all work I produce."
+- `previous_interview_with_company`: `{ "anthropic": false }` (extend per company as history accumulates)

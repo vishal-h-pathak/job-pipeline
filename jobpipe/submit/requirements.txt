@@ -1,0 +1,23 @@
+# Core
+supabase>=2.0.0
+python-dotenv>=1.0.0
+pydantic>=2.6.0
+
+# Browser automation
+stagehand-py>=3.0.0            # Stagehand v3 Python SDK (Feb 2026 release)
+browserbase>=1.0.0             # Session lifecycle management (if Stagehand doesn't wrap it directly for Python)
+
+# LLM (used only in confirm.py and the generic_stagehand adapter)
+anthropic>=0.40.0
+
+# Scheduling
+apscheduler>=3.10.0
+
+# Utilities
+httpx>=0.27.0
+structlog>=24.1.0              # structured logging for submission_log entries
+
+# Dev
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+ruff>=0.3.0

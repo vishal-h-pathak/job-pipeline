@@ -4,7 +4,7 @@ python-dotenv>=1.0.0
 pydantic>=2.6.0
 
 # Browser automation
-stagehand-py>=3.0.0            # Stagehand v3 Python SDK (Feb 2026 release)
+stagehand>=3.19.0              # Stagehand v3 Python SDK — package is published as "stagehand" (not "stagehand-py" which stopped at 0.3.x)
 playwright>=1.40.0             # Used to attach over CDP for file uploads + frame-scoped ops
 browserbase>=1.0.0             # Session lifecycle management (if Stagehand doesn't wrap it directly for Python)
 

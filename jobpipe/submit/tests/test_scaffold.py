@@ -40,7 +40,10 @@ def _fill_required_env(monkeypatch):
 
 def test_config_imports():
     import config
-    assert config.AUTO_SUBMIT_THRESHOLD == 0.90
+    # Threshold is tuneable (bring-up sets it above 1.0 as a safety stop), but
+    # it must be a real float in a sane band.
+    assert 0.0 <= config.AUTO_SUBMIT_THRESHOLD <= 2.0
+    assert isinstance(config.AUTO_SUBMIT_THRESHOLD, float)
     assert config.ATS_CONFIDENCE_MIN["linkedin"] > 1.0  # sentinel: never auto-submit
 
 
@@ -95,15 +98,29 @@ def test_confirm_decide_pure():
     assert decide(r_err, "greenhouse") == "abort"
 
 
+def _stagehand_deps_installed() -> bool:
+    try:
+        import stagehand  # noqa: F401
+        import playwright  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+@pytest.mark.skipif(
+    _stagehand_deps_installed(),
+    reason="stagehand+playwright are installed in this env; the 'missing deps' branch "
+           "only fires on CI / fresh clones. Run in a venv without them to exercise.",
+)
 def test_browser_session_reports_missing_deps():
-    """Without stagehand-py + playwright installed, open_session should raise
+    """Without stagehand + playwright installed, open_session should raise
     a RuntimeError with install instructions — not a silent ImportError."""
     import asyncio
     from browser import session
     async def _try():
         async with session.open_session("https://example.com"):
             pass
-    with pytest.raises(RuntimeError, match="stagehand-py and playwright"):
+    with pytest.raises(RuntimeError, match="stagehand.*and playwright"):
         asyncio.run(_try())
 
 

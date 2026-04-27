@@ -50,6 +50,18 @@ def tailor_resume(job: dict) -> dict:
     if voice_path.exists():
         voice_profile = voice_path.read_text(encoding="utf-8")
 
+    # Optional Match Agent transcript — captured from the dashboard chat. When
+    # present, it carries Vishal's own framing of why the role matters and
+    # which experiences to lean into. Treat it as authoritative for this
+    # specific application; CLAUDE.md remains the ground truth for facts.
+    match_chat = (job.get("match_chat_transcript") or "").strip()
+    match_chat_block = (
+        f"\n\nMATCH AGENT INTERVIEW (Vishal's own framing for THIS specific role — "
+        f"prioritize this over generic cover-letter logic when shaping emphasis areas, "
+        f"keywords, and experience order):\n{match_chat}\n"
+        if match_chat else ""
+    )
+
     prompt = f"""You are tailoring a resume for Vishal Pathak. The resume must be strictly
 professional — no personal statements, no interests section, no "passionate about" language.
 Every bullet should describe something concrete that was built, deployed, or shipped.
@@ -65,6 +77,7 @@ Title: {job_title}
 Company: {company}
 Description: {job_desc}
 Job Tier: {job.get('tier', 'unknown')} (1=neuro/dream job, 2=sales eng, 3=ML/CV)
+{match_chat_block}
 
 RESUME RULES — follow these strictly:
 

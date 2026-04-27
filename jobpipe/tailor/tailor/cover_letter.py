@@ -56,6 +56,21 @@ RESUME TAILORING CONTEXT (maintain consistency with these choices):
     if voice_path.exists():
         voice_profile = voice_path.read_text(encoding="utf-8")
 
+    # Optional Match Agent transcript — direct quotes from Vishal's own
+    # conversation about this role, captured in the dashboard chat. When
+    # present, the cover letter should ground its angle, anecdotes, and
+    # framing in what he actually said rather than in generic inferences.
+    match_chat = (job.get("match_chat_transcript") or "").strip()
+    match_chat_block = (
+        f"\n\nMATCH AGENT INTERVIEW (Vishal's own answers about THIS role — "
+        f"use his framing, motivations, and emphasis areas verbatim where they "
+        f"fit. If a draft cover letter or bullet suggestions appear at the end "
+        f"of the transcript, treat them as a starting reference, not as final "
+        f"output — rewrite anything that doesn't match his voice profile):\n"
+        f"{match_chat}\n"
+        if match_chat else ""
+    )
+
     prompt = f"""You are writing a cover letter for Vishal Pathak. This is the most important
 instruction: the letter must sound like Vishal wrote it himself — not like an AI, not like
 a career coach, not like a template. Read the voice profile carefully and match his tone exactly.
@@ -72,6 +87,7 @@ Company: {company}
 Description: {job_desc}
 Job Tier: {job.get('tier', 'unknown')} (1=neuro/dream job, 2=sales eng, 3=ML/CV)
 {context}
+{match_chat_block}
 
 WRITING RULES — follow these strictly:
 

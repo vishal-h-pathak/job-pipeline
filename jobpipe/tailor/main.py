@@ -78,6 +78,27 @@ def process_approved_jobs():
         mark_preparing(job_id)
 
         try:
+            # ── Hydrate the persisted Match Agent chat (if any) into the
+            # job dict so the tailor prompts see Vishal's own framing for
+            # this specific role. The dashboard's MatchAgent.tsx writes
+            # the conversation array to jobs.match_chat after each turn;
+            # here we render it to plain text and store it under the key
+            # the tailor functions expect.
+            chat = job.get("match_chat") or []
+            if chat:
+                transcript_lines = []
+                for msg in chat:
+                    role = (msg.get("role") or "").upper()
+                    content = (msg.get("content") or "").strip()
+                    if not content:
+                        continue
+                    transcript_lines.append(f"{role}: {content}")
+                job["match_chat_transcript"] = "\n\n".join(transcript_lines)
+                logger.info(
+                    f"Match Agent chat injected for {company} "
+                    f"({len(chat)} turns, {len(job['match_chat_transcript'])} chars)"
+                )
+
             # ── Tailor resume (returns metadata only — no disk writes) ───
             logger.info(f"Tailoring resume for {company}...")
             resume_result = tailor_resume(job)

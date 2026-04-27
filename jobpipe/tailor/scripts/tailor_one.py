@@ -96,14 +96,27 @@ def main() -> None:
     # Inject the Match Agent transcript if provided. The patched tailor
     # prompts (resume.py, cover_letter.py, latex_resume.py) look for
     # ``job["match_chat_transcript"]`` and surface it as authoritative
-    # framing for this specific application.
+    # framing for this specific application. Resolution order:
+    #   1. --transcript file (manual override, useful for one-offs)
+    #   2. job.match_chat column on the row (written by dashboard chat)
+    #   3. neither — vanilla tailor
     if args.transcript:
         transcript_path = Path(args.transcript)
         if not transcript_path.exists():
             raise SystemExit(f"transcript file not found: {transcript_path}")
         transcript = transcript_path.read_text(encoding="utf-8")
         job["match_chat_transcript"] = transcript
-        print(f"  transcript: {transcript_path} ({len(transcript)} chars) — injected")
+        print(f"  transcript: {transcript_path} ({len(transcript)} chars) — injected from file")
+    elif job.get("match_chat"):
+        chat = job["match_chat"] or []
+        lines = []
+        for msg in chat:
+            role = (msg.get("role") or "").upper()
+            content = (msg.get("content") or "").strip()
+            if content:
+                lines.append(f"{role}: {content}")
+        job["match_chat_transcript"] = "\n\n".join(lines)
+        print(f"  transcript: (from jobs.match_chat — {len(chat)} turns)")
     else:
         print("  transcript: (none — running vanilla tailor)")
 

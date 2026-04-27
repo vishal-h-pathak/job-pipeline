@@ -52,10 +52,11 @@ _US_EXTRA_LOCATIONS = (
 ENDPOINT = "https://serpapi.com/search.json"
 
 # Hard cap so a single run can't burn the whole monthly free tier. Default
-# dropped from 30 to 15 once Ashby + HN + 80kh + expanded Greenhouse came
-# online — those four cover most of the tier-1 territory SerpAPI was
-# discovering. Override via the env var if you want a wider sweep.
-MAX_SEARCHES_PER_RUN = int(os.environ.get("SERPAPI_MAX_SEARCHES", "15"))
+# dropped 30 → 15 → 8 as more free sources came online (Ashby, HN, 80kh,
+# JSearch). At 8/run × ~30 days that's 240/month — well inside the SerpAPI
+# free tier (100/month) when you also factor in days you don't run. Override
+# via the env var if you want a wider sweep.
+MAX_SEARCHES_PER_RUN = int(os.environ.get("SERPAPI_MAX_SEARCHES", "8"))
 
 # Cap pages per (query, location). Most relevant results appear on page 1.
 MAX_PAGES = 2

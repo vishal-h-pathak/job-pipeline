@@ -24,12 +24,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 import traceback
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Surface every source's INFO logs so the smoke-test can show why a fetch
+# returned zero rows (404s, budget caps, layout drift, etc.). Without this,
+# logger.info() calls in the source modules go to a default WARN handler
+# and the failure is invisible.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s [%(name)s] %(message)s",
+)
 
 import config  # noqa: E402  (must come after load_dotenv)
 

@@ -28,6 +28,7 @@ from html import unescape
 
 import requests
 
+from config import is_local_or_remote, location_filter_enabled
 from utils.jobid import make_job_id
 
 logger = logging.getLogger("sources.eighty_thousand_hours")
@@ -123,51 +124,77 @@ def fetch():
     seen_local: set[str] = set()
     raw = 0
     yielded = 0
+    first_hit_logged = False
 
     for q in queries:
         hits = _algolia_query(app_id, api_key, index, q)
+        # Diagnostic: log the first hit's field names so we can spot field-
+        # name drift the moment Algolia changes its schema. Only fires once
+        # per fetch() call; cheap to leave on.
+        if hits and not first_hit_logged:
+            sample_keys = sorted(hits[0].keys())
+            logger.info("80kh: first hit keys = %s", sample_keys)
+            first_hit_logged = True
         for hit in hits:
             raw += 1
-            # Algolia hits expose flat fields; their exact names depend on
-            # the index schema. We probe several common shapes so the
-            # adapter survives moderate rename drift.
+            # Field names verified 2026-04-26 against the live ``jobs_prod``
+            # Algolia index. The fallbacks remain for resilience against
+            # moderate schema drift.
             title = (
                 hit.get("title")
                 or hit.get("role")
                 or hit.get("position")
                 or ""
             )
+            # Company is usually a flat string in ``company_name``; the
+            # ``company`` field can be either a string or a nested dict.
             company = (
-                hit.get("company")
+                hit.get("company_name")
+                or hit.get("company")
                 or hit.get("organization")
                 or hit.get("employer")
                 or "Unknown"
             )
             if isinstance(company, dict):
                 company = company.get("name") or "Unknown"
-            location = _flatten_locations(
-                hit.get("location")
-                or hit.get("locations")
-                or hit.get("city")
-                or hit.get("country")
+            # Locations are stored as multiple parallel tag arrays. Prefer
+            # the human-readable card location, then synthesize from
+            # tags_city + tags_country, then any leftover fallbacks.
+            location_raw = (
+                hit.get("card_locations")
+                or hit.get("tags_location_80k")
+                or hit.get("tags_city")
+                or hit.get("tags_country")
+                or hit.get("location")
                 or "Unknown"
             )
+            location = _flatten_locations(location_raw) or "Unknown"
             description = _strip_html(
                 hit.get("description")
+                or hit.get("description_short")
                 or hit.get("summary")
-                or hit.get("about")
                 or ""
             )
+            # The apply / posting URL is in ``url_external`` for 80kh; the
+            # other names remain as defensive fallbacks for future shape
+            # changes.
             link = (
-                hit.get("apply_url")
+                hit.get("url_external")
+                or hit.get("apply_url")
                 or hit.get("url")
                 or hit.get("hosted_url")
                 or hit.get("link")
+                or hit.get("company_career_page_url")
                 or ""
             )
             if not (title and link):
                 continue
             if not _matches(f"{title} {description}"):
+                continue
+            # Honor mode filter consistent with greenhouse / ashby. 80kh
+            # supplies a lot of city-specific roles (Pittsburgh, Vienna,
+            # Cambridge UK); ``local_remote`` keeps only Atlanta or remote.
+            if location_filter_enabled() and not is_local_or_remote(location):
                 continue
 
             jid = make_job_id(link, title, str(company))

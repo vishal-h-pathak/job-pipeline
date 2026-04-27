@@ -5,7 +5,7 @@ import re
 
 from anthropic import Anthropic
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "claude-opus-4-7"
 PROFILE_PATH = pathlib.Path(__file__).parent / "CLAUDE.md"
 
 _client = None

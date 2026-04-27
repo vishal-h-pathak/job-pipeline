@@ -1,9 +1,34 @@
-import hashlib
+"""
+sources/indeed.py — Indeed RSS feed fetcher.
+
+Notes on reliability (April 2026): Indeed has been progressively gating its
+public RSS feeds and routinely returns empty <channel>s for unauthenticated
+callers. We do three things to defend against silent breakage:
+
+1. Send a real User-Agent — feedparser's default UA is blocked outright on
+   some Indeed paths.
+2. Log per-(query, location) entry counts so an empty feed shows up in
+   ``agent.log`` instead of vanishing.
+3. Tolerate ``feed.bozo`` / parser exceptions and keep iterating other
+   queries; we'd rather lose one query than the whole source.
+
+If Indeed RSS goes fully dark, the right move is to swap to the SerpAPI
+``site:indeed.com`` queries already implemented in ``linkedin.py`` style.
+"""
+
+from __future__ import annotations
+
+import logging
 import re
 import time
 from urllib.parse import urlencode
 
 import feedparser
+
+from config import get_mode
+from utils.jobid import make_job_id
+
+logger = logging.getLogger("sources.indeed")
 
 QUERIES = [
     "neuromorphic",
@@ -20,30 +45,67 @@ QUERIES = [
     "developer advocate machine learning",
 ]
 
-LOCATIONS = [
+# Mode-aware location set. ``us_wide`` adds the national fallback; the others
+# hold the high-signal locations we always want.
+_LOCAL_REMOTE_LOCATIONS = (
     {"l": "Atlanta, GA", "label": "Atlanta, GA"},
     {"l": "Remote", "label": "Remote"},
-]
+)
+_US_EXTRA_LOCATIONS = (
+    {"l": "United States", "label": "United States"},
+)
 
 BASE = "https://www.indeed.com/rss"
 TAG_RE = re.compile(r"<[^>]+>")
+
+# Indeed silently drops requests with feedparser's default UA. Use a real
+# browser string and an Accept header that matches what curl/Safari send.
+_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/121.0 Safari/537.36"
+)
+_REQUEST_HEADERS = {
+    "User-Agent": _USER_AGENT,
+    "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 
 def _strip_html(text: str) -> str:
     return TAG_RE.sub("", text or "").strip()
 
 
-def _job_id(link: str, title: str, company: str) -> str:
-    return hashlib.sha1(f"indeed|{link}|{title}|{company}".encode()).hexdigest()[:16]
+def _locations_for_mode():
+    if get_mode() == "us_wide":
+        return _LOCAL_REMOTE_LOCATIONS + _US_EXTRA_LOCATIONS
+    return _LOCAL_REMOTE_LOCATIONS
 
 
 def fetch():
     """Yield job dicts from Indeed RSS across the keyword/location matrix."""
-    seen_local = set()
+    seen_local: set[str] = set()
+    locations = _locations_for_mode()
+    total_entries = 0
+    empty_feeds = 0
+
     for q in QUERIES:
-        for loc in LOCATIONS:
+        for loc in locations:
             url = f"{BASE}?{urlencode({'q': q, 'l': loc['l']})}"
-            feed = feedparser.parse(url)
+            try:
+                feed = feedparser.parse(url, request_headers=_REQUEST_HEADERS)
+            except Exception as exc:  # pragma: no cover — feedparser rarely raises
+                logger.warning("indeed feed exception q=%r loc=%r: %s", q, loc["label"], exc)
+                continue
+
+            entry_count = len(feed.entries or [])
+            if entry_count == 0:
+                empty_feeds += 1
+                logger.info("indeed: 0 entries for q=%r loc=%r (bozo=%s)",
+                            q, loc["label"], getattr(feed, "bozo", False))
+            else:
+                logger.info("indeed: %d entries for q=%r loc=%r",
+                            entry_count, q, loc["label"])
+
             for entry in feed.entries:
                 title_raw = entry.get("title", "")
                 # Indeed RSS titles are typically "Job Title - Company - Location"
@@ -53,10 +115,11 @@ def fetch():
                 location = parts[2] if len(parts) > 2 else loc["label"]
                 link = entry.get("link", "")
                 description = _strip_html(entry.get("summary", ""))
-                jid = _job_id(link, title, company)
+                jid = make_job_id(link, title, company)
                 if jid in seen_local:
                     continue
                 seen_local.add(jid)
+                total_entries += 1
                 yield {
                     "id": jid,
                     "source": "indeed",
@@ -68,3 +131,6 @@ def fetch():
                     "url": link,
                 }
             time.sleep(1)
+
+    logger.info("indeed total: %d unique entries (%d empty feeds out of %d)",
+                total_entries, empty_feeds, len(QUERIES) * len(locations))

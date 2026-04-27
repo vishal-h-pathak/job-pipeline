@@ -81,12 +81,25 @@ not flagged for notification.
 
 ## Sources
 
-| Source | Method | Keywords searched |
-|--------|--------|-------------------|
-| Indeed | RSS feeds | neuromorphic, computational neuroscience, spiking neural network, connectomics, sales engineer LLM, sales engineer AI, + more |
-| SerpAPI | Google Jobs API | Same keywords, Atlanta + Remote locations |
-| RemoteOK | Public JSON API | neuromorphic, neuroscience, spiking, connectomics, machine learning, computer vision, sales engineer, developer relations |
-| Wellfound | Stub | No public API — placeholder for future |
+| Source             | Method                                  | Cost     | Notes |
+|--------------------|-----------------------------------------|----------|-------|
+| Greenhouse + Lever | Public ATS JSON, curated company list   | Free     | Tier 1 dense; expand in `sources/greenhouse.py` |
+| Ashby              | Public posting API, curated list        | Free     | AI-startup heavy; expand in `sources/ashby.py` |
+| HN Who's Hiring    | Algolia HN search → monthly thread      | Free     | Best signal for fresh AI/ML startup roles |
+| 80,000 Hours       | Public Algolia (`jobs_prod` index)      | Free     | Mission-driven — alignment, biosec, neuro |
+| RemoteOK           | Public JSON API                         | Free     | Broad remote-only coverage |
+| JSearch            | RapidAPI (Indeed + LinkedIn + ZipRecruiter etc.) | Paid (~$10/mo) | Capped at `JSEARCH_MAX_REQUESTS_PER_RUN` (default 8). Replaces the dead Indeed RSS + LinkedIn-via-SerpAPI sources. |
+| SerpAPI            | Google Jobs API                         | Paid     | Capped at `SERPAPI_MAX_SEARCHES` (default 15) |
+
+Sources kept on disk but excluded from the live pipeline:
+
+- `sources/indeed.py` — Indeed RSS is gated for unauthenticated callers as
+  of 2026-04-26. Re-add to `SOURCES` in `job_agent.py` if you obtain
+  authenticated access.
+- `sources/linkedin.py` — `site:linkedin.com/jobs` queries via SerpAPI
+  return zero results across multiple runs. JSearch covers LinkedIn
+  postings with a different mechanism.
+- `sources/wellfound.py` — Stub. No public API; placeholder.
 
 ---
 
@@ -111,13 +124,30 @@ Copy `.env.example` to `.env` and fill in values.
 ```bash
 pip3 install -r requirements.txt
 cp .env.example .env   # fill in your keys
-python3 job_agent.py
+python3 job_agent.py                 # local_remote (default): Atlanta + Remote
+python3 job_agent.py --mode us_wide  # also pull non-remote US roles
 ```
 
 Output:
 ```
-done. new jobs: 41, notified: 12
+done. mode=local_remote new jobs: 41, enriched: 6, dead links skipped: 2, notified: 5
 ```
+
+### Operating modes
+
+| Mode           | Sources include                                                 |
+|----------------|-----------------------------------------------------------------|
+| `local_remote` | Atlanta-area + remote-only roles. Greenhouse boards filtered.   |
+| `us_wide`      | Adds national-US roles across SerpAPI / LinkedIn / Indeed.      |
+
+Mode resolves from (in priority order) `--mode`, the `HUNTER_MODE` env var,
+then `local_remote`.
+
+### Cost guards
+
+- `SERPAPI_MAX_SEARCHES` (default 30): hard cap on SerpAPI calls per run.
+- `LINKEDIN_MAX_SEARCHES` (default 15): independent cap for the LinkedIn
+  variant so it doesn't crowd out the main SerpAPI source.
 
 ---
 

@@ -1,18 +1,12 @@
-"""
-sources/serpapi.py — Google Jobs results via SerpAPI.
+"""LinkedIn source — uses SerpAPI Google Jobs with site:linkedin.com filtering.
 
-Cost discipline matters here: SerpAPI's free tier is 100 searches/month, and
-the previous configuration burned ~72 searches per run (12 queries × 2 locs ×
-3 pages). Three guards now enforce a per-run budget:
+This piggybacks on the same SERPAPI_KEY as the main serpapi source but runs
+a smaller set of high-signal queries specifically filtered to LinkedIn
+postings, which tend to have richer descriptions and more accurate metadata.
 
-1. ``MAX_SEARCHES_PER_RUN`` hard cap. We stop iterating once we hit it and
-   log a clear "budget exhausted" message rather than silently truncating.
-2. Pagination short-circuits once a page yields nothing new (almost every
-   page after the first is duplicates anyway).
-3. Per-run logging of total searches issued so the budget shows up in
-   ``agent.log``.
-
-The query list and locations are mode-aware via ``config.get_mode()``.
+Shares the per-run search budget with ``serpapi.py`` via the
+``SERPAPI_MAX_SEARCHES`` env var; this module reads its own
+``LINKEDIN_MAX_SEARCHES`` so the two sources don't fight over the same cap.
 """
 
 from __future__ import annotations
@@ -26,21 +20,19 @@ import requests
 from config import get_mode
 from utils.jobid import make_job_id
 
-logger = logging.getLogger("sources.serpapi")
+logger = logging.getLogger("sources.linkedin")
 
+# Focused queries — fewer than main serpapi to avoid API budget bloat.
 QUERIES = [
     "neuromorphic engineer",
     "computational neuroscience",
-    "spiking neural network",
-    "connectomics",
+    "spiking neural network engineer",
+    "connectomics researcher",
+    "BCI engineer",
     "sales engineer AI startup",
     "solutions engineer machine learning",
-    "developer relations AI",
 ]
 
-# Mode-aware locations. ``label`` is what we record on the row; ``location``
-# is what SerpAPI sees; ``remote`` flag appends "remote" to the query so
-# Google biases toward remote-friendly listings.
 _LOCAL_REMOTE_LOCATIONS = (
     {"location": "Atlanta, Georgia, United States", "label": "Atlanta, GA"},
     {"location": "United States", "label": "Remote", "remote": True},
@@ -50,15 +42,13 @@ _US_EXTRA_LOCATIONS = (
 )
 
 ENDPOINT = "https://serpapi.com/search.json"
+MAX_PAGES = 1  # LinkedIn results past page 1 rarely add signal.
 
-# Hard cap so a single run can't burn the whole monthly free tier. Default
-# dropped from 30 to 15 once Ashby + HN + 80kh + expanded Greenhouse came
-# online — those four cover most of the tier-1 territory SerpAPI was
-# discovering. Override via the env var if you want a wider sweep.
-MAX_SEARCHES_PER_RUN = int(os.environ.get("SERPAPI_MAX_SEARCHES", "15"))
-
-# Cap pages per (query, location). Most relevant results appear on page 1.
-MAX_PAGES = 2
+# Independent budget so the LinkedIn-flavoured queries don't crowd out the
+# main ``serpapi.py`` budget when both run in the same agent invocation.
+# Halved alongside the main SerpAPI budget once Ashby/HN/80kh/expanded
+# Greenhouse landed. Override via env if you want a wider LinkedIn sweep.
+MAX_SEARCHES_PER_RUN = int(os.environ.get("LINKEDIN_MAX_SEARCHES", "8"))
 
 
 def _locations_for_mode():
@@ -68,10 +58,10 @@ def _locations_for_mode():
 
 
 def fetch():
-    """Yield job dicts from SerpAPI's Google Jobs endpoint with pagination."""
+    """Yield job dicts from LinkedIn postings via SerpAPI Google Jobs."""
     api_key = os.environ.get("SERPAPI_KEY")
     if not api_key:
-        logger.warning("SERPAPI_KEY not set — skipping serpapi source")
+        logger.warning("SERPAPI_KEY not set — skipping linkedin source")
         return
 
     locations = _locations_for_mode()
@@ -86,12 +76,14 @@ def fetch():
         for loc in locations:
             if budget_exhausted:
                 break
-            query = f"{q} remote" if loc.get("remote") else q
+            query = f"site:linkedin.com/jobs {q}"
+            if loc.get("remote"):
+                query += " remote"
             for page in range(MAX_PAGES):
                 if searches_issued >= MAX_SEARCHES_PER_RUN:
                     logger.warning(
-                        "serpapi: budget exhausted at %d searches "
-                        "(MAX_SEARCHES_PER_RUN=%d) — stopping",
+                        "linkedin: budget exhausted at %d searches "
+                        "(LINKEDIN_MAX_SEARCHES=%d) — stopping",
                         searches_issued, MAX_SEARCHES_PER_RUN,
                     )
                     budget_exhausted = True
@@ -111,17 +103,19 @@ def fetch():
                     data = resp.json()
                 except Exception as exc:
                     logger.warning(
-                        "serpapi: request failed q=%r loc=%r page=%d: %s",
+                        "linkedin: request failed q=%r loc=%r page=%d: %s",
                         query, loc["label"], page, exc,
                     )
                     time.sleep(1)
-                    break  # stop paginating on error
+                    break
 
                 results = data.get("jobs_results", []) or []
                 if not results:
-                    logger.info("serpapi: 0 results q=%r loc=%r page=%d (stop)",
-                                query, loc["label"], page)
-                    break  # no more pages
+                    logger.info(
+                        "linkedin: 0 results q=%r loc=%r page=%d (stop)",
+                        query, loc["label"], page,
+                    )
+                    break
 
                 page_yield = 0
                 for job in results:
@@ -144,7 +138,7 @@ def fetch():
                     yielded += 1
                     yield {
                         "id": jid,
-                        "source": "serpapi",
+                        "source": "linkedin",
                         "query": q,
                         "title": title,
                         "company": company,
@@ -153,16 +147,14 @@ def fetch():
                         "url": link,
                     }
                 logger.info(
-                    "serpapi: page yielded %d new q=%r loc=%r page=%d",
+                    "linkedin: page yielded %d new q=%r loc=%r page=%d",
                     page_yield, query, loc["label"], page,
                 )
-                # Short-circuit if a page produced nothing new — pagination
-                # past that point is almost certainly more dupes.
                 if page_yield == 0:
                     break
                 time.sleep(1)
 
     logger.info(
-        "serpapi total: %d unique entries from %d searches (budget=%d)",
+        "linkedin total: %d unique entries from %d searches (budget=%d)",
         yielded, searches_issued, MAX_SEARCHES_PER_RUN,
     )

@@ -17,6 +17,7 @@ import anthropic
 
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CANDIDATE_PROFILE_PATH
 from applicant.browser_tools import BrowserSession
+from prompts import load_prompt
 
 logger = logging.getLogger("applicant.agent_loop")
 
@@ -166,71 +167,10 @@ TOOL_SCHEMAS = [
 ]
 
 
-# ── System prompts ─────────────────────────────────────────────────────────
-
-_COMMON_RULES = """You are helping Vishal Pathak apply to a job. You control a real web browser via
-tools. Your goal is to fill the application form accurately using the candidate profile, the
-job description, the resume PDF, and the cover letter text provided below.
-
-Core rules:
-- Every answer you write into a field must be consistent with the candidate profile. Never
-  invent experience, skills, or credentials he doesn't have.
-- For freeform questions ("why this company?", "describe a time..."), write 2-4 sentences
-  max in Vishal's voice: direct, technical, no "passionate"/"thrilled"/"leverage"/
-  "excited to apply", no exclamation marks, narrative not bullet points.
-- Standard personal fields: use the profile below (name, email, phone, location, LinkedIn).
-- Upload the provided resume PDF to the Resume/CV field. If a Cover Letter upload is
-  offered AND the site has a separate text field for it, prefer pasting the cover letter
-  text into the text field. If only an upload is offered and you don't have a cover letter
-  PDF on disk, paste the cover letter text into a text field if one exists; otherwise skip.
-- Demographic / EEO / disability / veteran questions are ALWAYS optional. Select
-  "I don't wish to answer" / "Decline to self-identify" / equivalent for each. If the
-  form forces an answer, queue_for_review.
-- If you're unsure about any REQUIRED field, call queue_for_review with the details.
-- You must work methodically: take a screenshot, call get_form_fields, think, fill,
-  repeat. Do not spam clicks.
-"""
-
-
-def _prepare_prompt(job: dict) -> str:
-    return _COMMON_RULES + f"""
-MODE: PREPARE
-
-Your job is to navigate to the application URL (already open), fill every field you can
-confidently fill, and then call finish_preparation. You must NOT call click_submit. A human
-will review before the actual submission.
-
-The browser is already open at the application URL. Start by taking a screenshot and
-enumerating form fields.
-
-TARGET JOB:
-  Title: {job.get('title')}
-  Company: {job.get('company')}
-  Application URL (final ATS): {job.get('application_url') or job.get('url')}
-"""
-
-
-def _submit_prompt(job: dict) -> str:
-    return _COMMON_RULES + f"""
-MODE: SUBMIT
-
-The human has approved this application. Your job is to RE-FILL the entire form (browser
-sessions don't persist), verify everything is filled correctly, and then call click_submit
-on the final submit button. After submit, a confirmation message will appear on the page.
-
-Rules specific to submit mode:
-- You may click_submit exactly once and only after you've filled every required field.
-- If anything goes wrong during re-fill (field missing, upload fails), call queue_for_review
-  immediately. Do not submit with an incomplete form.
-
-The browser is already open at the application URL. Start by taking a screenshot and
-enumerating form fields.
-
-TARGET JOB:
-  Title: {job.get('title')}
-  Company: {job.get('company')}
-  Application URL (final ATS): {job.get('application_url') or job.get('url')}
-"""
+# System prompts now live in `prompts/agent_common.md`,
+# `prompts/agent_prepare.md`, and `prompts/agent_submit.md`. They're loaded
+# at call time via `load_prompt(...)` which prepends `_shared.md` once and
+# joins the named bodies in order with `---` separators.
 
 
 # ── Agent loop ─────────────────────────────────────────────────────────────
@@ -315,25 +255,18 @@ def run_submission_agent(
     profile = _load_profile()
     voice = _load_voice_profile()
 
-    if session.mode == "submit":
-        mode_instructions = _submit_prompt(job)
-    else:
-        mode_instructions = _prepare_prompt(job)
-
-    system_prompt = f"""{mode_instructions}
-
-========== CANDIDATE PROFILE (CLAUDE.md) ==========
-{profile}
-
-========== VOICE PROFILE (for any freeform answers) ==========
-{voice}
-
-========== JOB DESCRIPTION ==========
-{job.get('description', '')[:5000]}
-
-========== COVER LETTER TEXT (paste into a text field if the form has one; do not upload) ==========
-{cover_letter_text or '(no cover letter text provided)'}
-"""
+    mode_prompt = "agent_submit" if session.mode == "submit" else "agent_prepare"
+    system_prompt = load_prompt(
+        "agent_common",
+        mode_prompt,
+        profile=profile,
+        voice=voice,
+        job_description=(job.get("description", "") or "")[:5000],
+        cover_letter_text=cover_letter_text or "(no cover letter text provided)",
+        job_title=job.get("title", ""),
+        company=job.get("company", ""),
+        application_url=job.get("application_url") or job.get("url", ""),
+    )
 
     # The first user message kicks things off.
     messages: list = [

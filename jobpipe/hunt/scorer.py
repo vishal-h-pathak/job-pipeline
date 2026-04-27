@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import json
 import os
 import pathlib
 import re
 
 from anthropic import Anthropic
+
+from prompts import load_prompt
 
 MODEL = "claude-opus-4-7"
 PROFILE_PATH = pathlib.Path(__file__).parent / "CLAUDE.md"
@@ -22,29 +26,17 @@ def _profile() -> str:
     return PROFILE_PATH.read_text()
 
 
-SYSTEM = """You are a job-fit evaluator for Vishal Pathak. The user message
-contains his full profile (his "ground truth" doc) followed by a single job
-posting. Score how well the job matches his interests, tier, location, and
-disqualifiers.
+# System prompt is loaded lazily on first scoring call from
+# `prompts/scorer.md` (with `prompts/_shared.md` prepended). Cached after
+# first read so each run pays a single file-system hit.
+_SYSTEM_CACHE: str | None = None
 
-Respond with ONLY a JSON object (no prose, no code fences) of the form:
-{
-  "score": <int 1-10>,
-  "tier": <1 | 2 | 3 | "disqualify">,
-  "reasoning": "<2-3 sentences>",
-  "recommended_action": "notify" | "skip" | "disqualify"
-}
 
-Rules:
-- Tier 1 (computational neuroscience, neuromorphic, connectomics, embodied
-  sim, BCI) → almost always "notify" if score >= 7.
-- Tier 2 (sales engineering in genuinely interesting AI/LLM domains) →
-  "notify" if score >= 7.
-- Tier 3 (mission-driven ML/CV) → "notify" only if score >= 8.
-- Anything matching disqualifiers (DoD, defense, government, no clear
-  mission) → tier "disqualify", action "disqualify".
-- Otherwise "skip".
-"""
+def _system() -> str:
+    global _SYSTEM_CACHE
+    if _SYSTEM_CACHE is None:
+        _SYSTEM_CACHE = load_prompt("scorer")
+    return _SYSTEM_CACHE
 
 
 def _extract_json(text: str) -> dict:
@@ -72,7 +64,7 @@ def score_job(title: str, company: str, description: str, location: str) -> dict
     resp = _client_lazy().messages.create(
         model=MODEL,
         max_tokens=600,
-        system=SYSTEM,
+        system=_system(),
         messages=[{"role": "user", "content": user_msg}],
     )
     text = "".join(block.text for block in resp.content if hasattr(block, "text"))

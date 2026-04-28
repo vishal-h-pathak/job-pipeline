@@ -1,8 +1,16 @@
-"""
-applicant/agent_loop.py — Claude tool-use loop for driving a job application.
+"""applicant/agent_loop.py — Claude tool-use loop for filling a job application (M-4).
 
-Given a BrowserSession and a job dict, this runs Claude in a loop with a
-browser toolkit until the agent finishes, queues for review, or submits.
+Prepare-only. The agent navigates a live job-application page in a real
+browser via a small toolkit and fills every field it can confidently
+fill. There is no `click_submit` tool — the orchestrator leaves the
+browser open after the agent calls `finish_preparation` and the human
+clicks Submit themselves in the visible browser.
+
+The agent's system prompt receives the M-1 `form_answers` JSON inline
+so the agent does NOT need to OCR identity / contact / location values
+out of screenshots. That's the cost-reduction move for unknown-ATS
+jobs — the agent only uses vision for layout and navigation, not for
+re-deriving facts that already live in profile.yml.
 """
 
 from __future__ import annotations
@@ -15,17 +23,20 @@ from typing import Optional
 
 import anthropic
 
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CANDIDATE_PROFILE_PATH
+from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
 from applicant.browser_tools import BrowserSession
 from prompts import load_profile, load_prompt
 
 logger = logging.getLogger("applicant.agent_loop")
 
-# Use the model from config (sonnet by default) — override via env if needed
 SUBMITTER_MODEL = CLAUDE_MODEL
 
 
 # ── Tool schemas exposed to the model ──────────────────────────────────────
+# NOTE: there is no `click_submit` tool here, by design (M-4). The agent
+# can call `finish_preparation` (form is ready for the human to review
+# and submit) or `queue_for_review` (stuck and needs help). Nothing else
+# is terminal.
 
 TOOL_SCHEMAS = [
     {
@@ -48,8 +59,8 @@ TOOL_SCHEMAS = [
         "name": "get_form_fields",
         "description": (
             "Enumerate all visible form fields and buttons on the page. Assigns each a stable "
-            "id (field_1, field_2, ...). Use these ids with fill_field, upload_file, click, and "
-            "click_submit. Call this whenever the page changes (after navigation or a click that "
+            "id (field_1, field_2, ...). Use these ids with fill_field, upload_file, and click. "
+            "Call this whenever the page changes (after navigation or a click that "
             "reveals new fields)."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
@@ -90,19 +101,8 @@ TOOL_SCHEMAS = [
         "description": (
             "Click a button, link, or combobox by its field id. Use this for opening "
             "dropdowns, navigating multi-step forms, accepting cookies, etc. "
-            "Do NOT use this to submit the final application — use click_submit instead."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {"field_id": {"type": "string"}},
-            "required": ["field_id"],
-        },
-    },
-    {
-        "name": "click_submit",
-        "description": (
-            "Click the FINAL submit-application button. Only works in submit mode. "
-            "After clicking, waits up to 30s for a confirmation message. Returns submission status."
+            "There is no click_submit tool — the human clicks Submit themselves "
+            "in the visible browser after you call finish_preparation."
         ),
         "input_schema": {
             "type": "object",
@@ -136,7 +136,7 @@ TOOL_SCHEMAS = [
         "description": (
             "Stop now and queue this application for human review. Use this when you're not "
             "confident how to fill a required field, when the form is unusual, when uploads fail, "
-            "or when you can't find the submit button. The human will resolve and re-queue."
+            "or when you're otherwise stuck. The human will resolve in the visible browser."
         ),
         "input_schema": {
             "type": "object",
@@ -154,9 +154,11 @@ TOOL_SCHEMAS = [
     {
         "name": "finish_preparation",
         "description": (
-            "Prepare mode only. Call this when you've filled the form completely and it's ready "
-            "for the human to review before submission. Do NOT call this if you stopped early "
-            "due to uncertainty — use queue_for_review for that."
+            "Call this when you've filled the form completely and it's ready for the "
+            "human to review before submission. The browser stays open; the human "
+            "reviews what you typed, fixes anything wrong, and clicks Submit themselves. "
+            "Do NOT call this if you stopped early due to uncertainty — use "
+            "queue_for_review for that."
         ),
         "input_schema": {
             "type": "object",
@@ -167,18 +169,11 @@ TOOL_SCHEMAS = [
 ]
 
 
-# System prompts now live in `prompts/agent_common.md`,
-# `prompts/agent_prepare.md`, and `prompts/agent_submit.md`. They're loaded
-# at call time via `load_prompt(...)` which prepends `_shared.md` once and
-# joins the named bodies in order with `---` separators.
-
-
-# ── Agent loop ─────────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────
 
 
 def _load_profile() -> str:
-    """Load merged user-layer profile (profile/ files + CLAUDE.md fallback)."""
-    return load_profile() or "(profile data not found — populate profile/ or CLAUDE.md)"
+    return load_profile() or "(profile data not found)"
 
 
 def _load_voice_profile() -> str:
@@ -186,6 +181,23 @@ def _load_voice_profile() -> str:
     if voice_path.exists():
         return voice_path.read_text(encoding="utf-8")
     return ""
+
+
+def _format_form_answers_block(form_answers: Optional[dict]) -> str:
+    """Render `job["form_answers"]` as the system-prompt context block.
+
+    The agent reads this as the authoritative source of identity /
+    contact / location / narrative values. Falls back to a sentinel
+    string when the row has no form_answers (score below the M-1
+    threshold or generation failed).
+    """
+    if not form_answers:
+        return (
+            "(no form_answers JSON for this row - score may be below the "
+            "generation threshold; fill standard fields from the candidate "
+            "profile section above)"
+        )
+    return json.dumps(form_answers, indent=2, ensure_ascii=False)
 
 
 def _run_tool(session: BrowserSession, name: str, tool_input: dict):
@@ -213,8 +225,6 @@ def _run_tool(session: BrowserSession, name: str, tool_input: dict):
         return (session.tool_upload_file(tool_input["field_id"], tool_input["file_kind"]), False)
     if name == "click":
         return (session.tool_click(tool_input["field_id"]), False)
-    if name == "click_submit":
-        return (session.tool_click_submit(tool_input["field_id"]), False)
     if name == "scroll":
         return (
             session.tool_scroll(
@@ -237,15 +247,22 @@ def _run_tool(session: BrowserSession, name: str, tool_input: dict):
     return (json.dumps({"ok": False, "error": f"unknown tool: {name}"}), False)
 
 
+# ── Agent loop ─────────────────────────────────────────────────────────────
+
+
 def run_submission_agent(
     session: BrowserSession,
     job: dict,
     cover_letter_text: str = "",
     max_turns: int = 40,
 ) -> dict:
-    """
-    Drive the agent until it calls finish_preparation, queue_for_review, or click_submit
-    (or max_turns is hit).
+    """Drive the prepare-only agent until it calls finish_preparation,
+    queue_for_review, or hits max_turns.
+
+    Returns a dict with:
+        success, submitted (always False - the system never submits),
+        needs_review, review_reason, uncertain_fields, screenshots,
+        filled_fields, turns_used, final_url.
     """
     if not ANTHROPIC_API_KEY:
         raise RuntimeError("ANTHROPIC_API_KEY not set")
@@ -253,13 +270,14 @@ def run_submission_agent(
 
     profile = _load_profile()
     voice = _load_voice_profile()
+    form_answers_block = _format_form_answers_block(job.get("form_answers"))
 
-    mode_prompt = "agent_submit" if session.mode == "submit" else "agent_prepare"
     system_prompt = load_prompt(
         "agent_common",
-        mode_prompt,
+        "agent_prepare",
         profile=profile,
         voice=voice,
+        form_answers_block=form_answers_block,
         job_description=(job.get("description", "") or "")[:5000],
         cover_letter_text=cover_letter_text or "(no cover letter text provided)",
         job_title=job.get("title", ""),
@@ -267,17 +285,18 @@ def run_submission_agent(
         application_url=job.get("application_url") or job.get("url", ""),
     )
 
-    # The first user message kicks things off.
     messages: list = [
         {
             "role": "user",
             "content": (
                 "Start by taking a screenshot, then enumerate form fields, then fill in order. "
-                "When done, call finish_preparation (prepare mode) or click_submit (submit mode)."
+                "When done, call finish_preparation. (You cannot click Submit - the human will "
+                "do that themselves in the visible browser after reviewing your work.)"
             ),
         }
     ]
 
+    turn = 0
     for turn in range(max_turns):
         if session.finished:
             break
@@ -300,13 +319,10 @@ def run_submission_agent(
                 "filled_fields": session.filled_fields,
             }
 
-        # Append the assistant turn verbatim
         messages.append({"role": "assistant", "content": response.content})
 
-        # Collect tool calls in this turn and run them
         tool_uses = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
         if not tool_uses:
-            # Model stopped without calling a tool; treat as finished
             logger.info(f"turn {turn}: no tool use, stop_reason={response.stop_reason}")
             break
 
@@ -314,20 +330,11 @@ def run_submission_agent(
         for tu in tool_uses:
             logger.info(f"turn {turn}: tool={tu.name} input={json.dumps(tu.input)[:200]}")
             result_content, _is_image = _run_tool(session, tu.name, tu.input or {})
-            if isinstance(result_content, list):
-                # Screenshot returned list of blocks
-                tool_results_content.append({
-                    "type": "tool_result",
-                    "tool_use_id": tu.id,
-                    "content": result_content,
-                })
-            else:
-                tool_results_content.append({
-                    "type": "tool_result",
-                    "tool_use_id": tu.id,
-                    "content": result_content,
-                })
-            # If the tool flipped a terminal state, stop after this batch
+            tool_results_content.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": result_content,
+            })
             if session.finished:
                 break
 
@@ -336,17 +343,14 @@ def run_submission_agent(
         if response.stop_reason == "end_turn" and not tool_uses:
             break
 
-    # Final state
-    result = {
+    return {
         "success": session.finished and not session.needs_review,
-        "submitted": session.submitted,
+        "submitted": False,  # always - the system never submits (M-4)
         "needs_review": session.needs_review,
         "review_reason": session.review_reason,
         "uncertain_fields": session.review_uncertain,
-        "submit_confirmation_text": session.submit_confirmation_text,
         "screenshots": session.screenshots,
         "filled_fields": session.filled_fields,
         "turns_used": turn + 1 if session.finished else max_turns,
         "final_url": session.page.url,
     }
-    return result

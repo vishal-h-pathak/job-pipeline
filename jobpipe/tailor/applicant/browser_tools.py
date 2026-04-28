@@ -1,12 +1,13 @@
-"""
-applicant/browser_tools.py — Playwright-backed tools exposed to the Claude agent.
+"""applicant/browser_tools.py — Playwright-backed tools for the prepare-only agent (M-4).
 
 The Claude agent drives a job application form by calling these tools. Each tool
 returns a string (for tool_result); screenshot also returns image bytes inline.
 
 Design:
-- A BrowserSession wraps a Playwright Page. It's mode-aware (prepare/submit)
-  so click_submit() is only permitted in submit mode.
+- A BrowserSession wraps a Playwright Page. The session is prepare-only by
+  design — there is no submit mode, no click_submit tool, no auto-submission.
+  After the agent calls `tool_finish_preparation` the orchestrator leaves the
+  browser open for the human to review and submit themselves.
 - Every form field is assigned a stable id via an injected JS snippet on each
   get_form_fields() call, so field_1, field_2... remain stable within a turn.
 - Labels are extracted in priority order: aria-label → <label for> →
@@ -184,7 +185,6 @@ _ENUMERATE_JS = r"""
 @dataclass
 class BrowserSession:
     page: Page
-    mode: str = "prepare"  # "prepare" or "submit"
     resume_path: Optional[str] = None
     cover_letter_path: Optional[str] = None   # may be a file path OR inline text in caller
     cover_letter_text: Optional[str] = None
@@ -195,8 +195,6 @@ class BrowserSession:
     review_reason: Optional[str] = None
     review_uncertain: list = field(default_factory=list)
     finished: bool = False
-    submitted: bool = False
-    submit_confirmation_text: Optional[str] = None
 
     # Logs for debugging
     filled_fields: dict = field(default_factory=dict)
@@ -295,54 +293,6 @@ class BrowserSession:
         except Exception as e:
             return json.dumps({"ok": False, "id": field_id, "error": str(e)})
 
-    def tool_click_submit(self, field_id: str) -> str:
-        """Click the final submit button. ONLY allowed in submit mode."""
-        if self.mode != "submit":
-            return json.dumps({
-                "ok": False,
-                "error": "click_submit is only available in submit mode; "
-                         "call finish_preparation in prepare mode instead.",
-            })
-        click_res = self.tool_click(field_id)
-        if '"ok": false' in click_res:
-            return click_res
-
-        # Poll for confirmation for up to 30s
-        patterns = [
-            "application submitted",
-            "thanks for applying",
-            "thank you for applying",
-            "we've received your application",
-            "we have received your application",
-            "your application has been submitted",
-            "application has been received",
-            "submission successful",
-        ]
-        deadline = time.time() + 30
-        confirmation = None
-        while time.time() < deadline:
-            try:
-                body = (self.page.inner_text("body") or "").lower()
-                for p in patterns:
-                    if p in body:
-                        confirmation = p
-                        break
-                if confirmation:
-                    break
-            except Exception:
-                pass
-            time.sleep(1)
-
-        self.submitted = bool(confirmation)
-        self.submit_confirmation_text = confirmation
-        self.finished = True
-        return json.dumps({
-            "ok": True,
-            "submitted": self.submitted,
-            "confirmation_match": confirmation,
-            "current_url": self.page.url,
-        })
-
     def tool_queue_for_review(self, reason: str, uncertain_fields: list = None) -> str:
         self.needs_review = True
         self.review_reason = reason
@@ -362,11 +312,8 @@ class BrowserSession:
         })
 
     def tool_finish_preparation(self, notes: str = "") -> str:
-        if self.mode != "prepare":
-            return json.dumps({
-                "ok": False,
-                "error": "finish_preparation is only for prepare mode; in submit mode use click_submit.",
-            })
+        """Agent declares the form ready for human review. The orchestrator
+        will keep the browser open from here so the human can submit."""
         try:
             path, _ = self.tool_screenshot(label="prepared")
         except Exception:
@@ -374,7 +321,6 @@ class BrowserSession:
         self.finished = True
         return json.dumps({
             "ok": True,
-            "mode": "prepare",
             "screenshot": path,
             "notes": notes,
             "filled_fields_count": len(self.filled_fields),

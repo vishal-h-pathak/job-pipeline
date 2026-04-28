@@ -1,24 +1,26 @@
-"""
-applicant/universal.py — ATS-agnostic applicant driven by a Claude tool-use agent.
+"""applicant/universal.py — ATS-agnostic prepare-only applicant (M-4).
 
-One class handles any ATS (Greenhouse, Lever, Ashby, Workday, iCIMS, Smart-
-Recruiters, ...) because the agent sees the live page and fills fields by label
-rather than by hard-coded selectors. URL aggregators are resolved first.
+Fallback for ATSes without a dedicated DOM handler (Workday, iCIMS,
+SmartRecruiters, Indeed, aggregators). Drives a real browser via a
+Claude tool-use agent, but the agent has no `click_submit` tool — it
+fills the form, calls `finish_preparation`, and the orchestrator
+leaves the browser open for the human to review and submit themselves.
 
-Flow:
-  apply(job, resume_path, cover_letter_path, headless) → prepare-mode run,
-    filling the form and stopping short of submit. Produces:
-      success, screenshot_path, notes, needs_review, review_reason.
+The handler:
+  - resolves aggregator URLs to real ATS endpoints first (no agent loop)
+  - opens a visible (non-headless) browser by default so the human can
+    review what got filled
+  - feeds the agent the M-1 `form_answers` JSON via the system prompt
+    so identity / contact / location values come from profile.yml in
+    Python, not from OCR
 
-  submit(job, resume_path, cover_letter_path, headless) → submit-mode run,
-    re-filling the form from scratch and clicking submit.
+After M-5 the orchestrator will block on a terminal `input()` after
+this returns, keeping the browser context alive for human review.
 """
 
 from __future__ import annotations
 
 import logging
-import time
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -28,16 +30,12 @@ from applicant.base import BaseApplicant
 from applicant.browser_tools import BrowserSession
 from applicant.agent_loop import run_submission_agent
 from applicant.url_resolver import resolve_application_url
-from config import OUTPUT_DIR
 
 logger = logging.getLogger("applicant.universal")
 
 
 class UniversalApplicant(BaseApplicant):
-    """
-    ATS-agnostic applicant driven by a Claude tool-use agent. Replaces per-ATS
-    applicant classes.
-    """
+    """ATS-agnostic prepare-only applicant driven by a Claude tool-use agent."""
 
     name = "universal"
 
@@ -47,20 +45,17 @@ class UniversalApplicant(BaseApplicant):
 
     @staticmethod
     def detect(url: str) -> bool:
-        # Universal applicant handles anything
+        # Universal applicant handles anything (used as fallback).
         return True
 
     def fill_form(self, page, job, resume_path=None, cover_letter_path=None):
-        """Kept for BaseApplicant compatibility but we override apply/submit below."""
-        raise NotImplementedError("UniversalApplicant uses apply()/submit() directly")
+        """Kept for BaseApplicant compatibility but apply() is the entry."""
+        raise NotImplementedError("UniversalApplicant uses apply() directly")
 
-    # ── internal: read cover letter text from file if present ─────────────
     @staticmethod
     def _read_cover_letter_text(cover_letter_path_or_text: Optional[str]) -> str:
         if not cover_letter_path_or_text:
             return ""
-        # Heuristic: if it's long, multi-line, or lacks a file extension,
-        # treat it as raw text rather than a path (avoids OSError on Path ops).
         s = cover_letter_path_or_text
         looks_like_path = (
             len(s) < 1024
@@ -76,29 +71,37 @@ class UniversalApplicant(BaseApplicant):
                 pass
         return s
 
-    # ── one shared driver for prepare & submit ────────────────────────────
-    def _run(
+    def apply(
         self,
         job: dict,
-        resume_path: str,
-        cover_letter_path: str,
-        mode: str,
-        headless: bool = True,
+        resume_path: Optional[str] = None,
+        cover_letter_path: Optional[str] = None,
+        headless: bool = False,
     ) -> dict:
+        """Run the prepare-only agent. Defaults to a visible browser
+        because M-5's orchestrator blocks on a terminal input() after
+        this returns so the human can review and submit themselves."""
         url = job.get("application_url") or job.get("url")
         if not url:
-            return {"success": False, "needs_review": True,
-                    "notes": "No application URL on job"}
+            return {
+                "success": False,
+                "needs_review": True,
+                "notes": "No application URL on job",
+            }
 
-        # Resolve aggregator → real ATS
+        # Resolve aggregator → real ATS endpoint (no agent, no LLM call).
         resolved = resolve_application_url(url)
         real_url = resolved["resolved"]
-        logger.info(f"URL resolved: {url} → {real_url} (is_ats={resolved['is_ats']}, notes={resolved['notes']})")
+        logger.info(
+            f"URL resolved: {url} -> {real_url} "
+            f"(is_ats={resolved['is_ats']}, notes={resolved['notes']})"
+        )
 
         cover_letter_text = self._read_cover_letter_text(cover_letter_path)
 
-        # Determine slug for filenames
-        slug = "".join(c if c.isalnum() else "_" for c in (job.get("company") or "company"))[:40]
+        slug = "".join(
+            c if c.isalnum() else "_" for c in (job.get("company") or "company")
+        )[:40]
 
         try:
             with sync_playwright() as pw:
@@ -131,9 +134,8 @@ class UniversalApplicant(BaseApplicant):
 
                 session = BrowserSession(
                     page=page,
-                    mode=mode,
                     resume_path=resume_path,
-                    cover_letter_path=None,  # prefer inline paste for the letter
+                    cover_letter_path=None,
                     cover_letter_text=cover_letter_text,
                     job_slug=slug,
                 )
@@ -158,10 +160,7 @@ class UniversalApplicant(BaseApplicant):
                 "screenshots": [],
             }
 
-    def apply(self, job, resume_path=None, cover_letter_path=None, headless=True):
-        """Prepare mode — fill the form and stop before submit."""
-        return self._run(job, resume_path, cover_letter_path, mode="prepare", headless=headless)
-
-    def submit(self, job, resume_path=None, cover_letter_path=None, headless=True):
-        """Submit mode — fill then click submit and confirm."""
-        return self._run(job, resume_path, cover_letter_path, mode="submit", headless=headless)
+    # NOTE: no submit() override (M-4). Calls fall through to
+    # BaseApplicant.submit() which raises NotImplementedError. The system
+    # never auto-submits — the human clicks Submit themselves in the
+    # visible browser the orchestrator (M-5) leaves open.

@@ -7,9 +7,11 @@ import re
 
 from anthropic import Anthropic
 
-from prompts import load_prompt
+from prompts import load_profile, load_prompt
 
 MODEL = "claude-opus-4-7"
+# CLAUDE.md path is kept for legacy use only; `load_profile()` aggregates
+# the user-layer files in `profile/` and falls back to CLAUDE.md if needed.
 PROFILE_PATH = pathlib.Path(__file__).parent / "CLAUDE.md"
 
 _client = None
@@ -23,7 +25,7 @@ def _client_lazy() -> Anthropic:
 
 
 def _profile() -> str:
-    return PROFILE_PATH.read_text()
+    return load_profile()
 
 
 # System prompt is loaded lazily on first scoring call from

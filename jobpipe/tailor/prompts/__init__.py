@@ -31,6 +31,9 @@ _USER_LAYER_FILES = (
     "disqualifiers.yml",
     "cv.md",
     "article-digest.md",
+    # J-11 — Match Agent appends generalizable preferences here. Loaded
+    # last so insights override earlier statements when they conflict.
+    "learned-insights.md",
 )
 
 

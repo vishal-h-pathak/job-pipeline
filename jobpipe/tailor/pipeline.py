@@ -63,11 +63,10 @@ from tailor.form_answers import generate_form_answers  # noqa: E402
 from jobpipe.shared.ats_detect import detect_ats, get_applicant  # noqa: E402
 from interview_prep.generator import generate_stories  # noqa: E402
 from interview_prep.bank import save_stories  # noqa: E402
-from notify import (  # noqa: E402
-    notify_ready_for_review,
-    notify_awaiting_submit,
-    notify_applied,
-    notify_failed,
+from notify import (  # noqa: E402  PR-8: canonical send_* names
+    send_awaiting_review,
+    send_awaiting_submit,
+    send_failed,
 )
 from storage import (  # noqa: E402
     upload_pdf,
@@ -111,7 +110,7 @@ def process_approved_jobs():
                 job_id,
                 application_notes="LinkedIn: human-only application required",
             )
-            notify_ready_for_review(job)
+            send_awaiting_review(job)
             continue
 
         # ── Mark as preparing ────────────────────────────────────────────
@@ -286,7 +285,7 @@ def process_approved_jobs():
                 archetype_confidence=archetype_meta.get("confidence"),
             )
 
-            notify_ready_for_review(job)
+            send_awaiting_review(job)
             logger.info(f"Ready for review: {company} — {title}")
 
         except Exception as e:
@@ -294,7 +293,7 @@ def process_approved_jobs():
             # mark_tailor_failed clears materials by default; the prior
             # explicit delete_all_for_job is now redundant and removed.
             mark_tailor_failed(job_id, str(e))
-            notify_failed(job, str(e))
+            send_failed(job, str(e))
 
 
 def process_prefill_requested_jobs():
@@ -367,7 +366,7 @@ def process_prefill_requested_jobs():
                 "Pre-fill: no resume PDF in storage; re-tailor first.",
                 clear_materials=False,
             )
-            notify_failed(job, "Pre-fill blocked: no resume PDF.")
+            send_failed(job, "Pre-fill blocked: no resume PDF.")
             continue
 
         try:
@@ -378,7 +377,7 @@ def process_prefill_requested_jobs():
                 f"Pre-fill: resume download failed: {exc}",
                 clear_materials=False,
             )
-            notify_failed(job, f"Pre-fill blocked: {exc}")
+            send_failed(job, f"Pre-fill blocked: {exc}")
             continue
 
         cover_letter_text = job.get("cover_letter_path") or ""
@@ -410,7 +409,7 @@ def process_prefill_requested_jobs():
                         f"Pre-fill: page load failed: {exc}",
                         clear_materials=False,
                     )
-                    notify_failed(job, f"Pre-fill page load failed: {exc}")
+                    send_failed(job, f"Pre-fill page load failed: {exc}")
                     continue
 
                 # Per-ATS handlers expose fill_form(page, job, ...).
@@ -447,7 +446,7 @@ def process_prefill_requested_jobs():
                     mark_awaiting_submit(
                         job_id, screenshot_path=screenshot_storage_key
                     )
-                    notify_awaiting_submit(job, screenshot_storage_key)
+                    send_awaiting_submit(job, screenshot_storage_key)
                 else:
                     fail_notes = result.get("notes") or result.get(
                         "review_reason"
@@ -457,7 +456,7 @@ def process_prefill_requested_jobs():
                         f"Pre-fill: {fail_notes}",
                         clear_materials=False,
                     )
-                    notify_failed(job, fail_notes)
+                    send_failed(job, fail_notes)
 
                 # ── BLOCK on terminal input() so the browser stays open ─
                 # The human reviews the visible browser, fixes anything
@@ -492,7 +491,7 @@ def process_prefill_requested_jobs():
                 f"Pre-fill exception: {exc}",
                 clear_materials=False,
             )
-            notify_failed(job, str(exc))
+            send_failed(job, str(exc))
         finally:
             if tmp_resume_pdf is not None:
                 try:

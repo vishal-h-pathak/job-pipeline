@@ -39,6 +39,10 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TAILOR_DIR = REPO_ROOT / "jobpipe" / "tailor"
 SUBMIT_DIR = REPO_ROOT / "jobpipe" / "submit"
+# PR-8: per-subtree db.py files are now shims that re-export from the
+# canonical jobpipe/db.py. AST-level invariants check the canonical file
+# directly; runtime fixtures still resolve through the shims unchanged.
+CANONICAL_DB = REPO_ROOT / "jobpipe" / "db.py"
 
 
 def _toplevel_funcs(py_path: Path) -> set[str]:
@@ -53,25 +57,17 @@ def _toplevel_funcs(py_path: Path) -> set[str]:
 # ── Source-level invariants ───────────────────────────────────────────────
 
 
-def test_tailor_db_exports_mark_tailor_failed_only():
-    """Tailor db.py: defines mark_tailor_failed, not mark_failed/mark_needs_review."""
-    funcs = _toplevel_funcs(TAILOR_DIR / "db.py")
+def test_canonical_db_defines_mark_tailor_failed():
+    """Canonical jobpipe/db.py defines mark_tailor_failed (PR-6 split)."""
+    funcs = _toplevel_funcs(CANONICAL_DB)
     assert "mark_tailor_failed" in funcs, (
-        "PR-6: jobpipe/tailor/db.py must define mark_tailor_failed"
-    )
-    assert "mark_failed" not in funcs, (
-        "PR-6: tailor's mark_failed was renamed; "
-        "jobpipe/tailor/db.py must not redefine it"
-    )
-    assert "mark_needs_review" not in funcs, (
-        "PR-6: tailor's mark_needs_review (M-2 deprecated alias) was deleted; "
-        "jobpipe/tailor/db.py must not define it"
+        "PR-6/PR-8: jobpipe/db.py must define mark_tailor_failed"
     )
 
 
-def test_submit_db_keeps_mark_failed_and_mark_needs_review():
-    """Submit db.py keeps both functions — they're the canonical versions."""
-    funcs = _toplevel_funcs(SUBMIT_DIR / "db.py")
+def test_canonical_db_keeps_mark_failed_and_mark_needs_review():
+    """Canonical jobpipe/db.py defines both submit-side state transitions."""
+    funcs = _toplevel_funcs(CANONICAL_DB)
     assert "mark_failed" in funcs
     assert "mark_needs_review" in funcs
 
@@ -167,6 +163,14 @@ def tailor_db(monkeypatch):
     import supabase  # type: ignore[import-not-found]
     monkeypatch.setattr(supabase, "create_client", lambda *a, **kw: fake)
 
+    # PR-8: tailor/db.py is now a shim that re-exports from the canonical
+    # jobpipe.db, which holds a lazy module-level Supabase client cache.
+    # Reset it (per-test) so the create_client monkeypatch above is what
+    # builds the next client, not whatever fixture ran earlier.
+    import jobpipe.db as _canonical_db
+    monkeypatch.setattr(_canonical_db, "_client", None)
+    monkeypatch.setattr(_canonical_db, "_service_client", None)
+
     # `mark_tailor_failed(clear_materials=True)` does `from storage import
     # delete_all_for_job` lazily — provide a stub so we can observe calls.
     storage_stub = type(sys)("storage")
@@ -238,6 +242,13 @@ def submit_db(monkeypatch):
     fake = _FakeClient()
     import supabase  # type: ignore[import-not-found]
     monkeypatch.setattr(supabase, "create_client", lambda *a, **kw: fake)
+
+    # PR-8: submit/db.py is now a shim that re-exports from the canonical
+    # jobpipe.db. Reset its lazy client cache so the create_client
+    # monkeypatch above is what builds the next client.
+    import jobpipe.db as _canonical_db
+    monkeypatch.setattr(_canonical_db, "_client", None)
+    monkeypatch.setattr(_canonical_db, "_service_client", None)
 
     for m in ("config", "db"):
         sys.modules.pop(m, None)

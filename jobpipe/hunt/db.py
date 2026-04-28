@@ -1,57 +1,21 @@
-import os
-from datetime import datetime, timezone
+"""jobpipe.hunt.db — PR-8 shim. See ``jobpipe/db.py`` for the canonical
+implementation. Re-exports the hunt-side surface so the unprefixed
+``from db import get_seen_ids, upsert_job`` in ``jobpipe.hunt.agent``
+keeps resolving through the sys.path bootstrap PR-3 set up.
+"""
+from __future__ import annotations
 
-from supabase import create_client, Client
-
-
-def _client() -> Client:
-    url = os.environ["SUPABASE_URL"]
-    key = os.environ["SUPABASE_KEY"]
-    return create_client(url, key)
-
-
-def upsert_job(job: dict, result: dict) -> None:
-    client = _client()
-    existing = (
-        client.table("jobs").select("id").eq("id", job["id"]).execute().data or []
-    )
-    if existing:
-        client.table("jobs").update(
-            {
-                "score": result.get("score"),
-                "tier": result.get("tier"),
-                "reasoning": result.get("reasoning"),
-                "action": result.get("recommended_action"),
-                "legitimacy": result.get("legitimacy"),
-                "legitimacy_reasoning": result.get("legitimacy_reasoning"),
-            }
-        ).eq("id", job["id"]).execute()
-    else:
-        # Belt-and-suspenders: explicitly set created_at + status so rows are
-        # well-formed even if a DB default is missing or gets dropped.
-        now_iso = datetime.now(timezone.utc).isoformat()
-        client.table("jobs").upsert(
-            {
-                "id": job["id"],
-                "title": job.get("title"),
-                "company": job.get("company"),
-                "location": job.get("location"),
-                "description": job.get("description"),
-                "url": job.get("url"),
-                "source": job.get("source"),
-                "score": result.get("score"),
-                "tier": result.get("tier"),
-                "reasoning": result.get("reasoning"),
-                "action": result.get("recommended_action"),
-                "legitimacy": result.get("legitimacy"),
-                "legitimacy_reasoning": result.get("legitimacy_reasoning"),
-                "status": "new",
-                "created_at": now_iso,
-            },
-            on_conflict="id",
-        ).execute()
+from jobpipe.db import (  # noqa: F401  PR-8 re-export
+    get_seen_ids,
+    upsert_job,
+)
 
 
-def get_seen_ids() -> set[str]:
-    rows = _client().table("jobs").select("id").execute().data or []
-    return {r["id"] for r in rows}
+def __getattr__(name: str):
+    """Forward any other attribute (e.g. ``client``) to ``jobpipe.db`` so
+    new symbols added there don't require a shim update."""
+    import jobpipe.db as _canonical
+    try:
+        return getattr(_canonical, name)
+    except AttributeError as exc:
+        raise AttributeError(name) from exc

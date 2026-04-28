@@ -18,6 +18,11 @@ Description: {job_desc}
 Job Tier: {tier} (1=neuro/dream job, 2=sales eng, 3=ML/CV)
 {match_chat_block}
 
+CHOSEN ARCHETYPE (J-4 — bias your framing, emphasis areas, and bullet
+rewrites toward this lane. The candidate is the same person; the
+archetype is which side of his work to lead with):
+{archetype_block}
+
 RESUME RULES — follow these strictly:
 
 1. SUMMARY: 2-3 sentences max. Written in Vishal's voice — technically precise, no fluff.

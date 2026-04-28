@@ -11,6 +11,7 @@ from datetime import datetime
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CANDIDATE_PROFILE_PATH
 from prompts import load_profile, load_prompt
+from tailor.archetype import classify_archetype, render_archetype_block
 
 logger = logging.getLogger("tailor.cover_letter")
 
@@ -74,6 +75,17 @@ RESUME TAILORING CONTEXT (maintain consistency with these choices):
         if match_chat else ""
     )
 
+    # Archetype (J-4). Reuse the resume-tailoring run's classification
+    # if present (`resume_tailoring['_archetype']`); otherwise reuse the
+    # job's stash; otherwise classify here.
+    archetype_meta = (
+        (resume_tailoring or {}).get("_archetype")
+        or job.get("_archetype")
+        or classify_archetype(job)
+    )
+    job["_archetype"] = archetype_meta
+    archetype_block = render_archetype_block(archetype_meta.get("archetype", ""))
+
     prompt = load_prompt(
         "tailor_cover_letter",
         voice_profile=voice_profile,
@@ -84,6 +96,7 @@ RESUME TAILORING CONTEXT (maintain consistency with these choices):
         tier=job.get("tier", "unknown"),
         context=context,
         match_chat_block=match_chat_block,
+        archetype_block=archetype_block,
     )
 
     response = client.messages.create(

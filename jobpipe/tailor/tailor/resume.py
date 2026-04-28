@@ -13,6 +13,7 @@ from datetime import datetime
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CANDIDATE_PROFILE_PATH
 from prompts import load_profile, load_prompt
+from tailor.archetype import classify_archetype, render_archetype_block
 
 logger = logging.getLogger("tailor.resume")
 
@@ -65,6 +66,24 @@ def tailor_resume(job: dict) -> dict:
         if match_chat else ""
     )
 
+    # Archetype routing (J-4). If the caller already classified once and
+    # stashed `_archetype` on the job dict, reuse it — saves a duplicate
+    # classifier call when the orchestrator runs resume + cover letter
+    # back-to-back. Otherwise classify here.
+    archetype_meta = job.get("_archetype")
+    if not archetype_meta:
+        archetype_meta = classify_archetype(job)
+        job["_archetype"] = archetype_meta
+    archetype_key = archetype_meta.get("archetype", "")
+    archetype_block = render_archetype_block(archetype_key)
+    if archetype_key:
+        logger.info(
+            "Archetype: %s (confidence=%.2f) — %s",
+            archetype_key,
+            archetype_meta.get("confidence", 0.0),
+            archetype_meta.get("reasoning", ""),
+        )
+
     prompt = load_prompt(
         "tailor_resume",
         voice_profile=voice_profile,
@@ -74,6 +93,7 @@ def tailor_resume(job: dict) -> dict:
         job_desc=job_desc,
         tier=job.get("tier", "unknown"),
         match_chat_block=match_chat_block,
+        archetype_block=archetype_block,
     )
 
     response = client.messages.create(
@@ -91,6 +111,11 @@ def tailor_resume(job: dict) -> dict:
         response_text = response_text.split("```")[1].split("```")[0]
 
     result = json.loads(response_text.strip())
+
+    # Stamp archetype into the result so downstream callers (latex_resume,
+    # cover_letter, the orchestrator's status writer) can persist it
+    # without re-running the classifier.
+    result["_archetype"] = archetype_meta
 
     logger.info(f"Resume tailored for {company} — {job_title}")
     return result

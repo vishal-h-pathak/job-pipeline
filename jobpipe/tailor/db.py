@@ -81,7 +81,9 @@ def mark_ready_to_submit(job_id: str, resume_path: str = None,
                           application_url: str = None,
                           application_notes: str = None,
                           resume_pdf_path: str = None,
-                          cover_letter_pdf_path: str = None) -> dict:
+                          cover_letter_pdf_path: str = None,
+                          archetype: str = None,
+                          archetype_confidence: float = None) -> dict:
     """
     Mark a job ready for review.
 
@@ -90,6 +92,8 @@ def mark_ready_to_submit(job_id: str, resume_path: str = None,
         cover_letter_path: Plain cover letter text (for form pasting).
         resume_pdf_path: Supabase Storage object key for the rendered resume PDF.
         cover_letter_pdf_path: Supabase Storage object key for cover letter PDF.
+        archetype: Chosen archetype key (J-4) — persists for /dashboard/insights.
+        archetype_confidence: Classifier confidence 0.0-1.0.
     """
     extras = {}
     if resume_path:
@@ -104,6 +108,10 @@ def mark_ready_to_submit(job_id: str, resume_path: str = None,
         extras["resume_pdf_path"] = resume_pdf_path
     if cover_letter_pdf_path:
         extras["cover_letter_pdf_path"] = cover_letter_pdf_path
+    if archetype:
+        extras["archetype"] = archetype
+    if archetype_confidence is not None:
+        extras["archetype_confidence"] = archetype_confidence
     return update_job_status(job_id, "ready_to_submit", **extras)
 
 

@@ -18,6 +18,7 @@ from pathlib import Path
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CANDIDATE_PROFILE_PATH
 from prompts import load_profile, load_prompt
+from tailor.archetype import classify_archetype, render_archetype_block
 from tailor.normalize import normalize_for_ats
 
 logger = logging.getLogger("tailor.latex_resume")
@@ -346,6 +347,17 @@ def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
         if match_chat else ""
     )
 
+    # Archetype (J-4). Reuse the upstream tailoring run's classification
+    # if present; otherwise classify here. Same per-job idempotency as
+    # resume.py.
+    archetype_meta = (
+        (tailoring or {}).get("_archetype")
+        or job.get("_archetype")
+        or classify_archetype(job)
+    )
+    job["_archetype"] = archetype_meta
+    archetype_block = render_archetype_block(archetype_meta.get("archetype", ""))
+
     prompt = load_prompt(
         "tailor_latex_resume",
         voice_profile=voice_profile,
@@ -356,6 +368,7 @@ def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
         company=company,
         job_desc=job_desc,
         match_chat_block=match_chat_block,
+        archetype_block=archetype_block,
     )
 
     response = client.messages.create(

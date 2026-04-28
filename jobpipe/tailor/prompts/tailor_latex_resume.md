@@ -24,6 +24,10 @@ Company: {company}
 Description: {job_desc}
 {match_chat_block}
 
+CHOSEN ARCHETYPE (J-4 — bias project selection + skill ordering toward
+this lane. Same candidate, different framing):
+{archetype_block}
+
 YOUR TASK — respond with a JSON object containing:
 
 1. "skills" — a dict of 4-5 skill categories with comma-separated skills.

@@ -172,6 +172,12 @@ def process_approved_jobs():
                 "compile_success": True,
             })
 
+            # ── Pull archetype off the resume_result for analytics ──────
+            # tailor_resume() stamps `_archetype` on its return dict (J-4).
+            # Persist the key + confidence so /dashboard/insights and the
+            # pattern-analysis script can group by lane.
+            archetype_meta = resume_result.get("_archetype") or {}
+
             # ── Mark ready for review ────────────────────────────────────
             # Save the RESOLVED url so process_confirmed_jobs points the
             # submission agent at the real ATS page, not the aggregator.
@@ -183,6 +189,8 @@ def process_approved_jobs():
                 application_notes=application_notes,
                 resume_pdf_path=resume_storage_path,
                 cover_letter_pdf_path=cover_storage_path,
+                archetype=archetype_meta.get("archetype"),
+                archetype_confidence=archetype_meta.get("confidence"),
             )
 
             notify_ready_for_review(job)

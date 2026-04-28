@@ -19,6 +19,11 @@ Job Tier: {tier} (1=neuro/dream job, 2=sales eng, 3=ML/CV)
 {context}
 {match_chat_block}
 
+CHOSEN ARCHETYPE (J-4 — frame the cover letter through this lane. The
+opening + middle paragraphs should lead with the emphasis points below
+rather than other parts of his history):
+{archetype_block}
+
 WRITING RULES — follow these strictly:
 
 1. TONE: Write like Vishal explaining to a smart friend why this role makes sense for him.

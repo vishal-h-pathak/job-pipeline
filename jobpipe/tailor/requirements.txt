@@ -6,3 +6,4 @@ apscheduler
 httpx
 beautifulsoup4
 reportlab
+pyyaml>=6.0

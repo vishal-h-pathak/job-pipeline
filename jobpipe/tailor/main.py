@@ -31,6 +31,7 @@ from tailor.resume import tailor_resume
 from tailor.cover_letter import generate_cover_letter
 from tailor.cover_letter_pdf import render_cover_letter_pdf
 from tailor.latex_resume import generate_tailored_latex
+from tailor.form_answers import generate_form_answers
 from applicant.detector import detect_ats, get_applicant
 from interview_prep.generator import generate_stories
 from interview_prep.bank import save_stories
@@ -198,6 +199,40 @@ def process_approved_jobs():
                     logger.info(f"Generated {len(stories)} STAR+R stories for {company}")
             except Exception as exc:
                 logger.warning(f"STAR+R generation skipped for {company}: {exc}")
+
+            # ── Generate form-answer drafts (M-1, career-ops "Block H") ──
+            # Authoritative source for the per-ATS DOM handlers (M-3) and
+            # the dashboard cockpit (M-6). Identity / contact / location /
+            # comp / work-auth fields come from profile.yml in Python; the
+            # LLM only drafts why_this_role, why_this_company, optional
+            # additional_info, and any role-specific additional_questions.
+            #
+            # Gated on score >= 6 (the existing notify threshold) — below
+            # that we won't be applying anyway, so the Sonnet call is
+            # wasted. Generation failures are non-fatal.
+            score = job.get("score") or 0
+            if score >= 6:
+                try:
+                    form_answers = generate_form_answers(
+                        job, resume_result, archetype_meta=archetype_meta
+                    )
+                    from db import client as _db_client
+                    _db_client.table("jobs").update(
+                        {"form_answers": form_answers}
+                    ).eq("id", job_id).execute()
+                    logger.info(
+                        f"Form answers generated for {company} "
+                        f"({len(form_answers.get('additional_questions') or [])} "
+                        f"role-specific Qs)"
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"form_answers generation skipped for {company}: {exc}"
+                    )
+            else:
+                logger.info(
+                    f"form_answers skipped for {company} (score {score} < 6)"
+                )
 
             # ── Mark ready for review ────────────────────────────────────
             # Save the RESOLVED url so process_confirmed_jobs points the
@@ -383,6 +418,75 @@ def test_tailor(job_id: str):
         print(f"PDF compiled successfully ({len(latex_result.get('pdf_bytes') or b'')} bytes, in-memory)")
     else:
         print(f"LaTeX compilation failed: {latex_result.get('compile_log', 'unknown')[:500]}")
+
+    # Step 4: STAR+R interview stories (J-3)
+    # Mirrors the production flow at process_approved_jobs(): generates
+    # stories tagged to the archetype, but in test mode we print them
+    # to stdout instead of saving to the star_stories table.
+    print("\n─── STEP 4: STAR+R Interview Stories ───────────────────────")
+    archetype_meta = resume_result.get("_archetype") or {}
+    try:
+        stories = generate_stories(job, archetype_meta=archetype_meta)
+        if not stories:
+            print("(generator returned no stories)")
+        else:
+            print(f"\nGenerated {len(stories)} stories"
+                  f" (archetype: {archetype_meta.get('archetype', 'unknown')}):\n")
+            for i, s in enumerate(stories, 1):
+                print(f"  ── Story {i} ──")
+                for field in ("situation", "task", "action", "result", "reflection"):
+                    val = s.get(field)
+                    if val:
+                        print(f"  {field.upper():11s} {val}")
+                tags = s.get("tags") or []
+                if tags:
+                    print(f"  TAGS        {', '.join(tags)}")
+                print()
+    except Exception as exc:
+        print(f"(STAR+R generation failed: {exc})")
+
+    # Step 5: Form-answer drafts (M-1, career-ops "Block H")
+    # Always runs in test mode regardless of score so the user can preview
+    # what gets stored in jobs.form_answers and copy-pasted into manual
+    # submissions. The production flow at process_approved_jobs() gates
+    # this on score >= 6.
+    print("\n─── STEP 5: Form-Answer Drafts ─────────────────────────────")
+    try:
+        form_answers = generate_form_answers(
+            job, resume_result, archetype_meta=archetype_meta
+        )
+        identity_keys = (
+            "first_name", "last_name", "email", "phone", "linkedin_url",
+            "github_url", "portfolio_url", "current_location",
+            "willing_to_relocate", "remote_preference", "salary_expectation",
+            "work_authorization", "notice_period", "availability_to_start",
+            "current_company", "current_title", "years_of_experience",
+        )
+        print("\nIDENTITY (from profile.yml — never LLM-generated):")
+        for k in identity_keys:
+            v = form_answers.get(k)
+            if v is None or v == "":
+                continue
+            print(f"  {k:24s} {v}")
+
+        print("\nWHY THIS ROLE:")
+        print(f"  {form_answers.get('why_this_role') or '(empty)'}")
+
+        print("\nWHY THIS COMPANY:")
+        print(f"  {form_answers.get('why_this_company') or '(empty)'}")
+
+        print("\nADDITIONAL INFO:")
+        print(f"  {form_answers.get('additional_info') or '(none)'}")
+
+        questions = form_answers.get("additional_questions") or []
+        print(f"\nADDITIONAL QUESTIONS ({len(questions)}):")
+        if not questions:
+            print("  (none)")
+        for i, q in enumerate(questions, 1):
+            print(f"\n  Q{i}: {q.get('question', '')}")
+            print(f"  A{i}: {q.get('draft_answer', '')}")
+    except Exception as exc:
+        print(f"(form_answers generation failed: {exc})")
 
     # Summary
     print(f"\n{'='*60}")

@@ -18,11 +18,14 @@ After M-5 the orchestrator will block on a terminal `input()` after
 this returns, keeping the browser context alive for human review.
 
 Moved from ``jobpipe/tailor/applicant/universal.py`` in PR-4.
-``BaseApplicant``, ``BrowserSession`` still live under
-``jobpipe.tailor.applicant`` (held for PR-7) and resolve via the
-tailor sys.path bootstrap fired by ``jobpipe.shared.ats_detect``.
 ``run_submission_agent`` moved to the sibling ``prepare_loop`` module.
 ``resolve_application_url`` moved up one level inside tailor.
+
+PR-7 history: ``BaseApplicant`` and ``BrowserSession`` moved into the submit
+subtree (``jobpipe.submit.adapters.applicant_base`` and
+``jobpipe.submit.adapters.browser_tools``); ``url_resolver`` is now imported
+through its full ``jobpipe.tailor.url_resolver`` path. This removes the last
+prepare_dom dependency on the tailor sys.path bootstrap.
 """
 
 from __future__ import annotations
@@ -33,10 +36,10 @@ from typing import Optional
 
 from playwright.sync_api import sync_playwright
 
-from applicant.base import BaseApplicant
-from applicant.browser_tools import BrowserSession
+from jobpipe.submit.adapters.applicant_base import BaseApplicant
+from jobpipe.submit.adapters.browser_tools import BrowserSession
 from ..prepare_loop import run_submission_agent
-from url_resolver import resolve_application_url
+from jobpipe.tailor.url_resolver import resolve_application_url
 
 logger = logging.getLogger("prepare_dom.universal")
 

@@ -1,5 +1,10 @@
 """
-adapters/_common.py — Shared primitives for deterministic ATS adapters.
+adapters/_common.py — Async-side shared helpers for deterministic ATS adapters
+(Stagehand + Browserbase). Sibling: ``adapters/prepare_dom/_common.py`` holds
+the sync Playwright DOM helpers used by the prepare-only fillers. Both files
+exist because the two adapter tracks have incompatible runtimes — async
+Stagehand ``act()`` / ``extract()`` vs sync ``page.locator().fill()`` — so
+mixing the helpers in one module would obscure call signatures.
 
 Greenhouse, Lever, and Ashby all follow the same run() skeleton:
 

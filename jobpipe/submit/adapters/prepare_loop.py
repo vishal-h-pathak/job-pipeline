@@ -12,11 +12,11 @@ out of screenshots. That's the cost-reduction move for unknown-ATS
 jobs — the agent only uses vision for layout and navigation, not for
 re-deriving facts that already live in profile.yml.
 
-Moved from ``jobpipe/tailor/applicant/agent_loop.py`` in PR-4. Bare
-imports (``from config``, ``from prompts``, ``from applicant.browser_tools``)
-resolve via the tailor sys.path bootstrap fired by the caller chain
-(``jobpipe.shared.ats_detect.get_applicant`` →
-``jobpipe.submit.adapters.prepare_dom.universal``).
+Moved from ``jobpipe/tailor/applicant/agent_loop.py`` in PR-4. PR-7 swapped
+the previously bare imports (``from config``, ``from prompts``,
+``from applicant.browser_tools``) for explicit jobpipe-namespaced paths so
+this module no longer depends on the tailor sys.path bootstrap that
+``jobpipe.shared.ats_detect`` used to fire.
 
 Behavior delta: ``_load_voice_profile`` previously resolved
 ``Path(__file__).parent.parent / "templates" / "VOICE_PROFILE.md"``,
@@ -37,9 +37,9 @@ from typing import Optional
 
 import anthropic
 
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
-from applicant.browser_tools import BrowserSession
-from prompts import load_profile, load_prompt
+from jobpipe.submit.config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from jobpipe.submit.adapters.browser_tools import BrowserSession
+from jobpipe.tailor.prompts import load_profile, load_prompt
 
 logger = logging.getLogger("prepare_loop")
 

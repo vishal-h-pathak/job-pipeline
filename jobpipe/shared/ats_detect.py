@@ -55,25 +55,6 @@ def detect_ats(url: str) -> str:
     return "generic"
 
 
-def _bootstrap_tailor_sys_path() -> None:
-    """Ensure ``jobpipe/tailor/`` is on sys.path before importing prepare_dom adapters.
-
-    The moved adapters in ``jobpipe.submit.adapters.prepare_dom.*`` still
-    use bare imports (``from applicant.base import BaseApplicant``,
-    ``from config import OUTPUT_DIR``) inherited from the legacy
-    job-applicant repo. Those resolve only when ``jobpipe/tailor/`` is on
-    sys.path. PR-7 moves base.py / browser_tools.py into the submit
-    subtree and removes this bootstrap; until then, callers of
-    get_applicant() depend on this stub running first.
-    """
-    import sys
-    from pathlib import Path
-
-    tailor_dir = str(Path(__file__).resolve().parents[1] / "tailor")
-    if tailor_dir not in sys.path:
-        sys.path.insert(0, tailor_dir)
-
-
 def get_applicant(url: str):
     """Return the appropriate applicant instance for a given URL.
 
@@ -81,11 +62,17 @@ def get_applicant(url: str):
     Ashby, Greenhouse, and Lever. Everything else falls through to
     ``UniversalApplicant``, which uses a Claude tool-use agent in
     prepare-only mode (M-4) to drive unknown ATSes by vision.
+
+    PR-7 removed the legacy ``_bootstrap_tailor_sys_path()`` stub that this
+    function used to call before importing the prepare_dom adapters. The
+    moved adapters in ``jobpipe.submit.adapters.prepare_dom.*`` and their
+    sibling ``prepare_loop`` now use explicit jobpipe-namespaced imports
+    for everything (``BaseApplicant``, ``BrowserSession``, ``url_resolver``,
+    ``config``, ``prompts``), so the sys.path side-effect is no longer
+    needed to make those modules importable.
     """
     ats = detect_ats(url)
     logger.info(f"ats detected: {ats} for {url}")
-
-    _bootstrap_tailor_sys_path()
 
     if ats == "ashby":
         from jobpipe.submit.adapters.prepare_dom.ashby import AshbyApplicant

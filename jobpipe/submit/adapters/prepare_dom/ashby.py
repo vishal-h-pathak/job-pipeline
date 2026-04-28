@@ -1,32 +1,77 @@
 """prepare_dom/ashby.py — Ashby ATS (ashbyhq.com) DOM-based form filler (M-3).
 
 Navigates to an Ashby-hosted application page, fills standard fields by
-reading values from `job["form_answers"]` (the structured JSON written
-by the M-1 tailoring step), uploads a resume PDF, pastes a cover letter,
-takes a screenshot, and returns. Zero Anthropic API calls — pure
-Playwright + DOM selectors.
+reading values from ``job["form_answers"]`` (the structured JSON written by
+the M-1 tailoring step), uploads a resume PDF, pastes a cover letter, takes
+a screenshot, and returns. Zero Anthropic API calls — pure Playwright + DOM
+selectors.
 
-The handler does NOT click Submit. After M-3 + M-5, the orchestrator
-takes the post-fill screenshot, marks the row `awaiting_human_submit`,
-and blocks on a terminal `input()` while the human reviews the visible
-browser, fixes anything wrong, clicks Submit themselves, and then comes
-back to the dashboard cockpit to click "Mark Applied".
+The handler does NOT click Submit. After M-3 + M-5, the orchestrator takes
+the post-fill screenshot, marks the row ``awaiting_human_submit``, and blocks
+on a terminal ``input()`` while the human reviews the visible browser, fixes
+anything wrong, clicks Submit themselves, and then comes back to the
+dashboard cockpit to click "Mark Applied".
 
-Moved from ``jobpipe/tailor/applicant/ashby.py`` in PR-4. ``BaseApplicant``
-still lives at ``jobpipe/tailor/applicant/base.py`` (held for PR-7); the
-bare ``from applicant.base`` import resolves via the tailor sys.path
-bootstrap that fires in ``jobpipe.shared.ats_detect.get_applicant``.
+PR-7 history: shared sync Playwright helpers (selector iteration, file
+upload, textarea paste, cover-letter resolution, field-map construction) now
+live in ``prepare_dom/_common.py``. This file keeps only the Ashby-specific
+specialization — the SPA-hydration networkidle wait, the extra fuzzy
+``input[name*="..."]`` fallbacks that Lever and Greenhouse don't need, the
+full-name vs first/last branch behavior, and the union of cover-letter
+textarea selectors that Ashby requires (including the
+``div[contenteditable="true"]`` fallback for rich-text fields). The
+``BaseApplicant`` import switched from the bare ``from applicant.base`` to
+the explicit ``jobpipe.submit.adapters.applicant_base`` path, so this module
+no longer depends on the legacy tailor sys.path bootstrap.
 """
 
 import logging
 import time
 from pathlib import Path
 
-from playwright.sync_api import Page
-
-from applicant.base import BaseApplicant
+from jobpipe.submit.adapters.applicant_base import BaseApplicant
+from ._common import (
+    build_field_map,
+    fill_text,
+    label_selectors,
+    load_cover_letter,
+    paste_textarea,
+    upload_file,
+)
 
 logger = logging.getLogger("prepare_dom.ashby")
+
+
+# Ashby cover-letter textareas vary across boards — try the most specific
+# selectors first (label-attr matches), then fall back to any textarea, then
+# rich-text contenteditable as a last resort.
+_ASHBY_COVER_LETTER_SELECTORS = [
+    'textarea[name*="cover" i]',
+    'textarea[aria-label*="cover" i]',
+    'textarea[placeholder*="cover" i]',
+    'textarea[name*="additional" i]',
+    'textarea[aria-label*="additional" i]',
+    "textarea",
+    'div[contenteditable="true"]',
+]
+
+# Ashby resume input has no canonical name attr — accept any file input,
+# preferring PDF-typed slots first.
+_ASHBY_RESUME_SELECTORS = [
+    'input[type="file"]',
+    'input[accept*=".pdf"]',
+    'input[accept*="application/pdf"]',
+]
+
+
+def _ashby_field_selectors(label_text: str) -> list[str]:
+    """Ashby falls back to fuzzy ``input[name*="..."]`` matches when the
+    label-based selectors all miss. Lever and Greenhouse don't need this
+    extra layer because they have explicit per-label name maps."""
+    return label_selectors(label_text) + [
+        f'input[name*="{label_text.lower().replace(" ", "_")}"]',
+        f'input[name*="{label_text.lower().replace(" ", "")}"]',
+    ]
 
 
 class AshbyApplicant(BaseApplicant):
@@ -50,17 +95,17 @@ class AshbyApplicant(BaseApplicant):
 
     def fill_form(
         self,
-        page: Page,
+        page,
         job: dict,
         resume_path: str = None,
         cover_letter_path: str = None,
     ) -> dict:
-        """Fill an Ashby application form from `job["form_answers"]`.
+        """Fill an Ashby application form from ``job["form_answers"]``.
 
         Ashby renders inputs inside a React app. Most labels are explicit
-        `<label>` elements; some use `aria-label`; some use placeholders.
-        We try multiple selector strategies per field and stop at the
-        first match.
+        ``<label>`` elements; some use ``aria-label``; some use placeholders.
+        We try multiple selector strategies per field and stop at the first
+        match.
         """
         filled = []
         notes_parts = []
@@ -69,11 +114,11 @@ class AshbyApplicant(BaseApplicant):
             page.wait_for_load_state("networkidle", timeout=15000)
             time.sleep(2)  # extra buffer for React hydration
 
-            field_map = _build_field_map(job)
+            field_map = build_field_map(job)
             for label_text, value in field_map.items():
                 if not value:
                     continue
-                if self._try_fill_by_label(page, label_text, value):
+                if fill_text(page, _ashby_field_selectors(label_text), value, log=logger):
                     filled.append(label_text)
 
             notes_parts.append(
@@ -82,7 +127,7 @@ class AshbyApplicant(BaseApplicant):
 
             # Resume upload
             if resume_path and Path(resume_path).exists():
-                if self._try_upload_resume(page, resume_path):
+                if upload_file(page, _ASHBY_RESUME_SELECTORS, resume_path, log=logger):
                     notes_parts.append(
                         f"Uploaded resume: {Path(resume_path).name}"
                     )
@@ -93,8 +138,10 @@ class AshbyApplicant(BaseApplicant):
 
             # Cover letter
             if cover_letter_path:
-                cover_text = self._load_cover_letter(cover_letter_path)
-                if cover_text and self._try_paste_cover_letter(page, cover_text):
+                cover_text = load_cover_letter(cover_letter_path)
+                if cover_text and paste_textarea(
+                    page, _ASHBY_COVER_LETTER_SELECTORS, cover_text, log=logger
+                ):
                     notes_parts.append("Pasted cover letter")
                 elif cover_text:
                     notes_parts.append("Cover letter: no textarea found")
@@ -121,112 +168,12 @@ class AshbyApplicant(BaseApplicant):
                 ),
             }
 
-    # ── Private helpers ──────────────────────────────────────────────────────
 
-    def _try_fill_by_label(self, page: Page, label_text: str, value: str) -> bool:
-        """Find an input by label / aria-label / placeholder / name and fill it."""
-        selectors = [
-            f'label:has-text("{label_text}") input',
-            f'label:has-text("{label_text}") >> input',
-            f'input[aria-label="{label_text}"]',
-            f'input[placeholder*="{label_text}" i]',
-            f'input[name*="{label_text.lower().replace(" ", "_")}"]',
-            f'input[name*="{label_text.lower().replace(" ", "")}"]',
-        ]
-        for selector in selectors:
-            try:
-                el = page.locator(selector).first
-                if el.is_visible(timeout=1000):
-                    el.click()
-                    el.fill(value)
-                    logger.info(f"Filled '{label_text}' via {selector}")
-                    return True
-            except Exception:
-                continue
-        logger.debug(f"Could not find field for '{label_text}'")
-        return False
-
-    def _try_upload_resume(self, page: Page, resume_path: str) -> bool:
-        """Upload resume via file input."""
-        selectors = [
-            'input[type="file"]',
-            'input[accept*=".pdf"]',
-            'input[accept*="application/pdf"]',
-        ]
-        for selector in selectors:
-            try:
-                file_input = page.locator(selector).first
-                if file_input.count() > 0:
-                    file_input.set_input_files(resume_path)
-                    logger.info(f"Uploaded resume via {selector}")
-                    return True
-            except Exception:
-                continue
-        return False
-
-    def _load_cover_letter(self, cover_letter_path: str) -> str:
-        """Load cover letter text from file or treat the arg as raw text."""
-        path = Path(cover_letter_path)
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-        if len(cover_letter_path) > 100:
-            return cover_letter_path
-        return ""
-
-    def _try_paste_cover_letter(self, page: Page, text: str) -> bool:
-        """Paste cover letter into a textarea or contenteditable field."""
-        selectors = [
-            'textarea[name*="cover" i]',
-            'textarea[aria-label*="cover" i]',
-            'textarea[placeholder*="cover" i]',
-            'textarea[name*="additional" i]',
-            'textarea[aria-label*="additional" i]',
-            "textarea",
-            'div[contenteditable="true"]',
-        ]
-        for selector in selectors:
-            try:
-                el = page.locator(selector).first
-                if el.is_visible(timeout=1000):
-                    el.click()
-                    el.fill(text)
-                    logger.info(f"Pasted cover letter via {selector}")
-                    return True
-            except Exception:
-                continue
-        return False
-
-
-# ── Shared field-map builder (reused by greenhouse.py / lever.py too) ──────
-
-def _build_field_map(job: dict) -> dict[str, str]:
-    """Build a label-keyed dict of values from `job["form_answers"]`.
-
-    Identity / contact / location / comp values come from the M-1
-    form_answers JSON (which itself was filled from profile.yml in
-    Python — never LLM-generated). Returning a label-keyed dict lets
-    each per-ATS handler reuse the same source while keeping its own
-    selector strategy.
-    """
-    fa = job.get("form_answers") or {}
-    return {
-        "First Name": fa.get("first_name") or "",
-        "Last Name": fa.get("last_name") or "",
-        "Full Name": fa.get("full_name") or "",
-        "Name": fa.get("full_name") or "",
-        "Email": fa.get("email") or "",
-        "Phone": fa.get("phone") or "",
-        "LinkedIn URL": fa.get("linkedin_url") or "",
-        "LinkedIn": fa.get("linkedin_url") or "",
-        "GitHub URL": fa.get("github_url") or "",
-        "GitHub": fa.get("github_url") or "",
-        "Portfolio": fa.get("portfolio_url") or "",
-        "Website": fa.get("portfolio_url") or "",
-        "Location": fa.get("current_location") or "",
-        "Current Location": fa.get("current_location") or "",
-        "City": fa.get("current_location") or "",
-        "Current Company": fa.get("current_company") or "",
-        "Company": fa.get("current_company") or "",
-        "Current Title": fa.get("current_title") or "",
-        "Title": fa.get("current_title") or "",
-    }
+# ── Backward-compat alias ─────────────────────────────────────────────────
+#
+# ``_build_field_map`` was a private helper in this file before PR-7 and the
+# tailor-side shim at ``jobpipe/tailor/applicant/ashby.py`` re-exports it
+# alongside ``AshbyApplicant``. The shim is part of the PR-9 cleanup; until
+# then keep the alias here so the shim's re-export keeps resolving without
+# the shim having to know about the ``_common`` move.
+_build_field_map = build_field_map

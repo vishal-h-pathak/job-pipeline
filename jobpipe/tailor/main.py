@@ -22,7 +22,7 @@ from db import (
     get_approved_jobs,
     get_confirmed_jobs,
     mark_preparing,
-    mark_ready_to_submit,
+    mark_ready_for_review,
     mark_applied,
     mark_failed,
     get_job_counts_by_status,
@@ -70,7 +70,7 @@ def process_approved_jobs():
         ats = detect_ats(url)
         if ats == "linkedin":
             logger.info(f"LinkedIn detected — flagging for manual application")
-            mark_ready_to_submit(
+            mark_ready_for_review(
                 job_id,
                 application_notes="LinkedIn: human-only application required",
             )
@@ -237,7 +237,7 @@ def process_approved_jobs():
             # ── Mark ready for review ────────────────────────────────────
             # Save the RESOLVED url so process_confirmed_jobs points the
             # submission agent at the real ATS page, not the aggregator.
-            mark_ready_to_submit(
+            mark_ready_for_review(
                 job_id,
                 resume_path=resume_summary,
                 cover_letter_path=cover_text,

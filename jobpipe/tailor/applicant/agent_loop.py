@@ -17,7 +17,7 @@ import anthropic
 
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CANDIDATE_PROFILE_PATH
 from applicant.browser_tools import BrowserSession
-from prompts import load_prompt
+from prompts import load_profile, load_prompt
 
 logger = logging.getLogger("applicant.agent_loop")
 
@@ -177,9 +177,8 @@ TOOL_SCHEMAS = [
 
 
 def _load_profile() -> str:
-    if CANDIDATE_PROFILE_PATH.exists():
-        return CANDIDATE_PROFILE_PATH.read_text(encoding="utf-8")
-    return "(CLAUDE.md not found — run from a repo where it exists.)"
+    """Load merged user-layer profile (profile/ files + CLAUDE.md fallback)."""
+    return load_profile() or "(profile data not found — populate profile/ or CLAUDE.md)"
 
 
 def _load_voice_profile() -> str:

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CANDIDATE_PROFILE_PATH
-from prompts import load_prompt
+from prompts import load_profile, load_prompt
 
 logger = logging.getLogger("tailor.latex_resume")
 
@@ -325,9 +325,7 @@ def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
     voice_path = Path(__file__).parent.parent / "templates" / "VOICE_PROFILE.md"
     voice_profile = voice_path.read_text(encoding="utf-8") if voice_path.exists() else ""
 
-    profile = ""
-    if CANDIDATE_PROFILE_PATH.exists():
-        profile = CANDIDATE_PROFILE_PATH.read_text(encoding="utf-8")
+    profile = load_profile()
 
     job_title = job.get("title", "Unknown")
     company = job.get("company", "Unknown")

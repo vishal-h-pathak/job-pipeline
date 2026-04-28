@@ -1,4 +1,10 @@
 # Vishal Pathak — Agent Profile
+> **Note:** As of J-10, the canonical user-layer ground truth lives in
+> `../job-hunter/profile/` (see `DATA_CONTRACT.md`). This file is now a
+> narrative aggregator kept for human readability and as a fallback for
+> tooling that hasn't migrated yet. Edit the structured files in
+> `../job-hunter/profile/` first; mirror to this file only as needed.
+
 Ground truth for all agents. Update this file as new information is gathered.
 
 ## Identity

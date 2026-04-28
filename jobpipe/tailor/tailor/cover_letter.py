@@ -10,7 +10,7 @@ from datetime import datetime
 
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CANDIDATE_PROFILE_PATH
-from prompts import load_prompt
+from prompts import load_profile, load_prompt
 
 logger = logging.getLogger("tailor.cover_letter")
 
@@ -18,10 +18,12 @@ client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
 def load_candidate_profile() -> str:
-    """Load the CLAUDE.md candidate profile."""
-    if CANDIDATE_PROFILE_PATH.exists():
-        return CANDIDATE_PROFILE_PATH.read_text(encoding="utf-8")
-    raise FileNotFoundError(f"Candidate profile not found at {CANDIDATE_PROFILE_PATH}")
+    """Load the merged user-layer candidate profile.
+
+    Reads from `profile/` (canonically in the sibling `job-hunter` repo)
+    and falls back to legacy `CLAUDE.md` if `profile/` is missing.
+    """
+    return load_profile()
 
 
 def generate_cover_letter(job: dict, resume_tailoring: dict = None) -> dict:

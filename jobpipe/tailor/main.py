@@ -32,6 +32,8 @@ from tailor.cover_letter import generate_cover_letter
 from tailor.cover_letter_pdf import render_cover_letter_pdf
 from tailor.latex_resume import generate_tailored_latex
 from applicant.detector import detect_ats, get_applicant
+from interview_prep.generator import generate_stories
+from interview_prep.bank import save_stories
 from notify import notify_ready_for_review, notify_applied, notify_failed
 from storage import upload_pdf, download_to_tmp, delete_all_for_job
 
@@ -177,6 +179,25 @@ def process_approved_jobs():
             # Persist the key + confidence so /dashboard/insights and the
             # pattern-analysis script can group by lane.
             archetype_meta = resume_result.get("_archetype") or {}
+
+            # ── Generate STAR+R interview stories (J-3) ─────────────────
+            # Side effect of tailoring — accumulate stories into the
+            # star_stories table so before any interview Vishal can pull
+            # 5-10 master stories tagged to the role's archetype + skills.
+            # Failures are non-fatal: tailoring + submission still proceed.
+            try:
+                stories = generate_stories(job, archetype_meta=archetype_meta)
+                if stories:
+                    save_stories(
+                        job_id=job_id,
+                        archetype=archetype_meta.get("archetype"),
+                        company=company,
+                        role=title,
+                        stories=stories,
+                    )
+                    logger.info(f"Generated {len(stories)} STAR+R stories for {company}")
+            except Exception as exc:
+                logger.warning(f"STAR+R generation skipped for {company}: {exc}")
 
             # ── Mark ready for review ────────────────────────────────────
             # Save the RESOLVED url so process_confirmed_jobs points the

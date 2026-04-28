@@ -26,18 +26,56 @@ job_agent.py          # Main orchestration — runs the full pipeline
 scorer.py             # Scores jobs against CLAUDE.md using Claude API
 db.py                 # Supabase read/write (upsert_job, get_seen_ids)
 notifier.py           # Resend email notifier (legacy — dashboard preferred)
+DATA_CONTRACT.md      # User-layer / system-layer file boundary (J-10)
+profile/              # USER LAYER — hand-edited, never overwritten by code
+  profile.yml         # Identity, comp, tiers, archetypes, form defaults
+  disqualifiers.yml   # Hard disqualifiers + soft concerns
+  cv.md               # Master CV (mirrors latex_resume.py BASE_RESUME)
+  article-digest.md   # Curated proof points + metrics
+  portals.yml         # ATS company → slug map + title pre-filter (J-1)
+  learned-insights.md # Generalizable preferences captured by Match Agent (J-11)
+prompts/              # Versioned task prompts (J-7)
+  _shared.md          # Global rules — anti-slop, ethics, specificity (J-5)
+  scorer.md           # Job-fit + posting-legitimacy scoring (J-2)
 sources/
-  indeed.py           # Indeed RSS feed fetcher
-  serpapi.py          # SerpAPI Google Jobs fetcher
-  remoteok.py         # RemoteOK public API fetcher
-  wellfound.py        # Stub — no public API available
+  _portals.py         # Shared YAML loader + title pre-filter (J-1)
+  greenhouse.py       # Direct Greenhouse boards-api scanner
+  lever.py            # Direct Lever postings-api scanner
+  ashby.py            # Direct Ashby posting-api scanner
+  workday.py          # Direct Workday job-search scanner (J-1)
+  hn_whoshiring.py    # Algolia HN search
+  eighty_thousand_hours.py  # 80k Hours mission-driven board
+  remoteok.py         # RemoteOK public API
+  jsearch.py, serpapi.py    # Paid aggregators
+scripts/
+  check_liveness.py   # Stale-posting rechecker (J-8)
 utils/
   validator.py        # URL validation before notifying
-CLAUDE.md             # Candidate profile — ground truth for all scoring
+CLAUDE.md             # Narrative profile aggregator (compat fallback)
 run_agent.sh          # Shell script for cron execution
 seen_jobs.json        # Local backup of processed job IDs
 agent.log             # Run logs with timestamps
 ```
+
+## What changed (career-ops integration, 2026-04-27)
+
+- **J-1**: Discovery now reads from `profile/portals.yml`. Each ATS lives
+  in its own source module; new modules added for Lever and Workday.
+  Cheap title pre-filter rejects obvious leadership/intern/recruiter
+  titles before the LLM scorer.
+- **J-2**: Scorer also emits posting-legitimacy
+  (high_confidence/proceed_with_caution/suspicious). Stored separately;
+  never affects fit. Surfaces as a colored pill in the dashboard.
+- **J-7**: Every inline prompt extracted into `prompts/*.md` with a
+  global `_shared.md` (anti-slop banned phrases, ethics, specificity,
+  Unicode hygiene).
+- **J-10**: `profile/` is the user-layer source of truth. CLAUDE.md
+  remains as a narrative aggregator + compat fallback.
+- **J-8**: Liveness rechecker runs nightly via cron, transitions dead
+  postings to `expired` status.
+- **J-11**: Companion Match Agent → profile writeback flow appends
+  generalizable insights to `profile/learned-insights.md`; the loader
+  picks them up automatically.
 
 ---
 

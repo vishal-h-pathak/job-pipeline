@@ -1,16 +1,18 @@
 """jobpipe.hunt — the job-discovery half of the pipeline.
 
 Module wiring is unusual here: the modules in this package use unprefixed
-imports (``from sources import X``, ``import config``,
-``from utils.jobid import X``) inherited from when this code lived in its
-own repo at ``/Users/jarvis/dev/jarvis/job-hunter`` and ran with the hunt
-directory as the working directory. ``jobpipe.hunt.agent`` bootstraps
-``sys.path`` so those imports resolve when the package is loaded via the
-``jobpipe-hunt`` console script as well as via the legacy
-``python -m agent`` invocation.
+imports (``from sources import X``, ``from sources._http import …``)
+inherited from when this code lived in its own repo and ran with the
+hunt directory as the working directory. ``jobpipe.hunt.agent``
+bootstraps ``sys.path`` so those intra-subtree imports resolve when the
+package is loaded via the ``jobpipe-hunt`` console script.
 
-A future PR can rewrite the imports to be package-qualified
-(``from jobpipe.hunt.sources import X``) and remove the bootstrap. PR-3
-deliberately kept the unprefixed style so the diff stayed scoped to the
-moves and helper extractions described in the refactor plan.
+PR-9 rewrote the cross-cutting bare imports (``import config``,
+``from db import …``, ``from notifier import …``, ``from utils.jobid
+import …``) to package-qualified paths against the canonical
+``jobpipe.config`` / ``jobpipe.db`` / ``jobpipe.notify`` /
+``jobpipe.shared.*`` modules and removed the per-subtree shims they used
+to resolve through. The bootstrap stays only for the remaining
+intra-subtree bare imports above; a future PR can rewrite those to
+``from jobpipe.hunt.sources import X`` and remove it entirely.
 """

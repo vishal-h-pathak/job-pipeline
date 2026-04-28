@@ -1,15 +1,16 @@
 """jobpipe.profile_loader — single import surface for the user-layer profile.
 
-Centralizes reads of files under the top-level `profile/` directory so callers
-across `jobpipe.hunt`, `jobpipe.tailor`, and `jobpipe.submit` stop reaching
-across sibling-repo paths via relative parent-directory hops.
+Centralizes reads of files under the top-level ``profile/`` directory so
+callers across ``jobpipe.hunt``, ``jobpipe.tailor``, and ``jobpipe.submit``
+all hit one consistent loader instead of resolving paths ad-hoc.
 
 Resolution order for the profile directory:
-  1. `JOBPIPE_PROFILE_DIR` environment variable, if set and non-empty.
-  2. Walk up from this file until `pyproject.toml` is found; use `<root>/profile/`.
+  1. ``JOBPIPE_PROFILE_DIR`` environment variable, if set and non-empty.
+  2. Walk up from this file until ``pyproject.toml`` is found; use
+     ``<root>/profile/``.
 
 A missing profile dir or missing individual file is not fatal: dict loaders
-return `{}` and string loaders return `""`. Callers that need a stricter
+return ``{}`` and string loaders return ``""``. Callers that need a stricter
 contract should validate the result.
 """
 

@@ -20,8 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 @pytest.fixture(autouse=True)
 def _fill_required_env(monkeypatch):
-    """config.py raises at import if required env vars are missing. Supply
-    placeholders so imports don't explode during scaffold-only tests."""
+    """jobpipe/submit/config.py raises at import if required env vars are
+    missing (require_env block, fail-loud). Supply placeholders so imports
+    don't explode during scaffold-only tests."""
     required = {
         "SUPABASE_URL": "https://example.supabase.co",
         "SUPABASE_KEY": "anon-test",
@@ -32,14 +33,21 @@ def _fill_required_env(monkeypatch):
     }
     for k, v in required.items():
         monkeypatch.setenv(k, v)
-    # Evict cached modules that read env at import time.
-    for m in ("config", "db"):
+    # Evict cached modules that read env at import time so each test gets
+    # a fresh import. Both the bare ``config``/``db`` (resolved via the
+    # submit bootstrap) and the canonical ``jobpipe.config``/``jobpipe.db``.
+    for m in ("config", "db", "jobpipe.config", "jobpipe.db",
+              "jobpipe.submit.config"):
         sys.modules.pop(m, None)
     yield
 
 
 def test_config_imports():
-    import config
+    # PR-9: AUTO_SUBMIT_THRESHOLD and ATS_CONFIDENCE_MIN live on canonical
+    # jobpipe.config (the per-subtree submit/config.py shim re-exports were
+    # removed; submit/config.py keeps only the require_env-loaded secrets +
+    # the CLAUDE_MODEL alias).
+    import jobpipe.config as config
     # Threshold is tuneable (bring-up sets it above 1.0 as a safety stop), but
     # it must be a real float in a sane band.
     assert 0.0 <= config.AUTO_SUBMIT_THRESHOLD <= 2.0

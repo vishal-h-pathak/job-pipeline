@@ -25,7 +25,7 @@ from typing import Any, Literal
 
 from adapters.base import SubmissionContext, SubmissionResult
 from browser.session import sh_act, sh_extract
-from config import ATS_CONFIDENCE_MIN, AUTO_SUBMIT_THRESHOLD
+from jobpipe.config import ATS_CONFIDENCE_MIN, AUTO_SUBMIT_THRESHOLD
 
 logger = logging.getLogger("submitter.confirm")
 

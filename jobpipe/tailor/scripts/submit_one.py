@@ -40,13 +40,13 @@ sys.path.insert(0, str(ROOT))
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
-from applicant.universal import UniversalApplicant
+from jobpipe.submit.adapters.prepare_dom.universal import UniversalApplicant
 
 logger = logging.getLogger("submit_one")
 
 
 def _load_job_from_supabase(job_id: str) -> dict:
-    from db import client as sb
+    from jobpipe.db import client as sb
     result = sb.table("jobs").select("*").eq("id", job_id).execute()
     if not result.data:
         raise SystemExit(f"No job in Supabase with id={job_id}")
@@ -177,7 +177,7 @@ def main():
         # was deleted. clear_materials=False so a human re-running the
         # script after a paused/failed run still has the resume + cover
         # letter PDFs in Storage.
-        from db import mark_applied, mark_tailor_failed
+        from jobpipe.db import mark_applied, mark_tailor_failed
         if args.mode == "prepare":
             if result.get("needs_review"):
                 mark_tailor_failed(

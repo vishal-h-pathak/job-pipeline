@@ -17,17 +17,17 @@ Usage:
 from __future__ import annotations
 
 # ── sys.path bootstrap ────────────────────────────────────────────────────
-# The tailor subtree uses unprefixed imports (``import db``, ``import config``,
-# ``from notify import ...``, ``from storage import ...``,
-# ``from tailor.X import ...``, ``from prompts import ...``,
-# ``from applicant.X import ...``, ``from interview_prep.X import ...``).
-# When this module is imported as ``jobpipe.tailor.pipeline`` (e.g. via the
-# ``jobpipe-tailor`` console script), sys.path won't contain
-# ``jobpipe/tailor/`` and those bare imports would fail. Insert the
-# directory before any other imports run so every downstream module load
-# resolves cleanly. PR-4 chose this over a global unprefixed -> qualified
-# rewrite to keep the diff scoped, mirroring the pattern PR-3 / PR-5
-# established for jobpipe.hunt and jobpipe.submit.
+# The tailor subtree's intra-subtree modules use unprefixed imports
+# (``from storage import ...``, ``from tailor.X import ...``,
+# ``from prompts import ...``, ``from interview_prep.X import ...``). When this module is imported
+# as ``jobpipe.tailor.pipeline`` (e.g. via the ``jobpipe-tailor`` console
+# script), sys.path won't contain ``jobpipe/tailor/`` and those bare
+# imports would fail. Insert the directory before any other imports run
+# so every downstream module load resolves cleanly. PR-9 rewrote the
+# cross-cutting bare imports (``import db``, ``import config``,
+# ``from notify import ...``) to canonical ``jobpipe.*`` paths and
+# deleted the per-subtree shims they resolved through; the bootstrap
+# stays for the intra-subtree imports above.
 import sys as _sys
 from pathlib import Path as _Path
 
@@ -43,8 +43,8 @@ import sys  # noqa: E402
 from datetime import datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-from config import POLL_INTERVAL_MINUTES, HUMAN_APPROVAL_REQUIRED  # noqa: E402
-from db import (  # noqa: E402
+from jobpipe.config import POLL_INTERVAL_MINUTES, HUMAN_APPROVAL_REQUIRED  # noqa: E402
+from jobpipe.db import (  # noqa: E402
     get_approved_jobs,
     get_prefill_requested_jobs,
     mark_preparing,
@@ -63,14 +63,14 @@ from tailor.form_answers import generate_form_answers  # noqa: E402
 from jobpipe.shared.ats_detect import detect_ats, get_applicant  # noqa: E402
 from interview_prep.generator import generate_stories  # noqa: E402
 from interview_prep.bank import save_stories  # noqa: E402
-from notify import (  # noqa: E402  PR-8: canonical send_* names
+from jobpipe.notify import (  # noqa: E402  PR-8: canonical send_* names
     send_awaiting_review,
     send_awaiting_submit,
     send_failed,
 )
+from jobpipe.shared.storage import download_to_tmp  # noqa: E402
 from storage import (  # noqa: E402
     upload_pdf,
-    download_to_tmp,
     upload_prefill_screenshot,
 )
 
@@ -252,7 +252,7 @@ def process_approved_jobs():
                     form_answers = generate_form_answers(
                         job, resume_result, archetype_meta=archetype_meta
                     )
-                    from db import client as _db_client
+                    from jobpipe.db import client as _db_client
                     _db_client.table("jobs").update(
                         {"form_answers": form_answers}
                     ).eq("id", job_id).execute()
@@ -540,7 +540,7 @@ def test_tailor(job_id: str):
     Fetches the job from Supabase, runs resume tailoring + cover letter + LaTeX,
     and prints everything to stdout for review.
     """
-    from db import client as supabase_client
+    from jobpipe.db import client as supabase_client
     import json
 
     print(f"\n{'='*60}")

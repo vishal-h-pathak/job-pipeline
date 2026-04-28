@@ -15,7 +15,7 @@ from typing import Optional
 
 import anthropic
 
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
 from prompts import load_profile, load_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 

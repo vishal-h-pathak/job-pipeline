@@ -26,9 +26,9 @@ import os
 
 import requests
 
-from config import is_local_or_remote, location_filter_enabled
+from jobpipe.config import is_local_or_remote, location_filter_enabled
 from jobpipe.shared.html import clean_html_to_text
-from utils.jobid import make_job_id
+from jobpipe.shared.jobid import make_job_id
 
 logger = logging.getLogger("sources.eighty_thousand_hours")
 

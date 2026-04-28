@@ -10,6 +10,37 @@ requires-python = ">=3.9"
 authors = [{ name = "Vishal Pathak" }]
 readme = "README.md"
 
+dependencies = [
+    # PR-9 consolidated the three per-subpackage requirements.txt files
+    # (jobpipe/{hunt,tailor,submit}/requirements.txt) into this list so the
+    # unified repo has one source of truth for runtime deps. Pins use ">="
+    # to match the loosest of the three pre-merge sets — tighten only when
+    # a known-broken upstream version forces it.
+    #
+    # Shared
+    "anthropic>=0.40.0",
+    "supabase>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.27.0",
+    "pyyaml>=6.0",
+    # Hunt
+    "feedparser>=6.0.11",
+    "requests>=2.32.0",
+    # Tailor
+    "apscheduler>=3.10.0",
+    "beautifulsoup4",
+    # Cover-letter PDF rendering — lazy-imported inside
+    # jobpipe/tailor/tailor/cover_letter_pdf.py::render_cover_letter_pdf
+    # so test envs without it still import jobpipe.tailor.pipeline cleanly.
+    "reportlab",
+    # Submit
+    "pydantic>=2.6.0",
+    "stagehand>=3.19.0",            # SDK is published as "stagehand", not "stagehand-py"
+    "playwright>=1.40.0",
+    "browserbase>=1.0.0",
+    "structlog>=24.1.0",
+]
+
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5"]
 
@@ -38,7 +69,6 @@ packages = [
     "jobpipe.hunt",
     "jobpipe.tailor",
     "jobpipe.tailor.tailor",
-    "jobpipe.tailor.applicant",
     "jobpipe.tailor.interview_prep",
     "jobpipe.tailor.prompts",
     "jobpipe.tailor.scripts",

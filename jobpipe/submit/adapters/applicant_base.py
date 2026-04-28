@@ -18,11 +18,11 @@ Behavior delta from the previous location (``tailor/applicant/base.py``):
 none. Class definitions, method bodies, and screenshot path layout are
 identical. Two cosmetic changes: Playwright is imported lazily inside
 ``start_browser()`` instead of at module top, and ``OUTPUT_DIR`` is imported
-lazily inside ``take_screenshot()`` from ``jobpipe.tailor.config`` (same
-tempdir resolution rules as before — the tailor config remains the canonical
-``OUTPUT_DIR`` source until the submit subtree gains its own). Both
-deferrals exist so ``tests/test_prepare_dom_common.py`` can exercise sibling
-helpers without Playwright + tailor config side-effects fired at import time.
+lazily inside ``take_screenshot()`` from ``jobpipe.tailor.paths`` (same
+tempdir resolution rules as before — the tailor subtree remains the
+canonical ``OUTPUT_DIR`` source until the submit subtree gains its own).
+Both deferrals exist so ``tests/test_prepare_dom_common.py`` can exercise
+sibling helpers without Playwright + tailor side-effects fired at import time.
 
 Subclasses must implement:
     - ``detect(url) -> bool``: whether this applicant handles the given URL
@@ -102,7 +102,7 @@ class BaseApplicant(ABC):
 
     def take_screenshot(self, page: "Page", label: str = "form") -> str:
         """Capture a screenshot of the current page state."""
-        from jobpipe.tailor.config import OUTPUT_DIR
+        from jobpipe.tailor.paths import OUTPUT_DIR
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         path = OUTPUT_DIR / f"screenshot_{label}_{timestamp}.png"
         page.screenshot(path=str(path), full_page=False)

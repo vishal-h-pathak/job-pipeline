@@ -46,7 +46,7 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 
-from db import _client as get_client  # noqa: E402
+from jobpipe.db import _client as get_client  # noqa: E402
 
 logger = logging.getLogger("liveness")
 

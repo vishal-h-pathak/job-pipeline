@@ -27,15 +27,18 @@ Wired as ``jobpipe-submit = jobpipe.submit.runner:run`` in pyproject.toml
 from __future__ import annotations
 
 # ── sys.path bootstrap ────────────────────────────────────────────────────
-# The submit subtree uses unprefixed imports (``import db``, ``import router``,
+# The submit subtree's intra-subtree modules use unprefixed imports
+# (``import router``, ``import confirm``, ``import storage``,
 # ``from adapters.base import X``, ``from browser.session import Y``,
-# ``from review_packet import build_packet``). When this module is imported
-# as ``jobpipe.submit.runner`` (e.g. via the ``jobpipe-submit`` console
-# script), sys.path won't contain ``jobpipe/submit/`` and those bare imports
-# would fail. Insert the directory before any other imports run so every
-# downstream module load resolves cleanly. PR-5 chose this over a global
-# unprefixed -> qualified rewrite to keep the diff scoped, mirroring PR-3's
-# pattern for jobpipe.hunt.
+# ``from review_packet import build_packet``). When this module is
+# imported as ``jobpipe.submit.runner`` (e.g. via the ``jobpipe-submit``
+# console script), sys.path won't contain ``jobpipe/submit/`` and those
+# bare imports would fail. Insert the directory before any other imports
+# run so every downstream module load resolves cleanly. PR-9 rewrote the
+# cross-cutting bare imports (``import db``, ``from config import ...``)
+# to canonical ``jobpipe.*`` paths (with the fail-loud secrets coming
+# from ``jobpipe.submit.config``) and deleted the per-subtree db.py
+# shim; the bootstrap stays for the intra-subtree imports above.
 import sys as _sys
 from pathlib import Path as _Path
 
@@ -51,13 +54,13 @@ import signal  # noqa: E402
 import sys  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-import db  # noqa: E402
+import jobpipe.db as db  # noqa: E402
 import router  # noqa: E402
 import confirm  # noqa: E402
 import storage  # noqa: E402
 from adapters.base import SubmissionContext  # noqa: E402
 from browser import session as browser_session  # noqa: E402
-from config import (  # noqa: E402
+from jobpipe.config import (  # noqa: E402
     MAX_ATTEMPTS_PER_JOB,
     MAX_CONCURRENT_SUBMISSIONS,
     POLL_INTERVAL_SECONDS,

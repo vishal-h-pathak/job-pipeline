@@ -13,11 +13,11 @@ Design:
 - Labels are extracted in priority order: aria-label → <label for> →
   aria-labelledby → placeholder → nearest preceding text.
 
-Moved from ``jobpipe/tailor/applicant/browser_tools.py`` in PR-7. The old path
-remains as a re-export shim until PR-9. Behavior delta from the previous
-location: none. ``OUTPUT_DIR`` is now imported lazily inside ``tool_screenshot``
-(from ``jobpipe.tailor.config`` — same tempdir resolution rules) so importing
-this module no longer fires the tailor config's load_dotenv side-effect at
+Moved from ``jobpipe/tailor/applicant/browser_tools.py`` in PR-7; PR-9 removed
+the temporary re-export shim that lived at the old path. Behavior delta from
+the previous location: none. ``OUTPUT_DIR`` is now imported lazily inside
+``tool_screenshot`` (from ``jobpipe.tailor.paths`` — same tempdir resolution
+rules) so importing this module no longer fires the tailor side-effect at
 import time. All other behavior — the JS enumeration snippet, the tool return
 shapes, the field-id semantics — is byte-identical to the pre-move version.
 """
@@ -218,7 +218,7 @@ class BrowserSession:
 
     def tool_screenshot(self, label: str = "state") -> tuple[str, bytes]:
         """Take a full-viewport screenshot. Returns (path, bytes)."""
-        from jobpipe.tailor.config import OUTPUT_DIR
+        from jobpipe.tailor.paths import OUTPUT_DIR
         path = OUTPUT_DIR / f"apply_{self.job_slug}_{label}_{self._ts()}.png"
         data = self.page.screenshot(path=str(path), full_page=False)
         self.screenshots.append(str(path))

@@ -41,7 +41,7 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 
-from db import client  # noqa: E402
+from jobpipe.db import client  # noqa: E402
 
 logger = logging.getLogger("analyze_patterns")
 

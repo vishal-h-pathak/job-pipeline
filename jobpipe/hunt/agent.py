@@ -29,13 +29,18 @@ Examples:
 from __future__ import annotations
 
 # ── sys.path bootstrap ────────────────────────────────────────────────────
-# The hunt subtree uses unprefixed imports (``from sources import X``,
-# ``import config``, ``from utils.jobid import X``). When this module is
-# imported as ``jobpipe.hunt.agent`` (e.g. via the ``jobpipe-hunt`` console
-# script), sys.path won't contain ``jobpipe/hunt/`` and those bare imports
-# would fail. Insert the directory before any other imports run so every
-# downstream module load resolves cleanly. PR-3 chose this over a global
-# unprefixed→qualified rewrite to keep the diff scoped.
+# The hunt subtree's intra-subtree modules use unprefixed imports
+# (``from sources import X``, ``from sources._http import …``,
+# ``from scorer import score_job``, ``from enricher import …``). When
+# this module is imported as ``jobpipe.hunt.agent`` (e.g. via the
+# ``jobpipe-hunt`` console script), sys.path won't contain
+# ``jobpipe/hunt/`` and those bare imports would fail. Insert the
+# directory before any other imports run so every downstream module load
+# resolves cleanly. PR-9 rewrote the cross-cutting bare imports
+# (``import config``, ``from db import …``, ``from notifier import …``,
+# ``from utils.jobid import …``) to canonical ``jobpipe.*`` paths and
+# deleted the per-subtree shims they resolved through; the bootstrap
+# stays for the intra-subtree imports above.
 import sys as _sys
 from pathlib import Path as _Path
 
@@ -53,7 +58,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import config  # noqa: E402  (must come after load_dotenv)
+from jobpipe import config  # noqa: E402  (must come after load_dotenv)
 from sources import (  # noqa: E402
     remoteok,
     serpapi,
@@ -72,10 +77,10 @@ from sources import (  # noqa: E402
 # both of their job-publisher footprints behind one paid subscription.
 # ``wellfound`` remains a stub (no public API).
 from scorer import score_job, should_notify  # noqa: E402
-from notifier import send_digest  # noqa: E402
-from utils.validator import validate_url  # noqa: E402
+from jobpipe.notify import send_digest  # noqa: E402
+from jobpipe.shared.validator import validate_url  # noqa: E402
 from enricher import enrich_description  # noqa: E402  (PR-3 flatten of utils/enricher.py)
-from db import get_seen_ids, upsert_job  # noqa: E402
+from jobpipe.db import get_seen_ids, upsert_job  # noqa: E402
 
 # ── Logging — stream to stdout so run_agent.sh's redirect captures it ─────
 logging.basicConfig(

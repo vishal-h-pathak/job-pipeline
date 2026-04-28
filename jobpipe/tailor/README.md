@@ -1,11 +1,12 @@
-# job-applicant
+# jobpipe.tailor
 
 Application-prep + DOM-based form-fill pipeline for Vishal Pathak.
-Reads approved jobs from Supabase (written by the sibling `job-hunter`
-repo), tailors a resume + cover letter + form-answer drafts, opens a
-visible browser, fills standard fields via per-ATS Playwright handlers
-(Ashby / Greenhouse / Lever) or a prepare-only vision agent, and
-**stops at the form's Submit button**.
+Reads approved jobs from Supabase (written by the `jobpipe.hunt`
+subpackage — PR-9 unified what was previously a sibling `job-hunter`
+repo into this monorepo), tailors a resume + cover letter + form-answer
+drafts, opens a visible browser, fills standard fields via per-ATS
+Playwright handlers (Ashby / Greenhouse / Lever) or a prepare-only
+vision agent, and **stops at the form's Submit button**.
 
 The system never clicks Submit. The human reviews the visible browser,
 clicks Submit themselves, and then clicks "Mark Applied" in the
@@ -69,8 +70,9 @@ templates/
 CLAUDE.md              # Narrative profile aggregator (compat fallback)
 ```
 
-User-layer ground truth lives in the sibling `job-hunter/profile/` repo;
-`prompts.load_profile()` resolves it via fallback. See `DATA_CONTRACT.md`.
+User-layer ground truth lives in the unified `jobpipe` repo at
+`profile/` (top-level) + `jobpipe/hunt/profile/`. `prompts.load_profile()`
+scans both via `_resolve_profile_search_dirs()`. See `DATA_CONTRACT.md`.
 
 ---
 
@@ -161,7 +163,7 @@ POLL_INTERVAL_MINUTES=120
 - **J-9**: `cv_sync_check.py` runs as a side effect of `tailor_resume`
   import; warns on drift but never blocks.
 - **J-11**: Match Agent → profile writeback writes to
-  `../job-hunter/profile/learned-insights.md` (recognized by the user-
+  `profile/learned-insights.md` (top-level; recognized by the user-
   layer loader).
 
 ---
@@ -235,7 +237,10 @@ system never clicks Submit anymore.
 
 ---
 
-## Companion repos
+## Companion subpackages and repos
 
-- `../job-hunter` — discovery + scoring (writes status=new rows)
-- `../portfolio` — Next.js dashboard at vishal.pa.thak.io/dashboard
+- `jobpipe.hunt` — discovery + scoring (writes status=new rows). PR-9
+  unified what was previously the sibling `job-hunter` repo into this
+  subpackage; the original repo can be archived after PR-9 merges.
+- `../portfolio` — Next.js dashboard at vishal.pa.thak.io/dashboard.
+  Stays as a separate repo (frontend, deployed on Vercel).

@@ -10,8 +10,9 @@ spend on discovery. Each posting is title-pre-filtered before scoring.
 
 import logging
 
-from config import is_local_or_remote
+from jobpipe.config import is_local_or_remote
 from jobpipe.shared.html import strip_tags
+from jobpipe.shared.jobid import make_job_id
 from sources._http import (
     fetch_json,
     location_filter_enabled,
@@ -19,7 +20,6 @@ from sources._http import (
     sleep_between_requests,
 )
 from sources._portals import companies, title_signals
-from utils.jobid import make_job_id
 
 logger = logging.getLogger("sources.lever")
 

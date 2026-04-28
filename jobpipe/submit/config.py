@@ -1,12 +1,17 @@
-"""jobpipe.submit.config — PR-8 shim. See ``jobpipe/config.py`` for the
-canonical defaults.
+"""jobpipe.submit.config — submit-side fail-loud env loader.
 
-Submit-side preserves the **fail-loud** import-time check on required
-secrets that PR-6 established: missing ``SUPABASE_URL`` /
-``BROWSERBASE_API_KEY`` / etc. raises at import time so the runner
-crashes before any polling starts. Soft-default reads from
-``jobpipe.config`` are still available via re-export and module-level
-``__getattr__``.
+Submit preserves the **fail-loud** import-time check on required secrets
+that PR-6 established: missing ``SUPABASE_URL`` / ``BROWSERBASE_API_KEY``
+/ etc. raises at import time so the runner crashes before any polling
+starts.
+
+For everything else (``POLL_INTERVAL_SECONDS``, ``MAX_ATTEMPTS_PER_JOB``,
+``ATS_CONFIDENCE_MIN``, ``AUTO_SUBMIT_THRESHOLD``, ``REVIEW_DASHBOARD_URL``,
+``HEADLESS``, ``SESSION_BUDGET_SECONDS``, …), import directly from
+``jobpipe.config``. PR-9 removed the per-subtree re-export plumbing that
+PR-8 had introduced as a shim layer; the only re-export kept here is the
+``CLAUDE_MODEL`` alias because submit code reads ``CLAUDE_MODEL`` and the
+canonical name is ``SUBMITTER_CLAUDE_MODEL``.
 """
 from __future__ import annotations
 
@@ -14,17 +19,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from jobpipe.config import (  # noqa: F401  PR-8: shared cross-subtree exports
-    ATS_CONFIDENCE_MIN,
-    AUTO_SUBMIT_THRESHOLD,
-    HEADLESS,
-    MAX_ATTEMPTS_PER_JOB,
-    MAX_CONCURRENT_SUBMISSIONS,
-    POLL_INTERVAL_SECONDS,
-    REVIEW_DASHBOARD_URL,
-    SESSION_BUDGET_SECONDS,
-    require_env,
-)
+from jobpipe.config import require_env
 from jobpipe.config import SUBMITTER_CLAUDE_MODEL as CLAUDE_MODEL  # noqa: F401
 
 # Load a submit-local .env if present, preserving PR-6 behavior. Safe
@@ -41,14 +36,3 @@ SUPABASE_SERVICE_ROLE_KEY = require_env("SUPABASE_SERVICE_ROLE_KEY")
 BROWSERBASE_API_KEY       = require_env("BROWSERBASE_API_KEY")
 BROWSERBASE_PROJECT_ID    = require_env("BROWSERBASE_PROJECT_ID")
 ANTHROPIC_API_KEY         = require_env("ANTHROPIC_API_KEY")
-
-
-def __getattr__(name: str):
-    """Forward any other attribute to ``jobpipe.config`` so submit code
-    can lazily reach cross-subtree constants without re-listing them
-    here every time the canonical module grows."""
-    import jobpipe.config as _canonical
-    try:
-        return getattr(_canonical, name)
-    except AttributeError as exc:
-        raise AttributeError(name) from exc

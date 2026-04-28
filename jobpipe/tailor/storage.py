@@ -16,8 +16,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from supabase import create_client
-from config import SUPABASE_URL
-from jobpipe.shared.storage import download_to_tmp  # noqa: F401  PR-1 re-export
+from jobpipe.config import SUPABASE_URL
 
 logger = logging.getLogger("storage")
 

@@ -33,22 +33,43 @@ SCRIPT_PATH = (
 def _load_script(monkeypatch, fake_db, fake_applicant):
     """Load submit_one.py as a fresh module with stubbed deps.
 
-    The script does ``from db import ...`` and instantiates
-    ``UniversalApplicant`` from ``applicant.universal``. Both are
-    pre-installed in ``sys.modules`` so the actual top-level imports
-    in submit_one.py resolve to our stubs.
+    PR-9: the script's ``from db import ...`` was rewritten to
+    ``from jobpipe.db import ...`` and ``from applicant.universal
+    import UniversalApplicant`` was rewritten to
+    ``from jobpipe.submit.adapters.prepare_dom.universal import
+    UniversalApplicant`` (canonical-path migration; the
+    ``jobpipe.tailor.applicant`` shim directory was deleted in PR-9).
+    The stubs install both the canonical and the legacy bare paths —
+    canonical so the script's actual imports resolve to our fakes,
+    legacy as a belt-and-suspenders entry for any nested module still
+    resolved via the bootstrap. The syspath_prepend stays because the
+    script still has other intra-tailor bare imports.
     """
     tailor_dir = REPO_ROOT / "jobpipe" / "tailor"
     monkeypatch.syspath_prepend(str(tailor_dir))
 
+    monkeypatch.setitem(sys.modules, "jobpipe.db", fake_db)
     monkeypatch.setitem(sys.modules, "db", fake_db)
 
-    applicant_pkg = type(sys)("applicant")
-    universal_mod = type(sys)("applicant.universal")
+    # Canonical path post-PR-9: jobpipe.submit.adapters.prepare_dom.universal.
+    # The submit-side parent packages must exist as real (not synthetic)
+    # entries because pytest already imported jobpipe.submit during fixture
+    # discovery — but the leaf module gets stubbed so we don't need a real
+    # Stagehand session. Legacy ``applicant.universal`` is stubbed too so
+    # any unmigrated bare-import call site keeps resolving.
+    universal_mod = type(sys)("jobpipe.submit.adapters.prepare_dom.universal")
     universal_mod.UniversalApplicant = lambda *a, **kw: fake_applicant
-    applicant_pkg.universal = universal_mod
-    monkeypatch.setitem(sys.modules, "applicant", applicant_pkg)
-    monkeypatch.setitem(sys.modules, "applicant.universal", universal_mod)
+    monkeypatch.setitem(
+        sys.modules,
+        "jobpipe.submit.adapters.prepare_dom.universal",
+        universal_mod,
+    )
+    legacy_pkg = type(sys)("applicant")
+    legacy_mod = type(sys)("applicant.universal")
+    legacy_mod.UniversalApplicant = lambda *a, **kw: fake_applicant
+    legacy_pkg.universal = legacy_mod
+    monkeypatch.setitem(sys.modules, "applicant", legacy_pkg)
+    monkeypatch.setitem(sys.modules, "applicant.universal", legacy_mod)
 
     # The script calls dotenv.load_dotenv at top level — stub to no-op.
     dotenv_mod = type(sys)("dotenv")

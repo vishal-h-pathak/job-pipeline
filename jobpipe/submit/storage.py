@@ -9,11 +9,7 @@ compatibility with this module's existing callers.
 
 from __future__ import annotations
 
-from db import service_client
-from jobpipe.shared.storage import (  # noqa: F401  PR-1 re-exports
-    download_bytes,
-    download_to_tmp,
-)
+from jobpipe.db import service_client
 
 BUCKET = "job-materials"
 

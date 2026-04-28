@@ -16,7 +16,8 @@ from datetime import datetime
 from pathlib import Path
 
 import anthropic
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CANDIDATE_PROFILE_PATH
+from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
+from jobpipe.tailor.paths import CANDIDATE_PROFILE_PATH
 from prompts import load_profile, load_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 from tailor.normalize import normalize_for_ats

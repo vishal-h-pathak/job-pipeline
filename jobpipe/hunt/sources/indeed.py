@@ -33,9 +33,9 @@ from urllib.parse import urlencode
 
 import feedparser
 
-from config import get_mode
+from jobpipe.config import get_mode
 from jobpipe.shared.html import strip_tags
-from utils.jobid import make_job_id
+from jobpipe.shared.jobid import make_job_id
 
 logger = logging.getLogger("sources.indeed")
 

@@ -51,13 +51,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from db import client as supabase_client, mark_ready_to_submit, mark_preparing  # noqa: E402
+from jobpipe.db import client as supabase_client, mark_ready_to_submit, mark_preparing  # noqa: E402
 from tailor.resume import tailor_resume  # noqa: E402
 from tailor.cover_letter import generate_cover_letter  # noqa: E402
 from tailor.cover_letter_pdf import render_cover_letter_pdf  # noqa: E402
 from tailor.latex_resume import generate_tailored_latex  # noqa: E402
-from applicant.detector import detect_ats, get_applicant  # noqa: E402
-from applicant.url_resolver import resolve_application_url  # noqa: E402
+from jobpipe.shared.ats_detect import detect_ats, get_applicant  # noqa: E402
+from jobpipe.tailor.url_resolver import resolve_application_url  # noqa: E402
 from storage import upload_pdf  # noqa: E402
 
 logging.basicConfig(

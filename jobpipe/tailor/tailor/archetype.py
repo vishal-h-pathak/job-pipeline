@@ -14,8 +14,9 @@ prompts get the full framing/emphasis/tone/bullet_template via
 
 PR-4 carryover-from-PR-2: replaced the bespoke
 ``_resolve_profile_yml`` / ``_load_archetypes`` pair (which walked up
-to ``../job-hunter/profile/`` from the pre-merge ``job-applicant``
-layout) with a delegation to ``jobpipe.profile_loader.load_archetypes``.
+to a sibling-repo ``profile/`` from the pre-merge ``job-applicant``
+layout) with a delegation to ``jobpipe.profile_loader.load_archetypes``,
+which now resolves to the unified repo-root ``profile/`` directory.
 The ``@lru_cache`` on ``profile_loader.profile_dir`` already provides
 the memoization the old ``_ARCHETYPES_CACHE`` global used to provide.
 """
@@ -28,7 +29,7 @@ import re
 
 import anthropic
 
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
 from prompts import load_prompt
 from jobpipe.profile_loader import load_archetypes
 

@@ -13,15 +13,6 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from reportlab.lib.pagesizes import LETTER
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import inch
-from reportlab.platypus import (
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-)
-
 from tailor.normalize import normalize_for_ats
 
 logger = logging.getLogger("tailor.cover_letter_pdf")
@@ -36,6 +27,8 @@ WEBSITE = "vishal.pa.thak.io"
 
 def _styles():
     """Build a paragraph stylesheet tuned for a cover letter."""
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+
     base = getSampleStyleSheet()
     return {
         "header_name": ParagraphStyle(
@@ -129,6 +122,10 @@ def render_cover_letter_pdf(
     Returns:
         Raw PDF bytes.
     """
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, SimpleDocTemplate
+
     text = normalize_for_ats((cover_letter_text or "").strip())
     if not text:
         raise ValueError("Empty cover letter text — nothing to render.")

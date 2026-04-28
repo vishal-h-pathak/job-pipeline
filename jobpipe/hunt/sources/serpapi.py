@@ -23,8 +23,8 @@ import time
 
 import requests
 
-from config import get_mode
-from utils.jobid import make_job_id
+from jobpipe.config import get_mode
+from jobpipe.shared.jobid import make_job_id
 
 logger = logging.getLogger("sources.serpapi")
 

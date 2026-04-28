@@ -29,7 +29,7 @@ import time
 import requests
 
 from jobpipe.shared.html import clean_html_to_text
-from utils.jobid import make_job_id
+from jobpipe.shared.jobid import make_job_id
 
 logger = logging.getLogger("sources.hn_whoshiring")
 

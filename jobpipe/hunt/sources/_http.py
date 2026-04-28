@@ -27,7 +27,7 @@ from typing import Any, Optional
 import requests
 
 # Re-exports so callers can do ``from sources._http import ...`` for filters.
-from config import location_filter_enabled  # noqa: F401  re-export
+from jobpipe.config import location_filter_enabled  # noqa: F401  re-export
 from sources._portals import passes_title_filter  # noqa: F401  re-export
 
 

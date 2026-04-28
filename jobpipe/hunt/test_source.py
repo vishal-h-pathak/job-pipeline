@@ -41,7 +41,7 @@ logging.basicConfig(
     format="%(levelname)s [%(name)s] %(message)s",
 )
 
-import config  # noqa: E402  (must come after load_dotenv)
+from jobpipe import config  # noqa: E402  (must come after load_dotenv)
 
 # Source module aliases. Keep keys lowercase / canonical.
 _ALIASES = {

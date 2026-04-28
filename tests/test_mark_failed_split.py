@@ -146,43 +146,34 @@ class _FakeClient:
 
 @pytest.fixture
 def tailor_db(monkeypatch):
-    """Import jobpipe/tailor/db.py with a stubbed supabase client + config.
+    """Import jobpipe.db with a stubbed supabase client + storage stub.
 
-    Tailor's db.py uses the bare-import pattern (`from config import ...`)
-    so we install a synthetic `config` module and patch
-    `supabase.create_client` before triggering the import.
+    PR-9 removed the per-subtree db.py shims, so we test the canonical
+    ``jobpipe.db`` directly. ``mark_tailor_failed(clear_materials=True)``
+    still does ``from storage import delete_all_for_job`` lazily (a bare
+    import that resolves via the tailor sys.path bootstrap at runtime);
+    we install a synthetic ``storage`` module so the test can observe
+    those calls without requiring tailor/storage.py's Supabase init.
     """
-    monkeypatch.syspath_prepend(str(TAILOR_DIR))
-
-    config_stub = type(sys)("config")
-    config_stub.SUPABASE_URL = "https://example.supabase.co"
-    config_stub.SUPABASE_KEY = "anon-test"
-    monkeypatch.setitem(sys.modules, "config", config_stub)
-
     fake = _FakeClient()
     import supabase  # type: ignore[import-not-found]
     monkeypatch.setattr(supabase, "create_client", lambda *a, **kw: fake)
 
-    # PR-8: tailor/db.py is now a shim that re-exports from the canonical
-    # jobpipe.db, which holds a lazy module-level Supabase client cache.
-    # Reset it (per-test) so the create_client monkeypatch above is what
-    # builds the next client, not whatever fixture ran earlier.
-    import jobpipe.db as _canonical_db
-    monkeypatch.setattr(_canonical_db, "_client", None)
-    monkeypatch.setattr(_canonical_db, "_service_client", None)
+    # Reset jobpipe.db's lazy module-level client cache so the
+    # create_client monkeypatch above is what builds the next client.
+    import jobpipe.db as db
+    monkeypatch.setattr(db, "_client", None)
+    monkeypatch.setattr(db, "_service_client", None)
 
-    # `mark_tailor_failed(clear_materials=True)` does `from storage import
-    # delete_all_for_job` lazily — provide a stub so we can observe calls.
+    # ``mark_tailor_failed(clear_materials=True)`` does
+    # ``from storage import delete_all_for_job`` lazily — provide a stub.
     storage_stub = type(sys)("storage")
     delete_calls: list[str] = []
     storage_stub.delete_all_for_job = lambda jid: delete_calls.append(jid)
     monkeypatch.setitem(sys.modules, "storage", storage_stub)
 
-    sys.modules.pop("db", None)
-    import db  # noqa: E402
-    db.client = fake  # safety net if module-level client was created earlier
+    db.client = fake  # belt-and-suspenders if cache was populated earlier
     yield db, fake, delete_calls
-    sys.modules.pop("db", None)
 
 
 def test_mark_tailor_failed_default_clears_materials(tailor_db):
@@ -227,8 +218,14 @@ def test_mark_tailor_failed_persists_screenshot_and_uncertain_fields(tailor_db):
 
 @pytest.fixture
 def submit_db(monkeypatch):
-    """Import jobpipe/submit/db.py with a stubbed supabase client + env."""
-    monkeypatch.syspath_prepend(str(SUBMIT_DIR))
+    """Import jobpipe.db with a stubbed supabase client + env.
+
+    PR-9 removed the per-subtree db.py shims; we test the canonical
+    ``jobpipe.db`` directly. The env vars stay set in case a downstream
+    test imports ``jobpipe.submit.config`` (which fail-louds on missing
+    secrets) — ``jobpipe.db`` itself only needs SUPABASE_URL/KEY which
+    have soft defaults in ``jobpipe.config``.
+    """
     for k, v in {
         "SUPABASE_URL": "https://example.supabase.co",
         "SUPABASE_KEY": "anon-test",
@@ -243,21 +240,15 @@ def submit_db(monkeypatch):
     import supabase  # type: ignore[import-not-found]
     monkeypatch.setattr(supabase, "create_client", lambda *a, **kw: fake)
 
-    # PR-8: submit/db.py is now a shim that re-exports from the canonical
-    # jobpipe.db. Reset its lazy client cache so the create_client
-    # monkeypatch above is what builds the next client.
-    import jobpipe.db as _canonical_db
-    monkeypatch.setattr(_canonical_db, "_client", None)
-    monkeypatch.setattr(_canonical_db, "_service_client", None)
+    # Reset jobpipe.db's lazy module-level client cache so the
+    # create_client monkeypatch above is what builds the next client.
+    import jobpipe.db as db
+    monkeypatch.setattr(db, "_client", None)
+    monkeypatch.setattr(db, "_service_client", None)
 
-    for m in ("config", "db"):
-        sys.modules.pop(m, None)
-    import db  # noqa: E402
     db.client = fake
     db.service_client = fake
     yield db, fake
-    for m in ("config", "db"):
-        sys.modules.pop(m, None)
 
 
 def test_submit_mark_failed_writes_status_and_reason_only(submit_db):

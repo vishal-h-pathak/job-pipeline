@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Optional
 
-from db import client
+from jobpipe.db import client
 
 logger = logging.getLogger("interview_prep.bank")
 

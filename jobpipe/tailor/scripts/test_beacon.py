@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
-from applicant.universal import UniversalApplicant
+from jobpipe.submit.adapters.prepare_dom.universal import UniversalApplicant
 
 BEACON_JOB = {
     "id": "beacon-neuroscientist-esp-2026",

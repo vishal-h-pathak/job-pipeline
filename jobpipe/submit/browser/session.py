@@ -29,11 +29,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
-from config import (
+from jobpipe.config import SESSION_BUDGET_SECONDS
+from jobpipe.submit.config import (
+    ANTHROPIC_API_KEY,
     BROWSERBASE_API_KEY,
     BROWSERBASE_PROJECT_ID,
-    ANTHROPIC_API_KEY,
-    SESSION_BUDGET_SECONDS,
 )
 
 logger = logging.getLogger("submitter.browser")

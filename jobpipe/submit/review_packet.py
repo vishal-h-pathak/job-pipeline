@@ -22,7 +22,7 @@ from dataclasses import asdict
 from typing import Any
 
 from adapters.base import SubmissionResult
-from config import REVIEW_DASHBOARD_URL
+from jobpipe.config import REVIEW_DASHBOARD_URL
 
 logger = logging.getLogger("submitter.review")
 

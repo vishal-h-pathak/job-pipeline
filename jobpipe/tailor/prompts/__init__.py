@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Optional
 
 _PROMPTS_DIR = Path(__file__).parent
-_REPO_ROOT = _PROMPTS_DIR.parent
 _SHARED_CACHE: Optional[str] = None
 _PROFILE_CACHE: Optional[str] = None
 
@@ -37,21 +36,38 @@ _USER_LAYER_FILES = (
 )
 
 
-def _resolve_profile_dir() -> Optional[Path]:
-    """Find the user-layer profile/ directory.
-
-    Resolution order:
-      1. `<this repo>/profile/`
-      2. `<sibling job-hunter>/profile/` (canonical home of the user layer)
-      3. None — caller falls back to legacy `CLAUDE.md`.
-    """
-    local = _REPO_ROOT / "profile"
-    if local.exists():
-        return local
-    sibling = _REPO_ROOT.parent / "job-hunter" / "profile"
-    if sibling.exists():
-        return sibling
+def _walk_up_for_pyproject(start: Path) -> Optional[Path]:
+    """Walk up from ``start`` until a directory containing pyproject.toml is found."""
+    cur = start.resolve()
+    for candidate in (cur, *cur.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
     return None
+
+
+def _resolve_profile_search_dirs() -> tuple[Path, ...]:
+    """Return the directories that may contain user-layer profile files.
+
+    PR-9: the unified jobpipe repo splits the user layer across two
+    locations: the structured + narrative files (``profile.yml``,
+    ``article-digest.md``, ``learned-insights.md``,
+    ``voice-profile.md``) live at the repo-root ``profile/`` directory,
+    while the hunt-specific files (``cv.md``, ``disqualifiers.yml``,
+    ``portals.yml``) live at ``jobpipe/hunt/profile/`` because they're
+    only consumed by the hunter's source-side filtering. ``load_profile``
+    scans both and concatenates whichever files it finds.
+    """
+    repo_root = _walk_up_for_pyproject(_PROMPTS_DIR)
+    if repo_root is None:
+        return ()
+    dirs: list[Path] = []
+    top = repo_root / "profile"
+    if top.exists():
+        dirs.append(top)
+    hunt = repo_root / "jobpipe" / "hunt" / "profile"
+    if hunt.exists():
+        dirs.append(hunt)
+    return tuple(dirs)
 
 
 def _shared() -> str:
@@ -64,32 +80,40 @@ def _shared() -> str:
 def load_profile() -> str:
     """Load the merged user-layer profile.
 
-    Concatenates `profile/profile.yml`, `profile/disqualifiers.yml`,
-    `profile/cv.md`, and `profile/article-digest.md` (whichever exist)
-    into a single string suitable for injecting into prompts. Falls back
-    to legacy `CLAUDE.md` if no `profile/` directory is found in this
-    repo or the sibling `job-hunter/`.
+    Concatenates ``profile.yml`` + ``disqualifiers.yml`` + ``cv.md`` +
+    ``article-digest.md`` + ``learned-insights.md`` (whichever exist)
+    into a single string suitable for injecting into prompts. PR-9: the
+    user-layer files now live at unified repo-root locations
+    (``profile/`` + ``jobpipe/hunt/profile/``) — see
+    :func:`_resolve_profile_search_dirs`. Falls back to the consolidated
+    repo-root ``CLAUDE.md`` if no profile files are found.
     """
     global _PROFILE_CACHE
     if _PROFILE_CACHE is not None:
         return _PROFILE_CACHE
 
-    profile_dir = _resolve_profile_dir()
-    if profile_dir is not None:
+    search_dirs = _resolve_profile_search_dirs()
+    if search_dirs:
         parts: list[str] = []
         for name in _USER_LAYER_FILES:
-            f = profile_dir / name
-            if f.exists():
-                parts.append(
-                    f"========== {name} ==========\n"
-                    + f.read_text(encoding="utf-8").strip()
-                )
+            for d in search_dirs:
+                f = d / name
+                if f.exists():
+                    parts.append(
+                        f"========== {name} ==========\n"
+                        + f.read_text(encoding="utf-8").strip()
+                    )
+                    break
         _PROFILE_CACHE = "\n\n".join(parts) if parts else ""
         if _PROFILE_CACHE:
             return _PROFILE_CACHE
 
-    # Last-resort fallback: legacy CLAUDE.md in this repo or sibling.
-    for legacy in (_REPO_ROOT / "CLAUDE.md", _REPO_ROOT.parent / "job-hunter" / "CLAUDE.md"):
+    # Last-resort fallback: the repo-root narrative CLAUDE.md (PR-9
+    # consolidated the per-subpackage CLAUDE.md files into one top-level
+    # file).
+    repo_root = _walk_up_for_pyproject(_PROMPTS_DIR)
+    if repo_root is not None:
+        legacy = repo_root / "CLAUDE.md"
         if legacy.exists():
             _PROFILE_CACHE = legacy.read_text(encoding="utf-8")
             return _PROFILE_CACHE

@@ -271,66 +271,13 @@ def test_config_two_distinct_claude_models_per_pr8():
 
 
 # ── Per-subtree shim consistency ──────────────────────────────────────────
-
-def test_tailor_db_shim_reexports_tailor_surface():
-    """The tailor db shim must re-export every function tailor callers
-    historically used. Each re-export must resolve to the same object as
-    the canonical module — guards against the shim accidentally
-    re-defining instead of re-exporting."""
-    import jobpipe.tailor.db as tailor_db
-    expected = (
-        "delete_job_materials", "get_approved_jobs", "get_confirmed_jobs",
-        "get_job_counts_by_status", "get_jobs_by_status",
-        "get_prefill_requested_jobs", "mark_applied", "mark_awaiting_submit",
-        "mark_prefilling", "mark_preparing", "mark_ready_for_review",
-        "mark_ready_to_submit", "mark_skipped", "mark_tailor_failed",
-        "update_job_status",
-    )
-    for name in expected:
-        assert hasattr(tailor_db, name), (
-            f"jobpipe.tailor.db shim must re-export {name}"
-        )
-        assert getattr(tailor_db, name) is getattr(db, name), (
-            f"jobpipe.tailor.db.{name} must be the same object as "
-            f"jobpipe.db.{name}"
-        )
-
-
-def test_submit_db_shim_reexports_submit_surface():
-    import jobpipe.submit.db as submit_db
-    expected = (
-        "close_attempt", "get_job", "get_jobs_ready_for_submission",
-        "mark_failed", "mark_needs_review", "mark_submitted",
-        "mark_submitting", "next_attempt_n", "open_attempt",
-        "record_submission_log", "verify_materials_hash",
-    )
-    for name in expected:
-        assert hasattr(submit_db, name)
-        assert getattr(submit_db, name) is getattr(db, name)
-
-
-def test_hunt_db_shim_reexports_hunt_surface():
-    import jobpipe.hunt.db as hunt_db
-    for name in ("get_seen_ids", "upsert_job"):
-        assert hasattr(hunt_db, name)
-        assert getattr(hunt_db, name) is getattr(db, name)
-
-
-def test_tailor_notify_shim_reexports_send_and_alias_surface():
-    import jobpipe.tailor.notify as tailor_notify
-    expected = (
-        "cockpit_url", "create_notification",
-        "send_applied", "send_awaiting_review", "send_awaiting_submit",
-        "send_failed",
-        "notify_applied", "notify_awaiting_submit", "notify_failed",
-        "notify_ready_for_review",
-    )
-    for name in expected:
-        assert hasattr(tailor_notify, name)
-        assert getattr(tailor_notify, name) is getattr(notify, name)
-
-
-def test_hunt_notifier_shim_reexports_send_digest():
-    import jobpipe.hunt.notifier as hunt_notifier
-    assert hasattr(hunt_notifier, "send_digest")
-    assert hunt_notifier.send_digest is notify.send_digest
+# PR-9 deleted the per-subtree db.py / notifier.py / notify.py / config.py
+# shims along with their callers' bare-import dependencies. The five
+# `test_*_shim_reexports_*` tests that lived here were specifically asserting
+# the shim re-export surface — once the shims are gone the assertions become
+# meaningless (they would just import-error). The canonical-surface tests
+# above (test_db_symbol_exists_with_expected_signature,
+# test_notify_symbol_exists_with_expected_signature,
+# test_config_exports_expected_symbol, …) still exercise the same union of
+# functions / signatures that every pre-PR-8 caller relied on, so the
+# coverage they provided is preserved.

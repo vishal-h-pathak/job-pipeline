@@ -1,0 +1,9 @@
+anthropic
+supabase
+python-dotenv
+playwright
+apscheduler
+httpx
+beautifulsoup4
+reportlab
+pyyaml>=6.0

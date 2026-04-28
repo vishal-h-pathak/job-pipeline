@@ -1,0 +1,185 @@
+# Vishal Pathak — ATS Portal Map (J-1)
+#
+# USER-LAYER. Hand-edited list of companies the hunter polls directly via
+# their ATS APIs (Greenhouse, Lever, Ashby, Workday). Discovery is
+# zero-token: pure HTTP/JSON, no Anthropic spend until a posting passes
+# the title pre-filter and reaches the scorer.
+#
+# To add a company:
+#   1. Find the ATS slug (visit the careers page; the URL usually gives
+#      it away — e.g. boards.greenhouse.io/<slug>, jobs.ashbyhq.com/<slug>,
+#      jobs.lever.co/<slug>, <tenant>.wd1.myworkdayjobs.com/<site>).
+#   2. Drop the row in the matching `companies:` list below.
+#   3. Run the hunter once and check `agent.log` for warnings — slugs
+#      that 404 are dropped silently with a warning so they don't break
+#      the run, but you should still remove dead entries.
+
+# ──────────────────────────────────────────────────────────────────────────
+# Greenhouse — public boards-api.greenhouse.io
+# ──────────────────────────────────────────────────────────────────────────
+greenhouse:
+  companies:
+    # Confirmed via 2026-04-26 hunter run (200 responses)
+    - slug: neuralink
+      name: Neuralink
+    - slug: anthropic
+      name: Anthropic
+    - slug: deepmind
+      name: DeepMind
+    - slug: scaleai
+      name: Scale AI
+    - slug: recursionpharma
+      name: Recursion
+    - slug: insitro
+      name: Insitro
+    - slug: databricks
+      name: Databricks
+    - slug: anyscale
+      name: Anyscale
+    - slug: weightsandbiases
+      name: Weights & Biases
+    - slug: runwayml
+      name: Runway
+    - slug: stabilityai
+      name: Stability AI
+    - slug: atomwise
+      name: Atomwise
+    - slug: isomorphiclabs
+      name: Isomorphic Labs
+
+# ──────────────────────────────────────────────────────────────────────────
+# Lever — api.lever.co/v0/postings/<slug>
+# ──────────────────────────────────────────────────────────────────────────
+lever:
+  companies:
+    # Neurotech / BCI (Tier 1)
+    - slug: rainai
+      name: Rain AI
+    - slug: synchron
+      name: Synchron
+    - slug: paradromics
+      name: Paradromics
+    - slug: cortical
+      name: Cortical Labs
+    # AI labs / infra
+    - slug: groq
+      name: Groq
+    - slug: togetherai
+      name: Together AI
+    - slug: writer
+      name: Writer
+
+# ──────────────────────────────────────────────────────────────────────────
+# Ashby — api.ashbyhq.com/posting-api/job-board/<slug>
+# ──────────────────────────────────────────────────────────────────────────
+ashby:
+  companies:
+    # AI infrastructure / inference platforms
+    - slug: replicate
+      name: Replicate
+    - slug: modal-labs
+      name: Modal Labs
+    - slug: posthog
+      name: PostHog
+    - slug: linear
+      name: Linear
+    - slug: notion
+      name: Notion
+    # Foundation-model adjacent / agentic AI
+    - slug: decagon
+      name: Decagon
+    - slug: sierra
+      name: Sierra
+    - slug: glean
+      name: Glean
+    - slug: sakanaai
+      name: Sakana AI
+    - slug: rekaai
+      name: Reka AI
+    - slug: factoryai
+      name: Factory AI
+    # Vector DB / retrieval (sales-eng targets)
+    - slug: pineconeio
+      name: Pinecone
+    - slug: weaviate
+      name: Weaviate
+
+# ──────────────────────────────────────────────────────────────────────────
+# Workday — <tenant>.wd<N>.myworkdayjobs.com/<site>
+#
+# Workday tenants vary by data-center number (wd1/wd3/wd5/wd103). Each
+# tenant exposes a public job-search endpoint at:
+#   https://<tenant>.wd<N>.myworkdayjobs.com/wday/cxs/<tenant>/<site>/jobs
+# The hunter POSTs an empty filter to that URL and walks pages.
+#
+# For a new company:
+#   - Visit their careers page; the URL exposes tenant + site + dc.
+#   - Drop the row below; use a small page cap (default 50) until you
+#     trust the slug isn't going to flood your scorer.
+# ──────────────────────────────────────────────────────────────────────────
+workday:
+  companies:
+    # Examples — verify the dc number against the live careers URL before
+    # adding more. Empty list is safe (Workday source returns nothing).
+
+# ──────────────────────────────────────────────────────────────────────────
+# Title pre-filter — applied BEFORE LLM scoring (J-1).
+# Pure substring match (case-insensitive). Cheap, conservative.
+# ──────────────────────────────────────────────────────────────────────────
+title_filter:
+  # Auto-skip titles containing any of these terms. Real disqualifiers
+  # only — we'd rather over-LLM-score than miss a Tier 1 role because of
+  # a noisy keyword. Be selective.
+  reject_substrings:
+    - "internship"
+    - "intern,"
+    - "intern - "
+    - "vp of"
+    - "vice president"
+    - "chief executive"
+    - "ceo"
+    - "cfo"
+    - "coo"
+    - "cmo"
+    - "hr business partner"
+    - "recruiter"
+    - "talent acquisition"
+    - "executive assistant"
+    - "office manager"
+    - "office coordinator"
+    - "social media manager"
+
+  # Always score titles containing any of these — strong positive signal.
+  # Used to log a hint in agent.log; doesn't gate filtering.
+  prefer_substrings:
+    - "neuromorphic"
+    - "spiking"
+    - "connectom"
+    - "neural"
+    - "neuroscience"
+    - "bci"
+    - "brain-computer"
+    - "neurotech"
+    - "neuroprosth"
+    - "applied scientist"
+    - "research engineer"
+    - "research scientist"
+    - "ml engineer"
+    - "machine learning engineer"
+    - "computer vision"
+    - "sales engineer"
+    - "solutions engineer"
+    - "developer relations"
+    - "developer advocate"
+    - "ai engineer"
+
+  # Soft seniority hint — boosts logging only. Both individual contributors
+  # and senior IC titles are welcome; what we filter against is leadership
+  # (already handled in reject_substrings).
+  seniority_substrings:
+    - "senior"
+    - "staff"
+    - "principal"
+    - "lead"
+    - "sr."
+    - "sr "

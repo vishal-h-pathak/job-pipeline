@@ -1,0 +1,18 @@
+# Vishal Pathak — Disqualifiers
+#
+# USER-LAYER. Hand-edit only. Read by the scorer to short-circuit jobs
+# matching anything below into the "disqualify" tier.
+
+hard_disqualifiers:
+  - DoD / defense contracts
+  - government roles or anything requiring clearance dependencies post-GTRI
+  - roles with no clear mission
+  - Academic positions (postdoc, professor, PhD programs) — no PhD
+  - cryptocurrency / blockchain — no genuine interest
+
+soft_concerns:
+  # These don't auto-disqualify but should drag the score down and the
+  # scorer should call them out in `reasoning`.
+  - non-mission-driven SaaS without an interesting technical angle
+  - no remote AND no relocation budget combined
+  - heavy on-site presence in regions Vishal isn't willing to relocate to

@@ -1,0 +1,223 @@
+# Vishal Pathak — Identity, Tiers, Compensation, Form Defaults
+#
+# This is USER-LAYER ground truth. Code never overwrites it. Hand-edit when
+# any of the facts below change. Downstream prompts and form-fillers read
+# this verbatim.
+
+identity:
+  name: Vishal Pathak
+  email: vishalp@thak.io
+  location_base: Atlanta, GA
+  linkedin: linkedin.com/in/vishalhpathak
+  website: vishal.pa.thak.io
+
+background_summary: |
+  EE background with a long-running focus on neuromorphic hardware and
+  brain-inspired computing. The through-line is emergence — the
+  Hodgkin-Huxley model in college (ion channels as RC circuits scaling to
+  cognition) pointed him toward this and he has not wandered far since.
+  Rain Neuromorphics at 19 as employee #5, building memristive LIF neuron
+  PCBs by hand. Four years at GTRI doing SNN deployment on Intel Kapoho
+  Bay, VHDL neuron modeling, and eventually broader computer vision and
+  embedded ML. Now looking to get back closer to the neuroscience end of
+  the spectrum.
+
+location_and_compensation:
+  base: Atlanta, GA
+  remote_acceptable: true
+  in_person_acceptable: hybrid only; fully remote strongly preferred
+  relocation: only if mission + comp are both exceptional (eon.systems is the bar)
+  current_comp_usd: 110000
+  target_comp_usd: "120000-140000"
+
+# What he is looking for, by tier. J-4 (archetype routing) extends each
+# tier into one or more archetype entries with framing/emphasis/tone.
+# Until J-4 lands, the tier list below is what scoring + tailoring reads.
+what_he_is_looking_for:
+  tier_1:
+    label: Computational neuroscience, neuromorphic, connectomics, embodied sim, BCI
+    reference_role: eon.systems
+  tier_2:
+    label: Sales engineering in genuinely interesting AI/LLM domains
+    notes: Strong communicator, rare technical depth. No formal sales experience but has pitched to DoD program sponsors. Domain must be genuinely interesting.
+  tier_3:
+    label: ML/CV engineering at mission-driven organizations
+    notes: Heavily dependent on the company.
+
+# Archetype routing (J-4). Each archetype is one "lane" the candidate
+# can be framed as. The tailor classifies a JD into the best-fit
+# archetype, loads the entry below, and injects it into the resume +
+# cover-letter prompts. Same candidate, multiple lanes — picked per-job.
+#
+# Add new archetypes by appending an entry; the classifier prompt
+# (`prompts/classify_archetype.md`) reads the keys + framings at runtime
+# so a new archetype is live immediately after a YAML edit.
+archetypes:
+  tier_1a_compneuro:
+    label: Computational neuroscience / connectomics / embodied simulation
+    framing: |
+      EE who came to neuroscience through hardware. The thread is
+      emergence — Hodgkin–Huxley as RC circuits, then memristors, then
+      spiking networks at GTRI, then connectome-driven simulation
+      (FlyGym, MuJoCo, Brian2). Frame the candidate as someone who
+      treats biological substrates as computational systems and has
+      hands-on experience modeling them.
+    emphasis_proof_points:
+      - VHDL CUBA/LIF neuron models matching Intel LavaSDK behavior
+      - DNN→SNN conversion pipeline with backprop in spiking regime
+      - FlyGym + MuJoCo + connectomics personal projects
+      - Hodgkin–Huxley origin story and the 10-year through-line
+    tone_guidance: |
+      Technical, mechanistic, comfortable with biology + engineering
+      vocabulary side-by-side. Lean into the obsession narrative —
+      this audience values depth and continuity over breadth.
+    bullet_template: |
+      [verb] [biological/computational system] using [tool] —
+      [observed outcome / scientific question addressed].
+      Example: "Modeled CUBA dynamics in VHDL to match LavaSDK
+      behavior, enabling SNN sim-to-FPGA portability."
+
+  tier_1b_neuromorphic:
+    label: Neuromorphic engineering / SNN hardware
+    framing: |
+      Hardware-first SNN engineer. Rain Neuromorphics employee #5 at
+      19, hand-populated LIF neuron PCBs, then four years at GTRI
+      deploying spiking networks to Intel Kapoho Bay (Loihi 1/2) and
+      writing VHDL neuron models. Frame the candidate as someone who
+      has shipped real spiking systems on real silicon.
+    emphasis_proof_points:
+      - Intel Kapoho Bay deployment + benchmarking
+      - VHDL CUBA/LIF neurons matching LavaSDK
+      - Memristive LIF neuron PCB at Rain (40 neurons, hand-populated)
+      - DNN→SNN conversion pipeline for radar / overhead imagery
+    tone_guidance: |
+      Direct, hardware-grounded, comfortable with FPGA/ASIC vocabulary.
+      Mention specific chips, toolchains, neuron models. This audience
+      is often skeptical of "AI" candidates without real silicon
+      experience — lean into Rain + GTRI specifics.
+    bullet_template: |
+      [verb] [neuron model / network architecture] on
+      [target hardware] using [toolchain], [measured outcome
+      vs baseline].
+      Example: "Deployed CUBA SNN to Intel Kapoho Bay, benchmarked
+      power vs GPU baseline at matched accuracy."
+
+  tier_1c_bci:
+    label: Brain-computer interface
+    framing: |
+      Engineer with a long-running interest in the
+      neurotech-to-deployment pipeline. EE background, hands-on
+      hardware (Rain), spiking-network expertise (GTRI), embedded
+      ML (Jetson Orin), and ruggedized sensor + cable deployment
+      (SHELAC). Frame the candidate as someone who can move between
+      benchtop neural recording and shippable embedded systems.
+    emphasis_proof_points:
+      - Embedded systems experience (STM32, Jetson Orin)
+      - Real-time signal processing on spiking + conventional networks
+      - PCB design + hand assembly (Rain, GTRI HACS)
+      - Ruggedized cable + sensor deployment (SHELAC, ENFIRE)
+    tone_guidance: |
+      Mechanical, mission-aware, conscious of the patient/research-
+      subject dimension when the JD signals it. Avoid hype around
+      consumer-BCI claims. Concrete on the engineering challenges
+      this kind of work involves.
+    bullet_template: |
+      [verb] [signal-processing / embedded task] on
+      [embedded platform], [reliability / latency outcome].
+      Example: "Built rugged sensor enclosure with Jetson Orin +
+      Ouster LiDAR + DAGR receiver, validated SLAM on campus scale."
+
+  tier_2_ai_se:
+    label: AI / LLM sales engineering, solutions engineering
+    framing: |
+      Deep-technical engineer who wants to be closer to customers and
+      products rather than behind a clearance wall. No formal SE title,
+      but four years at GTRI presenting technical work to program
+      sponsors, translating research outcomes for non-technical
+      stakeholders, and building demos to secure continued funding —
+      that IS solutions engineering, just in a government context.
+      Plus: rapid Python prototyping, full-stack agentic AI projects
+      (this job-hunter codebase, the trading agent), demonstrated
+      ability to ship and demo end-to-end systems.
+    emphasis_proof_points:
+      - Pitches to DoD program sponsors + technical proposal writing
+      - Translating research to stakeholder-friendly deliverables
+      - Personal full-stack agentic AI projects (job-hunter, trading agent)
+      - Python proficiency + comfort building demos rapidly
+      - Dashboard / Postgres / Playwright / Anthropic SDK end-to-end
+    tone_guidance: |
+      Conversational, customer-empathetic, comfortable explaining
+      complex systems to mixed audiences. Acknowledge the career
+      pivot candidly — don't pretend to have an SE title that
+      doesn't exist. Frame the move as "deep technical engineer
+      who wants to be customer-facing, not as a marketer with a
+      veneer of technical knowledge."
+    bullet_template: |
+      [verb] [technical artifact] for [customer / stakeholder type],
+      resulting in [funding / adoption / acceptance outcome].
+      Example: "Translated SNN deployment progress into demo briefs
+      for DoD program sponsors; secured continued funding."
+
+  tier_3_mission_ml:
+    label: Mission-driven ML / CV at non-DoD organizations
+    framing: |
+      Generalist ML/CV engineer with embedded + HPC fluency, oriented
+      toward applied work where the mission is clear. GTRI background
+      provides depth across detection, tracking, SLAM, surrogate
+      modeling, and HPC training. Frame the candidate as someone who
+      can join a mission-driven org and ship — not a research-only
+      engineer chasing publications.
+    emphasis_proof_points:
+      - RT-DETRv2 + KITTI / detection / tracking pipelines
+      - Embedded ML (Jetson Orin) deployment
+      - HPC training experience on ICEHAMMER cluster
+      - PAAM surrogate modeling for AFSIM simulation data
+      - End-to-end CI (Jacamar-CI) for vehicle-mounted vision
+    tone_guidance: |
+      Mission-first. Lead with what the work *does* in the world,
+      not just the techniques used. Concrete about the engineering
+      side — these orgs hire for shipping, not paper-output.
+    bullet_template: |
+      [verb] [perception / ML system] for [domain],
+      [measurable engineering outcome].
+      Example: "Built pytest + Jacamar-CI suite covering KITTI
+      ingestion, detection, and tracking on HPC cluster."
+
+how_he_works: |
+  Good communicator, creative problem-solver, works best with clear
+  direction and a compelling reason to solve the problem. Self-aware
+  about needing external structure to stay focused. Strong once pointed
+  at something.
+
+key_technical_skills:
+  - FlyGym, MuJoCo, Brian2, Gymnasium API
+  - VHDL SNN implementation, Intel Kapoho Bay (Loihi 1/2)
+  - memristive hardware, DNN->SNN conversion
+  - PyTorch, TensorFlow, HPC training
+  - RT-DETRv2, embedded ML (Jetson Orin)
+  - PCB design (EagleCAD/Altium)
+  - PyQt6 desktop GUI development
+  - serial protocol integration (RS-232, RS-485)
+  - ruggedized sensor + cable deployment, AFSIM surrogate modeling
+  - C++, Python
+
+# Canonical answers the job-submitter reads. Keep in sync with
+# `job-submitter/scripts/smoke_greenhouse.py::FAKE_APPLICANT` until the
+# tailor becomes the single writer of `applicant_profile`.
+application_form_defaults:
+  work_authorization: us_citizen
+  visa_sponsorship_needed: false
+  earliest_start_date: as early as possible; typical notice is two weeks after offer acceptance
+  relocation_willingness: based in Atlanta, GA and strongly prefers remote or local roles; open to relocation only if remote/local options are exhausted and the role + compensation are both exceptional
+  in_person_willingness: remote or hybrid acceptable; fully remote strongly preferred
+  ai_policy_ack: |
+    I am transparent about my use of AI assistance in my work. I use AI
+    tools (including LLMs) to accelerate drafting, research, and
+    exploration, but I always keep a human in the loop: I review,
+    validate, and take responsibility for all work I produce.
+  previous_interview_with_company:
+    anthropic: false
+
+personal: |
+  From Cape Canaveral, FL. Moved to Atlanta April 2022. Runs a book club
+  (papercuts.org). Into cooking, audiobooks, agentic AI projects.

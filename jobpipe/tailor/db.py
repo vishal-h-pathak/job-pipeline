@@ -249,27 +249,42 @@ def delete_job_materials(job_id: str) -> None:
     }).eq("id", job_id).execute()
 
 
-def mark_failed(job_id: str, reason: str) -> dict:
-    return update_job_status(job_id, "failed", failure_reason=reason)
+def mark_tailor_failed(job_id: str, reason: str, *,
+                       clear_materials: bool = True,
+                       screenshot_path: str = None,
+                       uncertain_fields: list = None) -> dict:
+    """Tailor-side failure transition (PR-6 split from `mark_failed`).
 
+    Use for failures that originate in the tailor pipeline: LaTeX compile
+    error, prompt failure, missing inputs at tailoring time. Submitter
+    failures use `jobpipe.submit.db.mark_failed` instead — that path
+    requires an `application_attempts` row first per the design rule in
+    JOB_APPLICATION_REDESIGN.md ("every transition writes an attempts row").
 
-def mark_needs_review(job_id: str, reason: str, screenshot_path: str = None,
-                      uncertain_fields: list = None) -> dict:
-    """DEPRECATED — `needs_review` is no longer a valid status under the
-    M-2 CHECK enum. Routes to `mark_failed` so the row still surfaces
-    in the cockpit (status banner shows the failure reason). Kept so
-    `scripts/submit_one.py` doesn't crash on import while M-7 cleanup
-    is pending.
+    Behavior:
+      - status -> 'failed', failure_reason -> reason
+      - if clear_materials (default True), deletes generated PDFs from
+        Storage and nulls resume_pdf_path / cover_letter_pdf_path on the
+        row. Disable for pre-fill failures where the tailored materials
+        are still good and the user may want to retry pre-fill manually.
+      - screenshot_path / uncertain_fields are persisted when present so
+        the cockpit's failure banner can surface debug context (these
+        flowed through the previous `mark_needs_review` alias and are
+        retained on this single canonical entry point).
     """
-    logger.warning(
-        f"mark_needs_review() is deprecated (M-2); routing job {job_id} "
-        f"to status='failed'. Reason: {reason}"
-    )
-    extras = {}
+    extras: dict = {}
     if screenshot_path:
         extras["review_screenshot"] = screenshot_path
     if uncertain_fields:
         extras["uncertain_fields"] = uncertain_fields
+    if clear_materials:
+        try:
+            from storage import delete_all_for_job
+            delete_all_for_job(job_id)
+        except Exception as e:
+            logger.warning(f"Could not clear materials for job {job_id}: {e}")
+        extras["resume_pdf_path"] = None
+        extras["cover_letter_pdf_path"] = None
     return update_job_status(job_id, "failed", failure_reason=reason, **extras)
 
 

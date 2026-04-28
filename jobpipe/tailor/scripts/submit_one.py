@@ -172,16 +172,22 @@ def main():
 
     # Supabase state transitions
     if args.job_id and not args.dry_run:
-        from db import mark_applied, mark_failed, mark_needs_review
+        # PR-6: tailor side now exposes only mark_tailor_failed; the M-2
+        # mark_needs_review alias (which already routed to status='failed')
+        # was deleted. clear_materials=False so a human re-running the
+        # script after a paused/failed run still has the resume + cover
+        # letter PDFs in Storage.
+        from db import mark_applied, mark_tailor_failed
         if args.mode == "prepare":
             if result.get("needs_review"):
-                mark_needs_review(
+                mark_tailor_failed(
                     args.job_id,
                     reason=result.get("review_reason") or "agent paused",
+                    clear_materials=False,
                     screenshot_path=(result.get("screenshots") or [None])[-1],
                     uncertain_fields=result.get("uncertain_fields"),
                 )
-                print("\n→ Supabase: status=needs_review")
+                print("\n→ Supabase: status=failed (agent paused)")
             elif result.get("success"):
                 # Already ready_to_submit from Phase 1; nothing to do here.
                 print("\n→ Supabase: (ready_to_submit set at Phase 1; no change)")
@@ -191,14 +197,19 @@ def main():
                              application_notes=result.get("submit_confirmation_text"))
                 print("\n→ Supabase: status=applied")
             elif result.get("needs_review"):
-                mark_needs_review(
+                mark_tailor_failed(
                     args.job_id,
                     reason=result.get("review_reason") or "submit paused",
+                    clear_materials=False,
                     screenshot_path=(result.get("screenshots") or [None])[-1],
                 )
-                print("\n→ Supabase: status=needs_review")
+                print("\n→ Supabase: status=failed (submit paused)")
             else:
-                mark_failed(args.job_id, reason="submit did not complete")
+                mark_tailor_failed(
+                    args.job_id,
+                    reason="submit did not complete",
+                    clear_materials=False,
+                )
                 print("\n→ Supabase: status=failed")
 
 

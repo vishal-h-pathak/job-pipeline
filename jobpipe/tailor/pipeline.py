@@ -51,7 +51,7 @@ from db import (  # noqa: E402
     mark_ready_for_review,
     mark_awaiting_submit,
     mark_applied,
-    mark_failed,
+    mark_tailor_failed,
     mark_skipped,
     get_job_counts_by_status,
 )
@@ -72,7 +72,6 @@ from notify import (  # noqa: E402
 from storage import (  # noqa: E402
     upload_pdf,
     download_to_tmp,
-    delete_all_for_job,
     upload_prefill_screenshot,
 )
 
@@ -292,12 +291,9 @@ def process_approved_jobs():
 
         except Exception as e:
             logger.error(f"Failed to process {company} — {title}: {e}")
-            # If upload partially completed, clean so nothing is orphaned.
-            try:
-                delete_all_for_job(job_id)
-            except Exception:
-                pass
-            mark_failed(job_id, str(e))
+            # mark_tailor_failed clears materials by default; the prior
+            # explicit delete_all_for_job is now redundant and removed.
+            mark_tailor_failed(job_id, str(e))
             notify_failed(job, str(e))
 
 
@@ -366,9 +362,10 @@ def process_prefill_requested_jobs():
                 pass
 
         if not storage_path:
-            mark_failed(
+            mark_tailor_failed(
                 job_id,
                 "Pre-fill: no resume PDF in storage; re-tailor first.",
+                clear_materials=False,
             )
             notify_failed(job, "Pre-fill blocked: no resume PDF.")
             continue
@@ -376,7 +373,11 @@ def process_prefill_requested_jobs():
         try:
             tmp_resume_pdf = download_to_tmp(storage_path)
         except Exception as exc:
-            mark_failed(job_id, f"Pre-fill: resume download failed: {exc}")
+            mark_tailor_failed(
+                job_id,
+                f"Pre-fill: resume download failed: {exc}",
+                clear_materials=False,
+            )
             notify_failed(job, f"Pre-fill blocked: {exc}")
             continue
 
@@ -404,7 +405,11 @@ def process_prefill_requested_jobs():
                         pass
                 except Exception as exc:
                     browser.close()
-                    mark_failed(job_id, f"Pre-fill: page load failed: {exc}")
+                    mark_tailor_failed(
+                        job_id,
+                        f"Pre-fill: page load failed: {exc}",
+                        clear_materials=False,
+                    )
                     notify_failed(job, f"Pre-fill page load failed: {exc}")
                     continue
 
@@ -447,7 +452,11 @@ def process_prefill_requested_jobs():
                     fail_notes = result.get("notes") or result.get(
                         "review_reason"
                     ) or "pre-fill did not complete cleanly"
-                    mark_failed(job_id, f"Pre-fill: {fail_notes}")
+                    mark_tailor_failed(
+                        job_id,
+                        f"Pre-fill: {fail_notes}",
+                        clear_materials=False,
+                    )
                     notify_failed(job, fail_notes)
 
                 # ── BLOCK on terminal input() so the browser stays open ─
@@ -478,7 +487,11 @@ def process_prefill_requested_jobs():
 
         except Exception as exc:
             logger.exception(f"Pre-fill failed for {company}: {exc}")
-            mark_failed(job_id, f"Pre-fill exception: {exc}")
+            mark_tailor_failed(
+                job_id,
+                f"Pre-fill exception: {exc}",
+                clear_materials=False,
+            )
             notify_failed(job, str(exc))
         finally:
             if tmp_resume_pdf is not None:

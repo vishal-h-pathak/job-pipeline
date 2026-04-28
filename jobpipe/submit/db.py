@@ -103,6 +103,13 @@ def mark_submitted(job_id: str, confirmation_evidence: dict) -> None:
 
 
 def mark_needs_review(job_id: str, reason: str, packet_ref: str | None = None) -> None:
+    """Submit-side `needs_review` transition for ambiguous post-submit pages.
+
+    PR-6 made this the single canonical `mark_needs_review` — the M-2
+    deprecated alias on the tailor side (which actually wrote
+    status='failed') was deleted. Tailor-side failures now route to
+    ``jobpipe.tailor.db.mark_tailor_failed`` instead.
+    """
     extras: dict[str, Any] = {
         "status": "needs_review",
         "status_updated_at": _utcnow(),
@@ -115,6 +122,20 @@ def mark_needs_review(job_id: str, reason: str, packet_ref: str | None = None) -
 
 
 def mark_failed(job_id: str, reason: str) -> None:
+    """Submit-side failure transition (PR-6: split from the tailor's version).
+
+    Contract per JOB_APPLICATION_REDESIGN.md ("every state transition
+    writes a row to application_attempts"): on the runner critical path,
+    callers must have already opened (and will subsequently close) an
+    ``application_attempts`` row. The two pre-attempt-row callsites in
+    ``runner.py`` (max-attempts ceiling and materials hydration) are
+    intentional exceptions documented at the call sites — they fail the
+    job before any browser session is opened.
+
+    The structured ``submission_log`` is written separately by
+    ``record_submission_log`` so a failure is observable in the cockpit
+    even if the log-write call itself failed earlier in the attempt.
+    """
     client.table("jobs").update({
         "status": "failed",
         "status_updated_at": _utcnow(),

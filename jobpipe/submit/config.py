@@ -13,6 +13,8 @@ from typing import Final
 
 from dotenv import load_dotenv
 
+from jobpipe.config import require_env  # PR-6: shared env-var checker.
+
 # Load .env from the package root if present. Safe no-op in production where
 # env vars come from the process environment.
 _ENV_PATH = Path(__file__).resolve().parent / ".env"
@@ -20,25 +22,16 @@ if _ENV_PATH.exists():
     load_dotenv(_ENV_PATH)
 
 
-def _require(name: str) -> str:
-    val = os.environ.get(name)
-    if not val:
-        raise RuntimeError(
-            f"Missing required env var: {name}. See .env.example."
-        )
-    return val
-
-
 # ── Required credentials ──────────────────────────────────────────────────
 
-SUPABASE_URL: Final[str]              = _require("SUPABASE_URL")
-SUPABASE_KEY: Final[str]              = _require("SUPABASE_KEY")
-SUPABASE_SERVICE_ROLE_KEY: Final[str] = _require("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_URL: Final[str]              = require_env("SUPABASE_URL")
+SUPABASE_KEY: Final[str]              = require_env("SUPABASE_KEY")
+SUPABASE_SERVICE_ROLE_KEY: Final[str] = require_env("SUPABASE_SERVICE_ROLE_KEY")
 
-BROWSERBASE_API_KEY: Final[str]    = _require("BROWSERBASE_API_KEY")
-BROWSERBASE_PROJECT_ID: Final[str] = _require("BROWSERBASE_PROJECT_ID")
+BROWSERBASE_API_KEY: Final[str]    = require_env("BROWSERBASE_API_KEY")
+BROWSERBASE_PROJECT_ID: Final[str] = require_env("BROWSERBASE_PROJECT_ID")
 
-ANTHROPIC_API_KEY: Final[str] = _require("ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY: Final[str] = require_env("ANTHROPIC_API_KEY")
 
 
 # ── Tuneable policy knobs ─────────────────────────────────────────────────

@@ -17,6 +17,7 @@ from typing import Literal, Optional
 
 from supabase import create_client
 from config import SUPABASE_URL
+from jobpipe.shared.storage import download_to_tmp  # noqa: F401  PR-1 re-export
 
 logger = logging.getLogger("storage")
 
@@ -129,28 +130,6 @@ def get_signed_url(path: str, expires_in: int = 3600) -> str:
     if not url:
         raise RuntimeError(f"create_signed_url returned unexpected shape: {res!r}")
     return url
-
-
-def download_to_tmp(path: str) -> Path:
-    """
-    Download a stored PDF to a named temporary file and return its Path.
-    Caller is responsible for deleting the file when done (or letting the
-    OS reclaim /tmp).
-    """
-    client = _require_client()
-    data = client.storage.from_(BUCKET).download(path)
-    if not data:
-        raise RuntimeError(f"Empty download for path={path}")
-
-    suffix = Path(path).suffix or ".pdf"
-    fd, name = tempfile.mkstemp(prefix="jobmat_", suffix=suffix)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-    except Exception:
-        os.unlink(name)
-        raise
-    return Path(name)
 
 
 def delete_object(path: str) -> None:

@@ -14,22 +14,37 @@ readme = "README.md"
 dev = ["pytest>=8", "ruff>=0.5"]
 
 [project.scripts]
-# PR-3: orchestrator console script. Calls the hunt agent's `run()` which
-# parses CLI args (`--mode`, `--once`) and executes the pipeline once.
+# PR-3: hunt orchestrator console script. Calls the hunt agent's `run()`
+# which parses CLI args (`--mode`, `--once`) and executes the pipeline once.
 jobpipe-hunt = "jobpipe.hunt.agent:run"
+# PR-5: submitter console script. Calls the runner's `run()` which installs
+# signal handlers and drives the polling loop under asyncio.run.
+jobpipe-submit = "jobpipe.submit.runner:run"
 
 [tool.setuptools]
-# `jobpipe`, `jobpipe.shared`, and `jobpipe.hunt` need to be installed so
-# setuptools wires up the `jobpipe-hunt` entry point. Sub-packages of
-# hunt (e.g. `jobpipe.hunt.sources`, `jobpipe.hunt.utils`) are picked up
-# transitively by setuptools' default discovery as long as each has an
-# `__init__.py`. tailor / submit aren't listed yet — they keep running
-# off relative paths until their own restructure PRs.
-packages = ["jobpipe", "jobpipe.shared", "jobpipe.hunt"]
+# Each listed package needs to be installed so setuptools wires up the
+# console-script entry points. Sub-packages with __init__.py are picked
+# up transitively by setuptools' default discovery, but listing them
+# explicitly here keeps the surface auditable. tailor isn't listed yet —
+# its restructure lands in PR-7.
+packages = [
+    "jobpipe",
+    "jobpipe.shared",
+    "jobpipe.hunt",
+    "jobpipe.submit",
+    "jobpipe.submit.adapters",
+    "jobpipe.submit.adapters.deterministic",
+    "jobpipe.submit.browser",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+# PR-5: dropped `pythonpath = ["."]` — `pip install -e .` now installs
+# `jobpipe`, `jobpipe.shared`, `jobpipe.hunt`, and `jobpipe.submit`,
+# which is enough for both the root tests and the submit tests (the
+# submit tests self-bootstrap their own subtree onto sys.path inside the
+# fixture). Reinstate this only if a future test plugin needs it and
+# document why.
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

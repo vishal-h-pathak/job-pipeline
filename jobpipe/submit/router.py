@@ -31,11 +31,13 @@ def register(kind: AtsKind):
 def _import_adapters() -> None:
     """Trigger adapter module imports so their @register() decorators run."""
     # Imported for side effects. Missing modules are tolerated at this stage
-    # of the rollout — Milestones 3–6 add them.
+    # of the rollout — Milestones 3–6 add them. PR-5 moved the deterministic
+    # adapters under adapters/deterministic/; the generic Stagehand fallback
+    # stays at adapters/generic_stagehand.py.
     for mod in (
-        "adapters.greenhouse",
-        "adapters.lever",
-        "adapters.ashby",
+        "adapters.deterministic.greenhouse",
+        "adapters.deterministic.lever",
+        "adapters.deterministic.ashby",
         "adapters.generic_stagehand",
     ):
         try:

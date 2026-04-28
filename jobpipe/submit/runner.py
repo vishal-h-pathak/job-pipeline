@@ -1,5 +1,5 @@
 """
-main.py — Polling loop for the job-submitter agent.
+runner.py — Polling loop for the job-submitter agent.
 
 Reads jobs the tailor has marked ready, dispatches each to its ATS adapter
 inside a fresh Browserbase session, runs confirm.py to decide auto-submit
@@ -20,32 +20,50 @@ Control flow (per job):
                abort             -> mark_failed
          g. db.close_attempt()
 
-Stub — Milestone 2 gives us the skeleton, Milestone 3 wires it end-to-end
-against Browserbase + Stagehand for Greenhouse. Deliberately a single-file
-entry point so the control flow is easy to read.
+Wired as ``jobpipe-submit = jobpipe.submit.runner:run`` in pyproject.toml
+(see :func:`run` at the bottom of the file).
 """
 
 from __future__ import annotations
 
-import asyncio
-import logging
-import signal
-import sys
-from pathlib import Path
+# ── sys.path bootstrap ────────────────────────────────────────────────────
+# The submit subtree uses unprefixed imports (``import db``, ``import router``,
+# ``from adapters.base import X``, ``from browser.session import Y``,
+# ``from review_packet import build_packet``). When this module is imported
+# as ``jobpipe.submit.runner`` (e.g. via the ``jobpipe-submit`` console
+# script), sys.path won't contain ``jobpipe/submit/`` and those bare imports
+# would fail. Insert the directory before any other imports run so every
+# downstream module load resolves cleanly. PR-5 chose this over a global
+# unprefixed -> qualified rewrite to keep the diff scoped, mirroring PR-3's
+# pattern for jobpipe.hunt.
+import sys as _sys
+from pathlib import Path as _Path
 
-import db
-import router
-import confirm
-import storage
-from adapters.base import SubmissionContext
-from browser import session as browser_session
-from config import (
+_SUBMIT_DIR = str(_Path(__file__).resolve().parent)
+if _SUBMIT_DIR not in _sys.path:
+    _sys.path.insert(0, _SUBMIT_DIR)
+del _sys, _Path, _SUBMIT_DIR
+# ──────────────────────────────────────────────────────────────────────────
+
+import asyncio  # noqa: E402
+import logging  # noqa: E402
+import signal  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import db  # noqa: E402
+import router  # noqa: E402
+import confirm  # noqa: E402
+import storage  # noqa: E402
+from adapters.base import SubmissionContext  # noqa: E402
+from browser import session as browser_session  # noqa: E402
+from config import (  # noqa: E402
     MAX_ATTEMPTS_PER_JOB,
     MAX_CONCURRENT_SUBMISSIONS,
     POLL_INTERVAL_SECONDS,
     SESSION_BUDGET_SECONDS,
 )
-from review.packet import build_packet
+from review_packet import build_packet  # noqa: E402  (PR-5 flatten of review/packet.py)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -219,7 +237,14 @@ async def main_loop() -> None:
     logger.info("submitter stopped")
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Console-script entry point for ``jobpipe-submit``.
+
+    Installs SIGINT/SIGTERM handlers, then drives :func:`main_loop` under
+    ``asyncio.run``. Wired as ``jobpipe-submit = jobpipe.submit.runner:run``
+    in pyproject.toml. The legacy ``python runner.py`` invocation falls
+    through here too via the ``__main__`` guard below.
+    """
     _install_signal_handlers()
     try:
         asyncio.run(main_loop())
@@ -228,3 +253,7 @@ if __name__ == "__main__":
     except Exception:
         logger.exception("fatal")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    run()

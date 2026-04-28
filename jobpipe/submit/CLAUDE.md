@@ -34,12 +34,12 @@ The portfolio dashboard renders `/review/[job_id]` from these fields.
 ## Architecture
 
 ```
-main.py (poll loop)
+runner.py (poll loop)                       # PR-5 rename of main.py
   └── router.py  (dispatch by ats_kind)
-        ├── adapters/greenhouse.py       deterministic Stagehand act() sequence
-        ├── adapters/lever.py            deterministic
-        ├── adapters/ashby.py            deterministic
-        └── adapters/generic_stagehand.py  Stagehand Agent fallback
+        ├── adapters/deterministic/greenhouse.py   deterministic Stagehand act() sequence
+        ├── adapters/deterministic/lever.py        deterministic
+        ├── adapters/deterministic/ashby.py        deterministic
+        └── adapters/generic_stagehand.py          Stagehand Agent fallback
               │
               ▼
         browser/session.py  (Browserbase + Stagehand session)
@@ -48,7 +48,7 @@ main.py (poll loop)
         confirm.py  (decide auto-submit vs needs_review, verify success)
               │
               ▼
-        review/packet.py  (build review packet if needs_review)
+        review_packet.py  (build review packet if needs_review)   # PR-5 flatten of review/packet.py
 ```
 
 ## Design rules

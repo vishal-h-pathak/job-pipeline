@@ -20,12 +20,14 @@ cp .env.example .env
 ## Running the polling loop
 
 ```bash
-python main.py
+jobpipe-submit
 ```
 
 Polls Supabase every `POLL_INTERVAL_SECONDS` for jobs at `status=ready_to_submit`,
 dispatches to the appropriate ATS adapter, and transitions the row to one of
-`submitted` / `needs_review` / `failed`.
+`submitted` / `needs_review` / `failed`. The console script is wired by
+`pyproject.toml` to `jobpipe.submit.runner:run`. The legacy
+`python jobpipe/submit/runner.py` invocation also works.
 
 ## Running a single job (debugging)
 

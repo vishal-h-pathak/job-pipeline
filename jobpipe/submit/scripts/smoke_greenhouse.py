@@ -32,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from adapters.base import SubmissionContext  # noqa: E402
-from adapters.greenhouse import GreenhouseAdapter  # noqa: E402
+from adapters.deterministic.greenhouse import GreenhouseAdapter  # noqa: E402  (PR-5)
 from browser import session as browser_session  # noqa: E402
 from jobpipe import profile_loader  # noqa: E402
 

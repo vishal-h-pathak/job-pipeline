@@ -26,7 +26,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import db                   # noqa: E402
-from main import process_one  # noqa: E402
+from runner import process_one  # noqa: E402  (PR-5 rename of main.py)
 
 logger = logging.getLogger("submitter.submit_one")
 

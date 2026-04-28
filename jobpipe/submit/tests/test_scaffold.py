@@ -126,7 +126,7 @@ def test_browser_session_reports_missing_deps():
 
 def test_review_packet_shape():
     from adapters.base import SubmissionResult, FieldFill
-    from review.packet import build_packet
+    from review_packet import build_packet
     result = SubmissionResult(
         confidence=0.80,
         filled_fields=[FieldFill(label="Email", value="v@example.com", confidence=1.0)],
@@ -185,7 +185,7 @@ def test_greenhouse_adapter_happy_path(monkeypatch, tmp_path):
     and even if it did the adapter wouldn't fill them.
     """
     import asyncio
-    from adapters import greenhouse as gh_mod
+    from adapters.deterministic import greenhouse as gh_mod
     from adapters.base import SubmissionContext
 
     survey = {
@@ -242,7 +242,7 @@ def test_greenhouse_adapter_happy_path(monkeypatch, tmp_path):
 def test_greenhouse_adapter_routes_to_review_on_missing_resume_input(monkeypatch, tmp_path):
     """If the resume file input can't be located, route to review."""
     import asyncio
-    from adapters import greenhouse as gh_mod
+    from adapters.deterministic import greenhouse as gh_mod
     from adapters.base import SubmissionContext
 
     survey = {
@@ -286,7 +286,7 @@ def test_greenhouse_adapter_routes_to_review_on_missing_resume_input(monkeypatch
 def test_greenhouse_adapter_required_custom_q_routes_to_review(monkeypatch, tmp_path):
     """A required custom question we can't answer drops confidence to review."""
     import asyncio
-    from adapters import greenhouse as gh_mod
+    from adapters.deterministic import greenhouse as gh_mod
     from adapters.base import SubmissionContext
 
     survey = {
@@ -345,7 +345,7 @@ def test_lever_adapter_full_name_variant(monkeypatch, tmp_path):
     """Lever board with single full-name field + cover letter textarea should
     auto_submit at 0.90+ with all required fields."""
     import asyncio
-    from adapters import lever as lv_mod
+    from adapters.deterministic import lever as lv_mod
     from adapters.base import SubmissionContext
 
     survey = {
@@ -392,7 +392,7 @@ def test_lever_adapter_full_name_variant(monkeypatch, tmp_path):
 def test_ashby_adapter_missing_location_routes_to_review(monkeypatch, tmp_path):
     """Ashby counts location as a core field — missing it should route to review."""
     import asyncio
-    from adapters import ashby as ab_mod
+    from adapters.deterministic import ashby as ab_mod
     from adapters.base import SubmissionContext
 
     survey = {

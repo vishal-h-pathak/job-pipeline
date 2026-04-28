@@ -22,6 +22,8 @@ def upsert_job(job: dict, result: dict) -> None:
                 "tier": result.get("tier"),
                 "reasoning": result.get("reasoning"),
                 "action": result.get("recommended_action"),
+                "legitimacy": result.get("legitimacy"),
+                "legitimacy_reasoning": result.get("legitimacy_reasoning"),
             }
         ).eq("id", job["id"]).execute()
     else:
@@ -41,6 +43,8 @@ def upsert_job(job: dict, result: dict) -> None:
                 "tier": result.get("tier"),
                 "reasoning": result.get("reasoning"),
                 "action": result.get("recommended_action"),
+                "legitimacy": result.get("legitimacy"),
+                "legitimacy_reasoning": result.get("legitimacy_reasoning"),
                 "status": "new",
                 "created_at": now_iso,
             },

@@ -77,10 +77,26 @@ def score_job(title: str, company: str, description: str, location: str) -> dict
     if isinstance(tier, str) and tier.isdigit():
         tier = int(tier)
     result["tier"] = tier
+    # Posting legitimacy axis (J-2). Defaults to proceed_with_caution if
+    # the model omitted it — never None — so downstream code can always
+    # rely on a known categorical value.
+    legitimacy = (result.get("legitimacy") or "").strip().lower()
+    if legitimacy not in {"high_confidence", "proceed_with_caution", "suspicious"}:
+        legitimacy = "proceed_with_caution"
+    result["legitimacy"] = legitimacy
+    result["legitimacy_reasoning"] = (result.get("legitimacy_reasoning") or "").strip()
     return result
 
 
 def should_notify(result: dict) -> bool:
+    """Decide whether a scored job should fire a notification.
+
+    Legitimacy is intentionally NOT a hard gate. A "suspicious" posting
+    that scores well on fit still notifies — Vishal can decide whether
+    the risk is worth it. Suspicious legitimacy surfaces as a colored
+    pill in the dashboard review panel; that's where the soft-warning
+    signal lives.
+    """
     if result.get("recommended_action") == "notify":
         return True
     return result.get("score", 0) >= 7 and result.get("tier") in (1, 2)

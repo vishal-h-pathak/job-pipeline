@@ -13,8 +13,19 @@ readme = "README.md"
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5"]
 
+[project.scripts]
+# PR-3: orchestrator console script. Calls the hunt agent's `run()` which
+# parses CLI args (`--mode`, `--once`) and executes the pipeline once.
+jobpipe-hunt = "jobpipe.hunt.agent:run"
+
 [tool.setuptools]
-packages = []
+# `jobpipe`, `jobpipe.shared`, and `jobpipe.hunt` need to be installed so
+# setuptools wires up the `jobpipe-hunt` entry point. Sub-packages of
+# hunt (e.g. `jobpipe.hunt.sources`, `jobpipe.hunt.utils`) are picked up
+# transitively by setuptools' default discovery as long as each has an
+# `__init__.py`. tailor / submit aren't listed yet — they keep running
+# off relative paths until their own restructure PRs.
+packages = ["jobpipe", "jobpipe.shared", "jobpipe.hunt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

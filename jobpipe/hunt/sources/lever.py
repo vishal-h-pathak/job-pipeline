@@ -9,22 +9,19 @@ spend on discovery. Each posting is title-pre-filtered before scoring.
 """
 
 import logging
-import re
-import time
 
-import requests
-
-from config import is_local_or_remote, location_filter_enabled
-from sources._portals import companies, passes_title_filter, title_signals
+from config import is_local_or_remote
+from jobpipe.shared.html import strip_tags
+from sources._http import (
+    fetch_json,
+    location_filter_enabled,
+    passes_title_filter,
+    sleep_between_requests,
+)
+from sources._portals import companies, title_signals
 from utils.jobid import make_job_id
 
 logger = logging.getLogger("sources.lever")
-
-TAG_RE = re.compile(r"<[^>]+>")
-
-
-def _strip_html(text: str) -> str:
-    return TAG_RE.sub("", text or "").strip()
 
 
 # Last-resort fallback if portals.yml is missing. Canonical list lives there.
@@ -34,15 +31,8 @@ _FALLBACK_COMPANIES: list[tuple[str, str]] = []
 def _fetch_one(slug: str, display_name: str):
     """Fetch open roles from a single Lever board."""
     url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
-    try:
-        resp = requests.get(url, timeout=15)
-        if resp.status_code == 404:
-            logger.warning("lever: board %r returned 404 — drop from list", slug)
-            return
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        logger.warning("lever: fetch failed for %r: %s", slug, exc)
+    data = fetch_json(url, log=logger, label=slug)
+    if data is None:
         return
 
     raw = 0
@@ -59,7 +49,7 @@ def _fetch_one(slug: str, display_name: str):
             parts: list[str] = []
             for section in job.get("lists") or []:
                 parts.append(section.get("text", ""))
-                parts.append(_strip_html(section.get("content", "")))
+                parts.append(strip_tags(section.get("content", "")))
             description = "\n".join(parts)
         link = job.get("hostedUrl") or job.get("applyUrl") or ""
 
@@ -97,4 +87,4 @@ def fetch():
     targets = companies("lever") or _FALLBACK_COMPANIES
     for slug, name in targets:
         yield from _fetch_one(slug, name)
-        time.sleep(0.5)
+        sleep_between_requests()

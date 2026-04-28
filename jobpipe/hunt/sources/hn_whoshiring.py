@@ -25,10 +25,10 @@ from __future__ import annotations
 import logging
 import re
 import time
-from html import unescape
 
 import requests
 
+from jobpipe.shared.html import clean_html_to_text
 from utils.jobid import make_job_id
 
 logger = logging.getLogger("sources.hn_whoshiring")
@@ -36,7 +36,6 @@ logger = logging.getLogger("sources.hn_whoshiring")
 ALGOLIA_SEARCH = "https://hn.algolia.com/api/v1/search"
 ALGOLIA_ITEM = "https://hn.algolia.com/api/v1/items/{}"
 
-TAG_RE = re.compile(r"<[^>]+>")
 URL_RE = re.compile(r"https?://[^\s<>\"')]+")
 
 # Same keyword filter as the other sources, slightly broader to catch the
@@ -51,10 +50,6 @@ KEYWORDS = (
     "applied scientist", "research engineer",
     "platform engineer", "sdk",
 )
-
-
-def _strip_html(text: str) -> str:
-    return TAG_RE.sub(" ", unescape(text or "")).strip()
 
 
 def _matches(text: str) -> bool:
@@ -134,12 +129,12 @@ def fetch():
         if comment.get("parent_id") != int(thread_id):
             continue
         raw += 1
-        plain = _strip_html(text)
+        plain = clean_html_to_text(text)
         if not _matches(plain):
             continue
 
         # First "line" — Algolia returns text with <p> separators that
-        # _strip_html collapses into spaces; split on the first sentence
+        # clean_html_to_text collapses tags into spaces; split on the first sentence
         # boundary or pipe to recover the conventional header.
         first_line = plain.split(".", 1)[0]
         for marker in ("\n", " | "):

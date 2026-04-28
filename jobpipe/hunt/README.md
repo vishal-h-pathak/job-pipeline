@@ -162,8 +162,8 @@ Copy `.env.example` to `.env` and fill in values.
 ```bash
 pip3 install -r requirements.txt
 cp .env.example .env   # fill in your keys
-python3 job_agent.py                 # local_remote (default): Atlanta + Remote
-python3 job_agent.py --mode us_wide  # also pull non-remote US roles
+jobpipe-hunt --once                  # local_remote (default): Atlanta + Remote
+jobpipe-hunt --once --mode us_wide   # also pull non-remote US roles
 ```
 
 Output:

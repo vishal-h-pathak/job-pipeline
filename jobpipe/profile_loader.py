@@ -80,6 +80,17 @@ def load_profile() -> dict:
     return _read_yaml("profile.yml")
 
 
+def load_profile_text() -> str:
+    """Return the raw text of `profile.yml` (empty string if missing).
+
+    Useful when callers want to splice the file into an LLM prompt
+    verbatim — comments and key ordering survive — rather than re-emit a
+    parsed dict via ``yaml.safe_dump``. Used by
+    ``jobpipe.hunt.prompts.build_profile_prompt_string``.
+    """
+    return _read_text("profile.yml")
+
+
 def load_archetypes() -> dict:
     """Return the `archetypes:` block from `profile.yml` (empty dict if missing)."""
     archetypes = load_profile().get("archetypes")

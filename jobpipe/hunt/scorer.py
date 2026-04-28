@@ -2,17 +2,13 @@ from __future__ import annotations
 
 import json
 import os
-import pathlib
 import re
 
 from anthropic import Anthropic
 
-from prompts import load_profile, load_prompt
+from prompts import build_profile_prompt_string, load_prompt
 
 MODEL = "claude-opus-4-7"
-# CLAUDE.md path is kept for legacy use only; `load_profile()` aggregates
-# the user-layer files in `profile/` and falls back to CLAUDE.md if needed.
-PROFILE_PATH = pathlib.Path(__file__).parent / "CLAUDE.md"
 
 _client = None
 
@@ -22,10 +18,6 @@ def _client_lazy() -> Anthropic:
     if _client is None:
         _client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     return _client
-
-
-def _profile() -> str:
-    return load_profile()
 
 
 # System prompt is loaded lazily on first scoring call from
@@ -53,9 +45,9 @@ def _extract_json(text: str) -> dict:
 
 
 def score_job(title: str, company: str, description: str, location: str) -> dict:
-    profile = _profile()
+    profile = build_profile_prompt_string()
     user_msg = (
-        "=== PROFILE (CLAUDE.md) ===\n"
+        "=== PROFILE ===\n"
         f"{profile}\n\n"
         "=== JOB POSTING ===\n"
         f"Title: {title}\n"

@@ -1,5 +1,14 @@
 """LinkedIn source — uses SerpAPI Google Jobs with site:linkedin.com filtering.
 
+KEEP-DISABLED (PR-3): this module is intentionally NOT included in the
+``SOURCES`` tuple in ``hunt/agent.py``. Two clean runs returned 0
+results, and the JSearch source already covers LinkedIn-via-RapidAPI
+behind the same paid subscription that pays for Indeed coverage. We
+keep the file on disk because the SerpAPI ``site:linkedin.com/jobs``
+query shape and the per-(query, location) budget pattern remain useful
+documentation; re-enabling means flipping it back into the ``SOURCES``
+tuple, not ripping the file out.
+
 This piggybacks on the same SERPAPI_KEY as the main serpapi source but runs
 a smaller set of high-signal queries specifically filtered to LinkedIn
 postings, which tend to have richer descriptions and more accurate metadata.

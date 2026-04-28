@@ -1,6 +1,15 @@
 """
 sources/indeed.py — Indeed RSS feed fetcher.
 
+KEEP-DISABLED (PR-3): this module is intentionally NOT included in the
+``SOURCES`` tuple in ``hunt/agent.py``. Indeed RSS has been fully gated
+for unauthenticated callers since early 2026 and JSearch covers the same
+publisher footprint behind one paid subscription. We keep the module on
+disk for reference (the URL templates and per-(query, location) feed
+shape remain useful documentation) but it is not exercised at runtime.
+Re-enabling means flipping it back into the ``SOURCES`` tuple, not
+ripping the file out.
+
 Notes on reliability (April 2026): Indeed has been progressively gating its
 public RSS feeds and routinely returns empty <channel>s for unauthenticated
 callers. We do three things to defend against silent breakage:
@@ -19,13 +28,13 @@ If Indeed RSS goes fully dark, the right move is to swap to the SerpAPI
 from __future__ import annotations
 
 import logging
-import re
 import time
 from urllib.parse import urlencode
 
 import feedparser
 
 from config import get_mode
+from jobpipe.shared.html import strip_tags
 from utils.jobid import make_job_id
 
 logger = logging.getLogger("sources.indeed")
@@ -56,7 +65,6 @@ _US_EXTRA_LOCATIONS = (
 )
 
 BASE = "https://www.indeed.com/rss"
-TAG_RE = re.compile(r"<[^>]+>")
 
 # Indeed silently drops requests with feedparser's default UA. Use a real
 # browser string and an Accept header that matches what curl/Safari send.
@@ -69,10 +77,6 @@ _REQUEST_HEADERS = {
     "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
-
-
-def _strip_html(text: str) -> str:
-    return TAG_RE.sub("", text or "").strip()
 
 
 def _locations_for_mode():
@@ -114,7 +118,7 @@ def fetch():
                 company = parts[1] if len(parts) > 1 else "Unknown"
                 location = parts[2] if len(parts) > 2 else loc["label"]
                 link = entry.get("link", "")
-                description = _strip_html(entry.get("summary", ""))
+                description = strip_tags(entry.get("summary", ""))
                 jid = make_job_id(link, title, company)
                 if jid in seen_local:
                     continue

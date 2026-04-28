@@ -22,28 +22,27 @@ URL in a browser first.
 from __future__ import annotations
 
 import logging
-import re
-import time
 from typing import Iterable
 
-import requests
-
-from config import is_local_or_remote, location_filter_enabled
-from sources._portals import passes_title_filter, title_signals, workday_tenants
+from config import is_local_or_remote
+from jobpipe.shared.html import strip_tags
+from sources._http import (
+    fetch_json,
+    location_filter_enabled,
+    passes_title_filter,
+    sleep_between_requests,
+)
+from sources._portals import title_signals, workday_tenants
 from utils.jobid import make_job_id
 
 logger = logging.getLogger("sources.workday")
 
-TAG_RE = re.compile(r"<[^>]+>")
 USER_AGENT = "job-hunter/1.0 (+https://vishal.pa.thak.io)"
+_HEADERS = {"User-Agent": USER_AGENT, "Accept": "application/json"}
 
 # Default pagination; per-tenant rows can override via `limit_pages`.
 PAGE_SIZE = 20
 DEFAULT_LIMIT_PAGES = 2
-
-
-def _strip_html(text: str) -> str:
-    return TAG_RE.sub("", text or "").strip()
 
 
 def _post_search(tenant: str, site: str, dc: str, offset: int) -> dict:
@@ -52,10 +51,16 @@ def _post_search(tenant: str, site: str, dc: str, offset: int) -> dict:
         f"https://{tenant}.{dc}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs"
     )
     body = {"appliedFacets": {}, "limit": PAGE_SIZE, "offset": offset, "searchText": ""}
-    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
-    resp = requests.post(url, json=body, headers=headers, timeout=20)
-    resp.raise_for_status()
-    return resp.json() or {}
+    data = fetch_json(
+        url,
+        method="POST",
+        json_body=body,
+        headers=_HEADERS,
+        timeout=20,
+        log=logger,
+        label=f"{tenant}/{site}",
+    )
+    return data or {}
 
 
 def _fetch_job_detail(tenant: str, site: str, dc: str, external_path: str) -> dict:
@@ -63,11 +68,8 @@ def _fetch_job_detail(tenant: str, site: str, dc: str, external_path: str) -> di
     url = (
         f"https://{tenant}.{dc}.myworkdayjobs.com/wday/cxs/{tenant}/{site}{external_path}"
     )
-    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
-    resp = requests.get(url, headers=headers, timeout=20)
-    if resp.status_code != 200:
-        return {}
-    return resp.json() or {}
+    data = fetch_json(url, headers=_HEADERS, timeout=20, log=logger, label=external_path)
+    return data or {}
 
 
 def _fetch_one(row: dict) -> Iterable[dict]:
@@ -120,7 +122,7 @@ def _fetch_one(row: dict) -> Iterable[dict]:
             if external_path:
                 detail = _fetch_job_detail(tenant, site, dc, external_path)
                 jp = (detail.get("jobPostingInfo") or {})
-                description = _strip_html(jp.get("jobDescription") or "")
+                description = strip_tags(jp.get("jobDescription") or "")
 
             link = (
                 f"https://{tenant}.{dc}.myworkdayjobs.com/{site}{external_path}"
@@ -144,7 +146,7 @@ def _fetch_one(row: dict) -> Iterable[dict]:
                 "url": link,
             }
 
-        time.sleep(0.5)
+        sleep_between_requests()
 
     logger.info(
         "workday: %s/%s yielded=%d (raw=%d, title-filtered=%d, location-filtered=%d)",
@@ -156,4 +158,4 @@ def fetch():
     """Yield job dicts from every Workday tenant in portals.yml."""
     for row in workday_tenants():
         yield from _fetch_one(row)
-        time.sleep(0.5)
+        sleep_between_requests()

@@ -1,8 +1,8 @@
 import logging
-import re
 
 import requests
 
+from jobpipe.shared.html import strip_tags
 from utils.jobid import make_job_id
 
 logger = logging.getLogger("sources.remoteok")
@@ -20,12 +20,6 @@ KEYWORDS = [
     "developer relations",
     "solutions engineer",
 ]
-
-TAG_RE = re.compile(r"<[^>]+>")
-
-
-def _strip_html(text: str) -> str:
-    return TAG_RE.sub("", text or "").strip()
 
 
 def _matches(text: str) -> bool:
@@ -53,7 +47,7 @@ def fetch():
         raw += 1
         title = entry.get("position", "")
         company = entry.get("company", "Unknown")
-        description = _strip_html(entry.get("description", ""))
+        description = strip_tags(entry.get("description", ""))
         tags = " ".join(entry.get("tags", []) or [])
         haystack = f"{title} {description} {tags}"
         if not _matches(haystack):

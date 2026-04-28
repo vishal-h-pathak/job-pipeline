@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Description enricher — fetches full job posting text when sources provide sparse summaries.
 
 Many sources (Indeed RSS, some SerpAPI results) return short marketing
@@ -7,17 +5,23 @@ blurbs instead of the actual job description. This module follows the
 job URL and attempts to extract the real posting text, giving the scorer
 much better signal.
 
+Flattened from ``utils/enricher.py`` in PR-3. The local ``_strip_html`` /
+``WHITESPACE_RE`` pair was promoted to ``jobpipe.shared.html`` as
+``clean_html_to_text``.
+
 Usage:
     enriched = enrich_description(job)
     # Returns the original job dict with description replaced if a
     # richer version was found, or unchanged if not.
 """
 
+from __future__ import annotations
+
 import re
+
 import requests
 
-TAG_RE = re.compile(r"<[^>]+>")
-WHITESPACE_RE = re.compile(r"\s+")
+from jobpipe.shared.html import clean_html_to_text
 
 # Minimum description length (chars) before we consider enriching.
 # Descriptions shorter than this are likely boilerplate.
@@ -58,13 +62,6 @@ HEADERS = {
 }
 
 
-def _strip_html(text: str) -> str:
-    """Remove HTML tags and collapse whitespace."""
-    text = TAG_RE.sub(" ", text)
-    text = WHITESPACE_RE.sub(" ", text)
-    return text.strip()
-
-
 def _extract_description(html: str) -> str | None:
     """Try to pull the job description text from raw HTML.
 
@@ -88,7 +85,7 @@ def _extract_description(html: str) -> str | None:
             # Take a generous chunk
             end_idx = min(content_start + MAX_DESCRIPTION_LEN * 2, len(html))
         chunk = html[content_start:end_idx]
-        text = _strip_html(chunk)
+        text = clean_html_to_text(chunk)
         if len(text) >= MIN_DESCRIPTION_LEN:
             return text[:MAX_DESCRIPTION_LEN]
 
@@ -97,7 +94,7 @@ def _extract_description(html: str) -> str | None:
     paragraphs = re.split(r"<(?:div|section|article)[^>]*>", html)
     best = ""
     for p in paragraphs:
-        text = _strip_html(p)
+        text = clean_html_to_text(p)
         if len(text) > len(best):
             best = text
     if len(best) >= MIN_DESCRIPTION_LEN:

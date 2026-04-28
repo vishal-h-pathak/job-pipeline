@@ -18,24 +18,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from jobpipe import profile_loader
+
 _PROMPTS_DIR = Path(__file__).parent
 _REPO_ROOT = _PROMPTS_DIR.parent
-_PROFILE_DIR = _REPO_ROOT / "profile"
+# Hunt-local profile dir holds files PR-2 didn't migrate up: `cv.md`
+# and `disqualifiers.yml`. The top-level `<repo>/profile/` is canonical
+# for `profile.yml`, `article-digest.md`, and `learned-insights.md`.
+# A future PR can move cv / disqualifiers up; until then this fallback
+# keeps the prompt complete.
+_LOCAL_PROFILE_DIR = _REPO_ROOT / "profile"
 _SHARED_CACHE: Optional[str] = None
 _PROFILE_CACHE: Optional[str] = None
-
-# User-layer files in the order they should appear when concatenated for
-# an LLM. profile.yml first (structured ground truth), then disqualifiers,
-# then narrative artifacts (CV, article digest).
-_USER_LAYER_FILES = (
-    "profile.yml",
-    "disqualifiers.yml",
-    "cv.md",
-    "article-digest.md",
-    # J-11 — Match Agent appends generalizable preferences here. Loaded
-    # last so insights override earlier statements when they conflict.
-    "learned-insights.md",
-)
 
 
 def _shared() -> str:
@@ -45,32 +39,59 @@ def _shared() -> str:
     return _SHARED_CACHE
 
 
-def load_profile() -> str:
-    """Load the merged user-layer profile.
+def _read_local(name: str) -> str:
+    f = _LOCAL_PROFILE_DIR / name
+    if not f.exists():
+        return ""
+    return f.read_text(encoding="utf-8")
 
-    Concatenates `profile/profile.yml`, `profile/disqualifiers.yml`,
-    `profile/cv.md`, and `profile/article-digest.md` (whichever exist)
-    into a single string suitable for injecting into prompts. Falls back
-    to legacy `CLAUDE.md` if `profile/` is missing — useful while the
-    migration is still in flight.
+
+def build_profile_prompt_string() -> str:
+    """Build the merged user-layer profile string for LLM prompts.
+
+    Concatenates the user-layer files (whichever exist) in the order:
+    ``profile.yml``, ``disqualifiers.yml``, ``cv.md``, ``article-digest.md``,
+    ``learned-insights.md``. Each section is prefixed with a banner so the
+    LLM can tell which file the content came from.
+
+    Renamed from ``load_profile`` in PR-3 to disambiguate from
+    ``jobpipe.profile_loader.load_profile`` (which returns a dict).
+
+    Source resolution per file:
+      - ``profile.yml``, ``article-digest.md``, ``learned-insights.md``
+        come from the canonical top-level ``<repo>/profile/`` via
+        ``jobpipe.profile_loader``.
+      - ``cv.md`` and ``disqualifiers.yml`` are still hunt-local
+        (``jobpipe/hunt/profile/``) until a future PR migrates them up.
+
+    Falls back to legacy ``CLAUDE.md`` only if every loader returns empty
+    — keeps the migration cutover safe.
     """
     global _PROFILE_CACHE
     if _PROFILE_CACHE is not None:
         return _PROFILE_CACHE
 
-    if _PROFILE_DIR.exists():
-        parts: list[str] = []
-        for name in _USER_LAYER_FILES:
-            f = _PROFILE_DIR / name
-            if f.exists():
-                parts.append(
-                    f"========== {name} ==========\n"
-                    + f.read_text(encoding="utf-8").strip()
-                )
-        _PROFILE_CACHE = "\n\n".join(parts) if parts else ""
-    else:
-        legacy = _REPO_ROOT / "CLAUDE.md"
-        _PROFILE_CACHE = legacy.read_text(encoding="utf-8") if legacy.exists() else ""
+    sections: list[tuple[str, str]] = [
+        ("profile.yml", profile_loader.load_profile_text()),
+        ("disqualifiers.yml", _read_local("disqualifiers.yml")),
+        ("cv.md", _read_local("cv.md")),
+        ("article-digest.md", profile_loader.load_article_digest()),
+        # J-11 — Match Agent appends generalizable preferences here.
+        # Loaded last so insights override earlier statements when they
+        # conflict.
+        ("learned-insights.md", profile_loader.load_learned_insights()),
+    ]
+    parts = [
+        f"========== {label} ==========\n{text.strip()}"
+        for label, text in sections
+        if text and text.strip()
+    ]
+    if parts:
+        _PROFILE_CACHE = "\n\n".join(parts)
+        return _PROFILE_CACHE
+
+    legacy = _REPO_ROOT / "CLAUDE.md"
+    _PROFILE_CACHE = legacy.read_text(encoding="utf-8") if legacy.exists() else ""
     return _PROFILE_CACHE
 
 

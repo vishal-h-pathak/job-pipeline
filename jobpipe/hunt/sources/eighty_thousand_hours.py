@@ -23,12 +23,11 @@ from __future__ import annotations
 
 import logging
 import os
-import re
-from html import unescape
 
 import requests
 
 from config import is_local_or_remote, location_filter_enabled
+from jobpipe.shared.html import clean_html_to_text
 from utils.jobid import make_job_id
 
 logger = logging.getLogger("sources.eighty_thousand_hours")
@@ -44,13 +43,6 @@ KEYWORDS = (
     "platform engineer", "sdk", "tools",
     "engineer",
 )
-
-TAG_RE = re.compile(r"<[^>]+>")
-
-
-def _strip_html(text: str) -> str:
-    return TAG_RE.sub(" ", unescape(text or "")).strip()
-
 
 def _matches(text: str) -> bool:
     text = (text or "").lower()
@@ -169,7 +161,7 @@ def fetch():
                 or "Unknown"
             )
             location = _flatten_locations(location_raw) or "Unknown"
-            description = _strip_html(
+            description = clean_html_to_text(
                 hit.get("description")
                 or hit.get("description_short")
                 or hit.get("summary")

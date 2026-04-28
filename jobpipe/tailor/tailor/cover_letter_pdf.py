@@ -22,6 +22,8 @@ from reportlab.platypus import (
     Spacer,
 )
 
+from tailor.normalize import normalize_for_ats
+
 logger = logging.getLogger("tailor.cover_letter_pdf")
 
 # ── Letterhead fields (match BASE_RESUME in latex_resume.py) ────────────────
@@ -127,7 +129,7 @@ def render_cover_letter_pdf(
     Returns:
         Raw PDF bytes.
     """
-    text = (cover_letter_text or "").strip()
+    text = normalize_for_ats((cover_letter_text or "").strip())
     if not text:
         raise ValueError("Empty cover letter text — nothing to render.")
 

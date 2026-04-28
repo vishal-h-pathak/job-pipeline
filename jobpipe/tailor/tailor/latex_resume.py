@@ -18,6 +18,7 @@ from pathlib import Path
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CANDIDATE_PROFILE_PATH
 from prompts import load_profile, load_prompt
+from tailor.normalize import normalize_for_ats
 
 logger = logging.getLogger("tailor.latex_resume")
 
@@ -225,10 +226,12 @@ def _escape_latex_safe(text: str) -> str:
     - math-mode segments (``$...$``)
 
     Everything else gets the special-character substitutions from
-    ``_LATEX_REPL``.
+    ``_LATEX_REPL``. Before any of that, we run ``normalize_for_ats`` so
+    LLM-introduced em-dashes / smart quotes don't survive into the PDF.
     """
     if not text:
         return ""
+    text = normalize_for_ats(text)
     out: list[str] = []
     i = 0
     n = len(text)

@@ -65,6 +65,27 @@ def notify_ready_for_review(job: dict) -> bool:
     return create_notification("ready_for_review", job, message)
 
 
+def notify_awaiting_submit(job: dict, screenshot_path: str = None) -> bool:
+    """Notify that the form has been pre-filled and is awaiting the human's
+    review and Submit click in the visible browser (M-5).
+
+    Subject line uses [ACTION] so it stands out in the dashboard's
+    notifications panel — the user is now on the hot path. M-8 will
+    flesh this out with an inline screenshot in an email channel.
+    """
+    company = job.get("company", "Unknown")
+    title = job.get("title", "Unknown")
+    message = (
+        f"[ACTION] Form pre-filled for {company} - {title}.\n"
+        f"Browser is open in your local terminal session. Review what was "
+        f"typed, fix anything wrong, click Submit yourself, then come back "
+        f"to the dashboard cockpit and click 'Mark Applied'."
+    )
+    if screenshot_path:
+        message += f"\nScreenshot: {screenshot_path}"
+    return create_notification("awaiting_human_submit", job, message)
+
+
 def notify_applied(job: dict) -> bool:
     """Notify that an application was submitted successfully."""
     return create_notification("applied", job, "Application submitted.")

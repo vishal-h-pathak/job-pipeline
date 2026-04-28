@@ -84,6 +84,40 @@ def upload_pdf(job_id: str | int, kind: Kind, pdf_bytes: bytes) -> str:
     return path
 
 
+def upload_prefill_screenshot(job_id: str | int, png_bytes: bytes) -> str:
+    """Upload the post-prefill screenshot the dashboard cockpit (M-6) renders.
+
+    Returns the storage path (e.g. "42/prefill.png"). Same bucket as PDFs;
+    different filename so it doesn't collide with resume / cover_letter
+    objects.
+    """
+    client = _require_client()
+    path = f"{job_id}/prefill.png"
+    storage = client.storage.from_(BUCKET)
+    try:
+        storage.upload(
+            path=path,
+            file=png_bytes,
+            file_options={
+                "content-type": "image/png",
+                "upsert": "true",
+            },
+        )
+    except Exception as e:
+        logger.debug(f"prefill upload with upsert failed ({e!r}); retrying")
+        try:
+            storage.remove([path])
+        except Exception:
+            pass
+        storage.upload(
+            path=path,
+            file=png_bytes,
+            file_options={"content-type": "image/png"},
+        )
+    logger.info(f"Uploaded {path} ({len(png_bytes)} bytes) to bucket={BUCKET}")
+    return path
+
+
 def get_signed_url(path: str, expires_in: int = 3600) -> str:
     """
     Create a short-lived signed URL (default 1 hour) the dashboard can render.

@@ -21,10 +21,13 @@ from config import POLL_INTERVAL_MINUTES, HUMAN_APPROVAL_REQUIRED
 from db import (
     get_approved_jobs,
     get_confirmed_jobs,
+    get_prefill_requested_jobs,
     mark_preparing,
     mark_ready_for_review,
+    mark_awaiting_submit,
     mark_applied,
     mark_failed,
+    mark_skipped,
     get_job_counts_by_status,
 )
 from tailor.resume import tailor_resume
@@ -35,8 +38,18 @@ from tailor.form_answers import generate_form_answers
 from applicant.detector import detect_ats, get_applicant
 from interview_prep.generator import generate_stories
 from interview_prep.bank import save_stories
-from notify import notify_ready_for_review, notify_applied, notify_failed
-from storage import upload_pdf, download_to_tmp, delete_all_for_job
+from notify import (
+    notify_ready_for_review,
+    notify_awaiting_submit,
+    notify_applied,
+    notify_failed,
+)
+from storage import (
+    upload_pdf,
+    download_to_tmp,
+    delete_all_for_job,
+    upload_prefill_screenshot,
+)
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -261,6 +274,193 @@ def process_approved_jobs():
                 pass
             mark_failed(job_id, str(e))
             notify_failed(job, str(e))
+
+
+def process_prefill_requested_jobs():
+    """
+    Phase 2 (M-5): Pick up jobs the user clicked "Pre-fill Form" on,
+    open a visible browser, dispatch to the per-ATS handler (Ashby /
+    Greenhouse / Lever) or the prepare-only vision agent, capture the
+    post-fill screenshot, mark the row `awaiting_human_submit`, and
+    BLOCK on terminal input() so the user has time to review what was
+    typed, fix anything wrong, and click Submit themselves before the
+    browser closes.
+
+    Strictly serial — one job per cycle, no parallelism. The human can
+    only review one form at a time.
+
+    M-7 wires this into run_cycle and removes process_confirmed_jobs /
+    submit_one_visible / --submit-visible.
+    """
+    # Lazy imports so the module stays importable without Playwright
+    # installed (e.g. for --status / --test-tailor).
+    from playwright.sync_api import sync_playwright
+    from applicant.detector import detect_ats, get_applicant
+    from applicant.universal import UniversalApplicant
+    from applicant.url_resolver import resolve_application_url
+    import json
+
+    jobs = get_prefill_requested_jobs()
+    if not jobs:
+        return
+
+    logger.info(f"Found {len(jobs)} prefill-requested job(s)")
+
+    for job in jobs:
+        job_id = job["id"]
+        company = job.get("company", "Unknown")
+        title = job.get("title", "Unknown")
+        url = (
+            job.get("submission_url")
+            or job.get("application_url")
+            or job.get("url", "")
+        )
+
+        logger.info(f"Pre-filling: {company} — {title}  ({url})")
+
+        # Resolve aggregator → real ATS once up front (no LLM call).
+        try:
+            resolved = resolve_application_url(url)
+            real_url = resolved.get("resolved") or url
+        except Exception as exc:
+            logger.warning(f"URL resolve failed for {company}: {exc}")
+            real_url = url
+
+        applicant = get_applicant(real_url)
+        ats = detect_ats(real_url)
+
+        # Pull resume PDF to a tmp file (ATS uploads need a real path).
+        tmp_resume_pdf = None
+        storage_path = job.get("resume_pdf_path")
+        if not storage_path:
+            raw_resume = job.get("resume_path") or ""
+            try:
+                meta = json.loads(raw_resume) if raw_resume else {}
+                storage_path = meta.get("storage_path") or meta.get("pdf_path")
+            except Exception:
+                pass
+
+        if not storage_path:
+            mark_failed(
+                job_id,
+                "Pre-fill: no resume PDF in storage; re-tailor first.",
+            )
+            notify_failed(job, "Pre-fill blocked: no resume PDF.")
+            continue
+
+        try:
+            tmp_resume_pdf = download_to_tmp(storage_path)
+        except Exception as exc:
+            mark_failed(job_id, f"Pre-fill: resume download failed: {exc}")
+            notify_failed(job, f"Pre-fill blocked: {exc}")
+            continue
+
+        cover_letter_text = job.get("cover_letter_path") or ""
+
+        try:
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=False)
+                context = browser.new_context(
+                    viewport={"width": 1280, "height": 900},
+                    user_agent=(
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/121.0 Safari/537.36"
+                    ),
+                )
+                page = context.new_page()
+                try:
+                    page.goto(
+                        real_url, wait_until="domcontentloaded", timeout=45000
+                    )
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        pass
+                except Exception as exc:
+                    browser.close()
+                    mark_failed(job_id, f"Pre-fill: page load failed: {exc}")
+                    notify_failed(job, f"Pre-fill page load failed: {exc}")
+                    continue
+
+                # Per-ATS handlers expose fill_form(page, job, ...).
+                # UniversalApplicant exposes apply_with_page (M-5 helper).
+                if isinstance(applicant, UniversalApplicant):
+                    result = applicant.apply_with_page(
+                        page,
+                        job,
+                        resume_path=str(tmp_resume_pdf),
+                        cover_letter_path=cover_letter_text,
+                    )
+                else:
+                    result = applicant.fill_form(
+                        page,
+                        job,
+                        resume_path=str(tmp_resume_pdf),
+                        cover_letter_path=cover_letter_text,
+                    )
+
+                # Final post-fill screenshot for the cockpit. Persist via
+                # Storage so the dashboard can render it via signed URL.
+                screenshot_storage_key = None
+                try:
+                    png_bytes = page.screenshot(full_page=False)
+                    screenshot_storage_key = upload_prefill_screenshot(
+                        job_id, png_bytes
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"Could not upload prefill screenshot: {exc}"
+                    )
+
+                if result.get("success"):
+                    mark_awaiting_submit(
+                        job_id, screenshot_path=screenshot_storage_key
+                    )
+                    notify_awaiting_submit(job, screenshot_storage_key)
+                else:
+                    fail_notes = result.get("notes") or result.get(
+                        "review_reason"
+                    ) or "pre-fill did not complete cleanly"
+                    mark_failed(job_id, f"Pre-fill: {fail_notes}")
+                    notify_failed(job, fail_notes)
+
+                # ── BLOCK on terminal input() so the browser stays open ─
+                # The human reviews the visible browser, fixes anything
+                # wrong, clicks Submit themselves (or copy-pastes from
+                # the cockpit's form-answer drafts), then comes back here
+                # and presses Enter. The cockpit's "Mark Applied" click
+                # is what flips status to applied — never this code.
+                bar = "=" * 60
+                print(
+                    f"\n{bar}\n"
+                    f"  Form pre-filled for {company} - {title}\n"
+                    f"  ATS: {ats}  ({type(applicant).__name__})\n"
+                    f"  Browser is open. Review what was typed, click "
+                    f"Submit yourself,\n"
+                    f"  then come back to the dashboard and click "
+                    f"'Mark Applied'.\n"
+                    f"  Press Enter in this terminal to close the browser "
+                    f"when done.\n"
+                    f"{bar}"
+                )
+                try:
+                    input()
+                except (EOFError, KeyboardInterrupt):
+                    pass
+
+                browser.close()
+
+        except Exception as exc:
+            logger.exception(f"Pre-fill failed for {company}: {exc}")
+            mark_failed(job_id, f"Pre-fill exception: {exc}")
+            notify_failed(job, str(exc))
+        finally:
+            if tmp_resume_pdf is not None:
+                try:
+                    Path(tmp_resume_pdf).unlink(missing_ok=True)
+                except Exception:
+                    pass
 
 
 def process_confirmed_jobs():

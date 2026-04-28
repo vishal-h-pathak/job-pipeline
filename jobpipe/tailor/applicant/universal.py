@@ -160,6 +160,50 @@ class UniversalApplicant(BaseApplicant):
                 "screenshots": [],
             }
 
+    def apply_with_page(
+        self,
+        page,
+        job: dict,
+        resume_path: Optional[str] = None,
+        cover_letter_path: Optional[str] = None,
+    ) -> dict:
+        """Run the prepare-only agent against a CALLER-managed Playwright page (M-5).
+
+        The orchestrator owns the browser lifecycle so it can keep the
+        context alive past `apply_with_page`'s return — the per-ATS
+        handlers (`AshbyApplicant.fill_form` etc.) already work this way,
+        and `process_prefill_requested_jobs` dispatches uniformly.
+        """
+        cover_letter_text = self._read_cover_letter_text(cover_letter_path)
+        slug = "".join(
+            c if c.isalnum() else "_" for c in (job.get("company") or "company")
+        )[:40]
+
+        session = BrowserSession(
+            page=page,
+            resume_path=resume_path,
+            cover_letter_path=None,
+            cover_letter_text=cover_letter_text,
+            job_slug=slug,
+        )
+
+        try:
+            result = run_submission_agent(
+                session=session,
+                job=job,
+                cover_letter_text=cover_letter_text,
+                max_turns=45,
+            )
+            return result
+        except Exception as e:
+            logger.exception(f"Universal apply_with_page failed: {e}")
+            return {
+                "success": False,
+                "needs_review": True,
+                "review_reason": f"agent exception: {e}",
+                "screenshots": session.screenshots,
+            }
+
     # NOTE: no submit() override (M-4). Calls fall through to
     # BaseApplicant.submit() which raises NotImplementedError. The system
     # never auto-submits — the human clicks Submit themselves in the

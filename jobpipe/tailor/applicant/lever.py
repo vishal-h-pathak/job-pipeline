@@ -1,16 +1,22 @@
-"""applicant/ashby.py — Ashby ATS (ashbyhq.com) DOM-based form filler (M-3).
+"""applicant/lever.py — Lever ATS DOM-based form filler (M-3).
 
-Navigates to an Ashby-hosted application page, fills standard fields by
-reading values from `job["form_answers"]` (the structured JSON written
-by the M-1 tailoring step), uploads a resume PDF, pastes a cover letter,
-takes a screenshot, and returns. Zero Anthropic API calls — pure
-Playwright + DOM selectors.
+Lever hosts forms at jobs.lever.co/<org>/<job_id>/apply (US) and
+jobs.eu.lever.co/<org>/<job_id>/apply (EU). The standard fields use
+simple `name="name"`, `name="email"`, `name="phone"` attributes. URL
+fields (LinkedIn, GitHub, etc.) use `name="urls[LinkedIn]"` patterns.
+Reads `job["form_answers"]` (M-1) for all values — zero Anthropic API
+calls.
 
-The handler does NOT click Submit. After M-3 + M-5, the orchestrator
-takes the post-fill screenshot, marks the row `awaiting_human_submit`,
-and blocks on a terminal `input()` while the human reviews the visible
-browser, fixes anything wrong, clicks Submit themselves, and then comes
-back to the dashboard cockpit to click "Mark Applied".
+Same shape as `applicant/ashby.py`: static `detect()`, `fill_form()`
+returning `{success, screenshot_path, notes, fields_filled}`. Does NOT
+click Submit. After M-5 the orchestrator screenshots, marks the row
+`awaiting_human_submit`, and blocks on terminal `input()` while the
+human reviews the visible browser.
+
+Known M-3 limitation: Lever's per-card custom questions
+(`name="cards[<uuid>][field0]"` patterns) are NOT auto-filled here —
+the human pastes draft answers from `form_answers.additional_questions`
+via the cockpit copy buttons.
 """
 
 import logging
@@ -19,26 +25,50 @@ from pathlib import Path
 
 from playwright.sync_api import Page
 
+from applicant.ashby import _build_field_map
 from applicant.base import BaseApplicant
 
-logger = logging.getLogger("applicant.ashby")
+logger = logging.getLogger("applicant.lever")
 
 
-class AshbyApplicant(BaseApplicant):
-    """Playwright-based DOM form filler for Ashby ATS applications."""
+# Lever uses flat name attrs for standard fields and urls[Service] for
+# social URLs. Map our label keys to those.
+_LEVER_NAME_MAP = {
+    "Full Name": "name",
+    "Name": "name",
+    "First Name": "name",
+    "Email": "email",
+    "Phone": "phone",
+    "Current Company": "org",
+    "Company": "org",
+    "Current Title": "title",
+    "Title": "title",
+    "Location": "location",
+    "Current Location": "location",
+    "City": "location",
+    "LinkedIn URL": "urls[LinkedIn]",
+    "LinkedIn": "urls[LinkedIn]",
+    "GitHub URL": "urls[GitHub]",
+    "GitHub": "urls[GitHub]",
+    "Portfolio": "urls[Portfolio]",
+    "Website": "urls[Other]",
+}
 
-    name: str = "ashby"
+
+class LeverApplicant(BaseApplicant):
+    """Playwright-based DOM form filler for Lever ATS applications."""
+
+    name: str = "lever"
 
     # ── Detection ────────────────────────────────────────────────────────────
 
     @staticmethod
     def detect(url: str) -> bool:
-        """Return True if the URL points to an Ashby-hosted application."""
+        """Return True for Lever-hosted application URLs."""
         url_lower = (url or "").lower()
         return (
-            "ashbyhq.com" in url_lower
-            or "ashby_jid" in url_lower
-            or "jobs.ashby" in url_lower
+            "jobs.lever.co" in url_lower
+            or "jobs.eu.lever.co" in url_lower
         )
 
     # ── Form filling ─────────────────────────────────────────────────────────
@@ -50,25 +80,28 @@ class AshbyApplicant(BaseApplicant):
         resume_path: str = None,
         cover_letter_path: str = None,
     ) -> dict:
-        """Fill an Ashby application form from `job["form_answers"]`.
-
-        Ashby renders inputs inside a React app. Most labels are explicit
-        `<label>` elements; some use `aria-label`; some use placeholders.
-        We try multiple selector strategies per field and stop at the
-        first match.
-        """
+        """Fill a Lever application form from `job["form_answers"]`."""
         filled = []
         notes_parts = []
 
         try:
             page.wait_for_load_state("networkidle", timeout=15000)
-            time.sleep(2)  # extra buffer for React hydration
+            time.sleep(1)
 
+            # Lever wants the full name in a single field. Build a tweaked
+            # field_map: prefer full_name for the "Name" key.
             field_map = _build_field_map(job)
+            fa = job.get("form_answers") or {}
+            full_name = fa.get("full_name") or (
+                f"{fa.get('first_name', '')} {fa.get('last_name', '')}".strip()
+            )
+            field_map["Name"] = full_name
+            field_map["Full Name"] = full_name
+
             for label_text, value in field_map.items():
                 if not value:
                     continue
-                if self._try_fill_by_label(page, label_text, value):
+                if self._try_fill_field(page, label_text, value):
                     filled.append(label_text)
 
             notes_parts.append(
@@ -86,7 +119,7 @@ class AshbyApplicant(BaseApplicant):
             elif resume_path:
                 notes_parts.append(f"Resume path not found: {resume_path}")
 
-            # Cover letter
+            # Cover letter — Lever uses `<textarea name="comments">`
             if cover_letter_path:
                 cover_text = self._load_cover_letter(cover_letter_path)
                 if cover_text and self._try_paste_cover_letter(page, cover_text):
@@ -94,8 +127,16 @@ class AshbyApplicant(BaseApplicant):
                 elif cover_text:
                     notes_parts.append("Cover letter: no textarea found")
 
+            # Custom questions: not auto-filled (see module docstring).
+            qs = (job.get("form_answers") or {}).get("additional_questions") or []
+            if qs:
+                notes_parts.append(
+                    f"{len(qs)} role-specific question(s) NOT auto-filled - "
+                    f"paste from cockpit drafts"
+                )
+
             screenshot_path = self.take_screenshot(
-                page, label=f"ashby_{job.get('id', 'unknown')}"
+                page, label=f"lever_{job.get('id', 'unknown')}"
             )
             notes_parts.append(f"Screenshot: {screenshot_path}")
 
@@ -107,7 +148,7 @@ class AshbyApplicant(BaseApplicant):
             }
 
         except Exception as e:
-            logger.error(f"Ashby form fill error: {e}")
+            logger.error(f"Lever form fill error: {e}")
             return {
                 "success": False,
                 "notes": (
@@ -118,16 +159,20 @@ class AshbyApplicant(BaseApplicant):
 
     # ── Private helpers ──────────────────────────────────────────────────────
 
-    def _try_fill_by_label(self, page: Page, label_text: str, value: str) -> bool:
-        """Find an input by label / aria-label / placeholder / name and fill it."""
-        selectors = [
+    def _try_fill_field(self, page: Page, label_text: str, value: str) -> bool:
+        """Try Lever name-attr first, then label / aria-label / placeholder."""
+        selectors = []
+        lever_name = _LEVER_NAME_MAP.get(label_text)
+        if lever_name:
+            selectors.append(f'input[name="{lever_name}"]')
+            selectors.append(f'textarea[name="{lever_name}"]')
+        selectors.extend([
             f'label:has-text("{label_text}") input',
             f'label:has-text("{label_text}") >> input',
             f'input[aria-label="{label_text}"]',
             f'input[placeholder*="{label_text}" i]',
-            f'input[name*="{label_text.lower().replace(" ", "_")}"]',
-            f'input[name*="{label_text.lower().replace(" ", "")}"]',
-        ]
+        ])
+
         for selector in selectors:
             try:
                 el = page.locator(selector).first
@@ -142,11 +187,12 @@ class AshbyApplicant(BaseApplicant):
         return False
 
     def _try_upload_resume(self, page: Page, resume_path: str) -> bool:
-        """Upload resume via file input."""
+        """Upload resume via Lever's file input."""
         selectors = [
+            'input[type="file"][name="resume"]',
+            'input[type="file"][name*="resume" i]',
+            'input[type="file"][accept*=".pdf"]',
             'input[type="file"]',
-            'input[accept*=".pdf"]',
-            'input[accept*="application/pdf"]',
         ]
         for selector in selectors:
             try:
@@ -160,7 +206,6 @@ class AshbyApplicant(BaseApplicant):
         return False
 
     def _load_cover_letter(self, cover_letter_path: str) -> str:
-        """Load cover letter text from file or treat the arg as raw text."""
         path = Path(cover_letter_path)
         if path.exists():
             return path.read_text(encoding="utf-8")
@@ -169,15 +214,14 @@ class AshbyApplicant(BaseApplicant):
         return ""
 
     def _try_paste_cover_letter(self, page: Page, text: str) -> bool:
-        """Paste cover letter into a textarea or contenteditable field."""
+        """Paste cover letter into Lever's `comments` textarea."""
         selectors = [
+            'textarea[name="comments"]',
             'textarea[name*="cover" i]',
             'textarea[aria-label*="cover" i]',
             'textarea[placeholder*="cover" i]',
-            'textarea[name*="additional" i]',
-            'textarea[aria-label*="additional" i]',
+            'textarea[placeholder*="why" i]',
             "textarea",
-            'div[contenteditable="true"]',
         ]
         for selector in selectors:
             try:
@@ -190,38 +234,3 @@ class AshbyApplicant(BaseApplicant):
             except Exception:
                 continue
         return False
-
-
-# ── Shared field-map builder (reused by greenhouse.py / lever.py too) ──────
-
-def _build_field_map(job: dict) -> dict[str, str]:
-    """Build a label-keyed dict of values from `job["form_answers"]`.
-
-    Identity / contact / location / comp values come from the M-1
-    form_answers JSON (which itself was filled from profile.yml in
-    Python — never LLM-generated). Returning a label-keyed dict lets
-    each per-ATS handler reuse the same source while keeping its own
-    selector strategy.
-    """
-    fa = job.get("form_answers") or {}
-    return {
-        "First Name": fa.get("first_name") or "",
-        "Last Name": fa.get("last_name") or "",
-        "Full Name": fa.get("full_name") or "",
-        "Name": fa.get("full_name") or "",
-        "Email": fa.get("email") or "",
-        "Phone": fa.get("phone") or "",
-        "LinkedIn URL": fa.get("linkedin_url") or "",
-        "LinkedIn": fa.get("linkedin_url") or "",
-        "GitHub URL": fa.get("github_url") or "",
-        "GitHub": fa.get("github_url") or "",
-        "Portfolio": fa.get("portfolio_url") or "",
-        "Website": fa.get("portfolio_url") or "",
-        "Location": fa.get("current_location") or "",
-        "Current Location": fa.get("current_location") or "",
-        "City": fa.get("current_location") or "",
-        "Current Company": fa.get("current_company") or "",
-        "Company": fa.get("current_company") or "",
-        "Current Title": fa.get("current_title") or "",
-        "Title": fa.get("current_title") or "",
-    }

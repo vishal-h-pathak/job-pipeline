@@ -1,16 +1,23 @@
-"""applicant/ashby.py — Ashby ATS (ashbyhq.com) DOM-based form filler (M-3).
+"""applicant/greenhouse.py — Greenhouse ATS DOM-based form filler (M-3).
 
-Navigates to an Ashby-hosted application page, fills standard fields by
-reading values from `job["form_answers"]` (the structured JSON written
-by the M-1 tailoring step), uploads a resume PDF, pastes a cover letter,
-takes a screenshot, and returns. Zero Anthropic API calls — pure
-Playwright + DOM selectors.
+Greenhouse hosts forms at boards.greenhouse.io / job-boards.greenhouse.io
+/ apply.greenhouse.io. The forms are server-rendered HTML with stable
+`name` attributes like `job_application[first_name]`, so we prefer
+those over label-based heuristics. Uses `job["form_answers"]` (M-1)
+as the authoritative source of identity / contact / location values —
+zero Anthropic API calls.
 
-The handler does NOT click Submit. After M-3 + M-5, the orchestrator
-takes the post-fill screenshot, marks the row `awaiting_human_submit`,
-and blocks on a terminal `input()` while the human reviews the visible
-browser, fixes anything wrong, clicks Submit themselves, and then comes
-back to the dashboard cockpit to click "Mark Applied".
+Same shape as `applicant/ashby.py`: static `detect()`, `fill_form()`
+returning `{success, screenshot_path, notes, fields_filled}`. Does NOT
+click Submit. After M-5 the orchestrator screenshots, marks the row
+`awaiting_human_submit`, and blocks on terminal `input()` while the
+human reviews the visible browser.
+
+Known M-3 limitation: role-specific custom questions (rendered as
+`job_application[answers_attributes][N][text_value]`) are NOT auto-
+filled here — their wording varies enough that the safer path is to
+let the human paste the draft answers from
+`form_answers.additional_questions` via the cockpit copy buttons.
 """
 
 import logging
@@ -19,26 +26,49 @@ from pathlib import Path
 
 from playwright.sync_api import Page
 
+from applicant.ashby import _build_field_map
 from applicant.base import BaseApplicant
 
-logger = logging.getLogger("applicant.ashby")
+logger = logging.getLogger("applicant.greenhouse")
 
 
-class AshbyApplicant(BaseApplicant):
-    """Playwright-based DOM form filler for Ashby ATS applications."""
+# Greenhouse form fields are prefixed `job_application[...]` so the
+# selector strategy is name-attr-first, label-second.
+_GREENHOUSE_NAME_MAP = {
+    "First Name": "job_application[first_name]",
+    "Last Name": "job_application[last_name]",
+    "Email": "job_application[email]",
+    "Phone": "job_application[phone]",
+    "LinkedIn URL": "job_application[urls][LinkedIn]",
+    "LinkedIn": "job_application[urls][LinkedIn]",
+    "GitHub URL": "job_application[urls][GitHub]",
+    "GitHub": "job_application[urls][GitHub]",
+    "Portfolio": "job_application[urls][Portfolio]",
+    "Website": "job_application[urls][Website]",
+    "Current Company": "job_application[company]",
+    "Current Title": "job_application[title]",
+    "Location": "job_application[location]",
+    "Current Location": "job_application[location]",
+    "City": "job_application[location]",
+}
 
-    name: str = "ashby"
+
+class GreenhouseApplicant(BaseApplicant):
+    """Playwright-based DOM form filler for Greenhouse ATS applications."""
+
+    name: str = "greenhouse"
 
     # ── Detection ────────────────────────────────────────────────────────────
 
     @staticmethod
     def detect(url: str) -> bool:
-        """Return True if the URL points to an Ashby-hosted application."""
+        """Return True for Greenhouse-hosted application URLs."""
         url_lower = (url or "").lower()
         return (
-            "ashbyhq.com" in url_lower
-            or "ashby_jid" in url_lower
-            or "jobs.ashby" in url_lower
+            "boards.greenhouse.io" in url_lower
+            or "job-boards.greenhouse.io" in url_lower
+            or "apply.greenhouse.io" in url_lower
+            or "greenhouse.io/embed/job_app" in url_lower
         )
 
     # ── Form filling ─────────────────────────────────────────────────────────
@@ -50,25 +80,19 @@ class AshbyApplicant(BaseApplicant):
         resume_path: str = None,
         cover_letter_path: str = None,
     ) -> dict:
-        """Fill an Ashby application form from `job["form_answers"]`.
-
-        Ashby renders inputs inside a React app. Most labels are explicit
-        `<label>` elements; some use `aria-label`; some use placeholders.
-        We try multiple selector strategies per field and stop at the
-        first match.
-        """
+        """Fill a Greenhouse application form from `job["form_answers"]`."""
         filled = []
         notes_parts = []
 
         try:
             page.wait_for_load_state("networkidle", timeout=15000)
-            time.sleep(2)  # extra buffer for React hydration
+            time.sleep(1)
 
             field_map = _build_field_map(job)
             for label_text, value in field_map.items():
                 if not value:
                     continue
-                if self._try_fill_by_label(page, label_text, value):
+                if self._try_fill_field(page, label_text, value):
                     filled.append(label_text)
 
             notes_parts.append(
@@ -94,8 +118,18 @@ class AshbyApplicant(BaseApplicant):
                 elif cover_text:
                     notes_parts.append("Cover letter: no textarea found")
 
+            # Custom questions are intentionally NOT auto-filled here.
+            # They live in form_answers.additional_questions; the human
+            # pastes them from the cockpit via copy buttons.
+            qs = (job.get("form_answers") or {}).get("additional_questions") or []
+            if qs:
+                notes_parts.append(
+                    f"{len(qs)} role-specific question(s) NOT auto-filled - "
+                    f"paste from cockpit drafts"
+                )
+
             screenshot_path = self.take_screenshot(
-                page, label=f"ashby_{job.get('id', 'unknown')}"
+                page, label=f"greenhouse_{job.get('id', 'unknown')}"
             )
             notes_parts.append(f"Screenshot: {screenshot_path}")
 
@@ -107,7 +141,7 @@ class AshbyApplicant(BaseApplicant):
             }
 
         except Exception as e:
-            logger.error(f"Ashby form fill error: {e}")
+            logger.error(f"Greenhouse form fill error: {e}")
             return {
                 "success": False,
                 "notes": (
@@ -118,16 +152,20 @@ class AshbyApplicant(BaseApplicant):
 
     # ── Private helpers ──────────────────────────────────────────────────────
 
-    def _try_fill_by_label(self, page: Page, label_text: str, value: str) -> bool:
-        """Find an input by label / aria-label / placeholder / name and fill it."""
-        selectors = [
+    def _try_fill_field(self, page: Page, label_text: str, value: str) -> bool:
+        """Try Greenhouse name-attr first, then label / aria-label / placeholder."""
+        selectors = []
+        gh_name = _GREENHOUSE_NAME_MAP.get(label_text)
+        if gh_name:
+            selectors.append(f'input[name="{gh_name}"]')
+            selectors.append(f'textarea[name="{gh_name}"]')
+        selectors.extend([
             f'label:has-text("{label_text}") input',
             f'label:has-text("{label_text}") >> input',
             f'input[aria-label="{label_text}"]',
             f'input[placeholder*="{label_text}" i]',
-            f'input[name*="{label_text.lower().replace(" ", "_")}"]',
-            f'input[name*="{label_text.lower().replace(" ", "")}"]',
-        ]
+        ])
+
         for selector in selectors:
             try:
                 el = page.locator(selector).first
@@ -142,11 +180,12 @@ class AshbyApplicant(BaseApplicant):
         return False
 
     def _try_upload_resume(self, page: Page, resume_path: str) -> bool:
-        """Upload resume via file input."""
+        """Upload resume via Greenhouse's file input."""
         selectors = [
+            'input[type="file"][name="job_application[resume]"]',
+            'input[type="file"][name*="resume" i]',
+            'input[type="file"][accept*=".pdf"]',
             'input[type="file"]',
-            'input[accept*=".pdf"]',
-            'input[accept*="application/pdf"]',
         ]
         for selector in selectors:
             try:
@@ -160,7 +199,6 @@ class AshbyApplicant(BaseApplicant):
         return False
 
     def _load_cover_letter(self, cover_letter_path: str) -> str:
-        """Load cover letter text from file or treat the arg as raw text."""
         path = Path(cover_letter_path)
         if path.exists():
             return path.read_text(encoding="utf-8")
@@ -169,15 +207,13 @@ class AshbyApplicant(BaseApplicant):
         return ""
 
     def _try_paste_cover_letter(self, page: Page, text: str) -> bool:
-        """Paste cover letter into a textarea or contenteditable field."""
+        """Paste cover letter into Greenhouse's cover-letter textarea."""
         selectors = [
+            'textarea[name="job_application[cover_letter]"]',
             'textarea[name*="cover" i]',
             'textarea[aria-label*="cover" i]',
             'textarea[placeholder*="cover" i]',
-            'textarea[name*="additional" i]',
-            'textarea[aria-label*="additional" i]',
             "textarea",
-            'div[contenteditable="true"]',
         ]
         for selector in selectors:
             try:
@@ -190,38 +226,3 @@ class AshbyApplicant(BaseApplicant):
             except Exception:
                 continue
         return False
-
-
-# ── Shared field-map builder (reused by greenhouse.py / lever.py too) ──────
-
-def _build_field_map(job: dict) -> dict[str, str]:
-    """Build a label-keyed dict of values from `job["form_answers"]`.
-
-    Identity / contact / location / comp values come from the M-1
-    form_answers JSON (which itself was filled from profile.yml in
-    Python — never LLM-generated). Returning a label-keyed dict lets
-    each per-ATS handler reuse the same source while keeping its own
-    selector strategy.
-    """
-    fa = job.get("form_answers") or {}
-    return {
-        "First Name": fa.get("first_name") or "",
-        "Last Name": fa.get("last_name") or "",
-        "Full Name": fa.get("full_name") or "",
-        "Name": fa.get("full_name") or "",
-        "Email": fa.get("email") or "",
-        "Phone": fa.get("phone") or "",
-        "LinkedIn URL": fa.get("linkedin_url") or "",
-        "LinkedIn": fa.get("linkedin_url") or "",
-        "GitHub URL": fa.get("github_url") or "",
-        "GitHub": fa.get("github_url") or "",
-        "Portfolio": fa.get("portfolio_url") or "",
-        "Website": fa.get("portfolio_url") or "",
-        "Location": fa.get("current_location") or "",
-        "Current Location": fa.get("current_location") or "",
-        "City": fa.get("current_location") or "",
-        "Current Company": fa.get("current_company") or "",
-        "Company": fa.get("current_company") or "",
-        "Current Title": fa.get("current_title") or "",
-        "Title": fa.get("current_title") or "",
-    }

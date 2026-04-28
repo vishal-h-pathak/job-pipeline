@@ -17,7 +17,7 @@ of truth that the job was actually submitted.
 ## Project structure
 
 ```
-main.py                # Entry point — process_approved_jobs / process_prefill_requested_jobs (M-7)
+pipeline.py            # Entry point — process_approved_jobs / process_prefill_requested_jobs (M-7) — wired as `jobpipe-tailor` (PR-4 rename of main.py)
 db.py                  # Supabase read/write
 storage.py             # PDF upload/download against Supabase Storage
 notify.py              # Resend email notifications
@@ -40,15 +40,16 @@ tailor/
   archetype.py         # Archetype classifier + config loader (J-4)
   normalize.py         # ATS Unicode normalization (J-5)
   form_answers.py      # Form-answer draft generator (M-1, "Block H")
+url_resolver.py        # Aggregator → real ATS endpoint (PR-4 moved up from applicant/)
 applicant/
-  agent_loop.py        # Prepare-only Claude tool-use loop (M-4 — no click_submit)
-  detector.py          # ATS detection + routing (M-3 — per-ATS default, vision fallback)
-  url_resolver.py      # Aggregator → real ATS endpoint
-  ashby.py             # Ashby DOM form-filler (M-3 — reads from form_answers)
-  greenhouse.py        # Greenhouse DOM form-filler (M-3, new)
-  lever.py             # Lever DOM form-filler (M-3, new)
-  universal.py         # Prepare-only vision-agent fallback (M-4)
-  browser_tools.py     # Playwright tool primitives
+  base.py              # BaseApplicant abstract class (held for PR-7)
+  browser_tools.py     # Playwright tool primitives (held for PR-7)
+  __init__.py          # plus PR-4 re-export shims for the moved modules:
+                       #   detector.py     → jobpipe.shared.ats_detect
+                       #   url_resolver.py → jobpipe.tailor.url_resolver
+                       #   agent_loop.py   → jobpipe.submit.adapters.prepare_loop
+                       #   ashby.py / lever.py / greenhouse.py / universal.py
+                       #     → jobpipe.submit.adapters.prepare_dom.*
 interview_prep/
   generator.py         # STAR+R story generator (J-3)
   bank.py              # Supabase r/w for star_stories
@@ -79,7 +80,7 @@ User-layer ground truth lives in the sibling `job-hunter/profile/` repo;
 job-hunter writes → status=new
    ↓ (you mark approved in dashboard)
 status=approved
-   ↓ main.py::process_approved_jobs
+   ↓ pipeline.py::process_approved_jobs
 [archetype classify] → [resume tailor] → [cover letter]
    → [LaTeX compile + PDF upload] → [STAR+R stories]
    → [form_answers (M-1, gated on score >= 6)]
@@ -88,7 +89,7 @@ status=ready_for_review  (PDFs + form_answers in Postgres; cockpit
                           renders everything for human review)
    ↓ (Pre-fill Form click in /dashboard/review/[job_id])
 status=prefilling
-   ↓ main.py::process_prefill_requested_jobs (visible browser)
+   ↓ pipeline.py::process_prefill_requested_jobs (visible browser)
 [per-ATS DOM handler — Ashby / Greenhouse / Lever — OR
  prepare-only vision agent for unknown ATSes]
    → [post-fill screenshot uploaded to job-materials Storage]
@@ -110,9 +111,9 @@ the canonical user-layer profile.
 pip install -r requirements.txt
 playwright install chromium
 
-python main.py --status                    # job counts by status
-python main.py --test-tailor <job_id>      # smoke-test tailoring + form_answers (read-only)
-python main.py                             # one full cycle: tailor approved jobs +
+jobpipe-tailor --status                    # job counts by status
+jobpipe-tailor --test-tailor <job_id>      # smoke-test tailoring + form_answers (read-only)
+jobpipe-tailor                             # one full cycle: tailor approved jobs +
                                            # prefill any rows the cockpit flagged
                                            # (visible browser; terminal blocks on input()
                                            #  so you can review and click Submit yourself)

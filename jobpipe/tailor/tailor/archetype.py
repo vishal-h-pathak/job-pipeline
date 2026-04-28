@@ -1,16 +1,23 @@
 """tailor/archetype.py — Archetype classifier + config loader (J-4).
 
-Loads archetype definitions from `profile/profile.yml::archetypes` (the
-canonical user-layer list lives in the sibling `job-hunter/profile/`
-repo). Classifies a JD into the best-fit archetype with a single
-Sonnet-class call, then exposes the archetype config for downstream
-prompts (`tailor_resume.md`, `tailor_cover_letter.md`).
+Loads archetype definitions from ``profile.yml::archetypes`` via the
+single canonical loader at ``jobpipe.profile_loader.load_archetypes``.
+Classifies a JD into the best-fit archetype with a single Sonnet-class
+call, then exposes the archetype config for downstream prompts
+(``tailor_resume.md``, ``tailor_cover_letter.md``).
 
 The classifier is intentionally cheap. It reads only title +
 description + the framings YAML — no profile injection, no resume.
 Output is a single archetype key + confidence; downstream tailoring
 prompts get the full framing/emphasis/tone/bullet_template via
-`render_archetype_block(key)`.
+``render_archetype_block(key)``.
+
+PR-4 carryover-from-PR-2: replaced the bespoke
+``_resolve_profile_yml`` / ``_load_archetypes`` pair (which walked up
+to ``../job-hunter/profile/`` from the pre-merge ``job-applicant``
+layout) with a delegation to ``jobpipe.profile_loader.load_archetypes``.
+The ``@lru_cache`` on ``profile_loader.profile_dir`` already provides
+the memoization the old ``_ARCHETYPES_CACHE`` global used to provide.
 """
 
 from __future__ import annotations
@@ -18,45 +25,29 @@ from __future__ import annotations
 import json
 import logging
 import re
-from pathlib import Path
-from typing import Optional
 
 import anthropic
-import yaml
 
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
 from prompts import load_prompt
+from jobpipe.profile_loader import load_archetypes
 
 logger = logging.getLogger("tailor.archetype")
 
-_ARCHETYPES_CACHE: Optional[dict] = None
 _FALLBACK_KEY = "tier_3_mission_ml"
 
 
-def _resolve_profile_yml() -> Optional[Path]:
-    """Mirror prompts.load_profile()'s resolution logic."""
-    here = Path(__file__).parent.parent  # job-applicant/
-    local = here / "profile" / "profile.yml"
-    if local.exists():
-        return local
-    sibling = here.parent / "job-hunter" / "profile" / "profile.yml"
-    if sibling.exists():
-        return sibling
-    return None
-
-
 def _load_archetypes() -> dict:
-    global _ARCHETYPES_CACHE
-    if _ARCHETYPES_CACHE is not None:
-        return _ARCHETYPES_CACHE
-    p = _resolve_profile_yml()
-    if not p:
-        logger.warning("profile.yml not found — archetype routing disabled")
-        _ARCHETYPES_CACHE = {}
-        return _ARCHETYPES_CACHE
-    cfg = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    _ARCHETYPES_CACHE = cfg.get("archetypes") or {}
-    return _ARCHETYPES_CACHE
+    """Return the parsed ``archetypes:`` block from profile.yml.
+
+    Thin wrapper kept for the call sites below; profile_loader handles
+    resolution + caching + the empty-dict fallback when profile.yml is
+    missing.
+    """
+    archs = load_archetypes()
+    if not archs:
+        logger.warning("profile.yml archetypes block empty — archetype routing disabled")
+    return archs
 
 
 def archetype_keys() -> list[str]:

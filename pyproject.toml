@@ -17,6 +17,10 @@ dev = ["pytest>=8", "ruff>=0.5"]
 # PR-3: hunt orchestrator console script. Calls the hunt agent's `run()`
 # which parses CLI args (`--mode`, `--once`) and executes the pipeline once.
 jobpipe-hunt = "jobpipe.hunt.agent:run"
+# PR-4: tailor console script. Calls pipeline.run() which parses
+# CLI args (`--once`, `--status`, `--test-tailor`) and runs one cycle of
+# process_approved_jobs + process_prefill_requested_jobs.
+jobpipe-tailor = "jobpipe.tailor.pipeline:run"
 # PR-5: submitter console script. Calls the runner's `run()` which installs
 # signal handlers and drives the polling loop under asyncio.run.
 jobpipe-submit = "jobpipe.submit.runner:run"
@@ -25,15 +29,23 @@ jobpipe-submit = "jobpipe.submit.runner:run"
 # Each listed package needs to be installed so setuptools wires up the
 # console-script entry points. Sub-packages with __init__.py are picked
 # up transitively by setuptools' default discovery, but listing them
-# explicitly here keeps the surface auditable. tailor isn't listed yet —
-# its restructure lands in PR-7.
+# explicitly here keeps the surface auditable. PR-4 adds the tailor
+# subtree (jobpipe.tailor.*) and the new submit/adapters/prepare_dom
+# package — siblings of PR-5's deterministic/ adapters.
 packages = [
     "jobpipe",
     "jobpipe.shared",
     "jobpipe.hunt",
+    "jobpipe.tailor",
+    "jobpipe.tailor.tailor",
+    "jobpipe.tailor.applicant",
+    "jobpipe.tailor.interview_prep",
+    "jobpipe.tailor.prompts",
+    "jobpipe.tailor.scripts",
     "jobpipe.submit",
     "jobpipe.submit.adapters",
     "jobpipe.submit.adapters.deterministic",
+    "jobpipe.submit.adapters.prepare_dom",
     "jobpipe.submit.browser",
 ]
 

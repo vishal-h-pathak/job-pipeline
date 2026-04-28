@@ -8,7 +8,7 @@ This script exists for two reasons:
    Until that gets wired up properly (`match_chat` column + dashboard write +
    tailor read), this script lets us inject a transcript file by hand for one
    job and still get its insights into the tailored materials.
-2. The standard `python3 main.py` polls and processes every approved job. When
+2. The standard `jobpipe-tailor` polls and processes every approved job. When
    you only want to tailor one (e.g. to iterate on the chat-injection result),
    running this avoids touching the others.
 

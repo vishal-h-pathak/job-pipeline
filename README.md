@@ -27,12 +27,14 @@ The post-migration target layout is documented in the migration plan.
 
 ## History walkback
 
-`git log --follow` walks back into the original repos' history:
+`git log --follow` walks back into the original repos' history. Note
+the file renames performed by PR-3 / PR-4 / PR-5; pass the post-rename
+paths to walk through the merge:
 
 ```
-git log --follow jobpipe/hunt/job_agent.py
-git log --follow jobpipe/tailor/main.py
-git log --follow jobpipe/submit/main.py
+git log --follow jobpipe/hunt/agent.py        # was jobpipe/hunt/job_agent.py (PR-3)
+git log --follow jobpipe/tailor/pipeline.py   # was jobpipe/tailor/main.py    (PR-4)
+git log --follow jobpipe/submit/runner.py     # was jobpipe/submit/main.py    (PR-5)
 ```
 
 `git blame` attributes lines to their original pre-merge commits.

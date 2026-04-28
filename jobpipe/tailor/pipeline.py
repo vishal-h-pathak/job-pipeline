@@ -1,24 +1,50 @@
 """
-main.py — Job Applicant Agent entry point.
+pipeline.py — Tailor Agent entry point (renamed from main.py in PR-4).
 
 Polls Supabase for approved jobs, tailors application materials,
 fills forms via Playwright, and pauses for human approval before submission.
 
+Wired as ``jobpipe-tailor = jobpipe.tailor.pipeline:run`` in pyproject.toml
+(see :func:`run` at the bottom of the file). Legacy ``python main.py``
+invocations should now use ``python pipeline.py`` (or the console script).
+
 Usage:
-    python main.py                          # Run one cycle
-    python main.py --status                 # Print current job counts by status
-    python main.py --test-tailor <job_id>   # Test material generation for a job (no status changes)
+    jobpipe-tailor                          # Run one cycle
+    jobpipe-tailor --status                 # Print current job counts by status
+    jobpipe-tailor --test-tailor <job_id>   # Test material generation for a job (no status changes)
 """
 
-import sys
-import time
-import logging
-import argparse
-from datetime import datetime
-from pathlib import Path
+from __future__ import annotations
 
-from config import POLL_INTERVAL_MINUTES, HUMAN_APPROVAL_REQUIRED
-from db import (
+# ── sys.path bootstrap ────────────────────────────────────────────────────
+# The tailor subtree uses unprefixed imports (``import db``, ``import config``,
+# ``from notify import ...``, ``from storage import ...``,
+# ``from tailor.X import ...``, ``from prompts import ...``,
+# ``from applicant.X import ...``, ``from interview_prep.X import ...``).
+# When this module is imported as ``jobpipe.tailor.pipeline`` (e.g. via the
+# ``jobpipe-tailor`` console script), sys.path won't contain
+# ``jobpipe/tailor/`` and those bare imports would fail. Insert the
+# directory before any other imports run so every downstream module load
+# resolves cleanly. PR-4 chose this over a global unprefixed -> qualified
+# rewrite to keep the diff scoped, mirroring the pattern PR-3 / PR-5
+# established for jobpipe.hunt and jobpipe.submit.
+import sys as _sys
+from pathlib import Path as _Path
+
+_TAILOR_DIR = str(_Path(__file__).resolve().parent)
+if _TAILOR_DIR not in _sys.path:
+    _sys.path.insert(0, _TAILOR_DIR)
+del _sys, _Path, _TAILOR_DIR
+# ──────────────────────────────────────────────────────────────────────────
+
+import argparse  # noqa: E402
+import logging  # noqa: E402
+import sys  # noqa: E402
+from datetime import datetime  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from config import POLL_INTERVAL_MINUTES, HUMAN_APPROVAL_REQUIRED  # noqa: E402
+from db import (  # noqa: E402
     get_approved_jobs,
     get_prefill_requested_jobs,
     mark_preparing,
@@ -29,21 +55,21 @@ from db import (
     mark_skipped,
     get_job_counts_by_status,
 )
-from tailor.resume import tailor_resume
-from tailor.cover_letter import generate_cover_letter
-from tailor.cover_letter_pdf import render_cover_letter_pdf
-from tailor.latex_resume import generate_tailored_latex
-from tailor.form_answers import generate_form_answers
-from applicant.detector import detect_ats, get_applicant
-from interview_prep.generator import generate_stories
-from interview_prep.bank import save_stories
-from notify import (
+from tailor.resume import tailor_resume  # noqa: E402
+from tailor.cover_letter import generate_cover_letter  # noqa: E402
+from tailor.cover_letter_pdf import render_cover_letter_pdf  # noqa: E402
+from tailor.latex_resume import generate_tailored_latex  # noqa: E402
+from tailor.form_answers import generate_form_answers  # noqa: E402
+from jobpipe.shared.ats_detect import detect_ats, get_applicant  # noqa: E402
+from interview_prep.generator import generate_stories  # noqa: E402
+from interview_prep.bank import save_stories  # noqa: E402
+from notify import (  # noqa: E402
     notify_ready_for_review,
     notify_awaiting_submit,
     notify_applied,
     notify_failed,
 )
-from storage import (
+from storage import (  # noqa: E402
     upload_pdf,
     download_to_tmp,
     delete_all_for_job,
@@ -56,7 +82,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger("main")
+logger = logging.getLogger("pipeline")
 
 
 def process_approved_jobs():
@@ -153,7 +179,7 @@ def process_approved_jobs():
             # clicks "Confirm Submit" in the dashboard. This keeps the
             # tailoring phase fast and cheap so materials can be generated
             # and reviewed without committing to a submission attempt.
-            from applicant.url_resolver import resolve_application_url
+            from url_resolver import resolve_application_url
             logger.info(f"Resolving apply URL for {company}...")
             resolved = resolve_application_url(url)
             resolved_url = resolved.get("resolved") or url
@@ -294,9 +320,9 @@ def process_prefill_requested_jobs():
     # Lazy imports so the module stays importable without Playwright
     # installed (e.g. for --status / --test-tailor).
     from playwright.sync_api import sync_playwright
-    from applicant.detector import detect_ats, get_applicant
-    from applicant.universal import UniversalApplicant
-    from applicant.url_resolver import resolve_application_url
+    from jobpipe.shared.ats_detect import detect_ats, get_applicant
+    from jobpipe.submit.adapters.prepare_dom.universal import UniversalApplicant
+    from url_resolver import resolve_application_url
     import json
 
     jobs = get_prefill_requested_jobs()
@@ -618,13 +644,20 @@ def test_tailor(job_id: str):
     # Summary
     print(f"\n{'='*60}")
     print("  DONE — Review the outputs above.")
-    print("  (Test mode writes nothing to disk; run `python main.py` for")
+    print("  (Test mode writes nothing to disk; run `jobpipe-tailor` for")
     print("   the real pipeline which uploads to Supabase Storage.)")
     print(f"{'='*60}\n")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Job Applicant Agent")
+def run() -> None:
+    """Console-script entry point wired as ``jobpipe-tailor`` in pyproject.toml.
+
+    Parses CLI args (``--once``, ``--status``, ``--test-tailor``) and
+    runs one cycle. The polling loop has been removed to prevent
+    unattended API usage; schedule via cron / Cowork if you want
+    repeated runs.
+    """
+    parser = argparse.ArgumentParser(description="Job Tailor Agent")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
     parser.add_argument("--status", action="store_true", help="Print job counts by status")
     parser.add_argument("--test-tailor", metavar="JOB_ID",
@@ -641,18 +674,19 @@ def main():
 
     print(f"""
 ╔═══════════════════════════════════════════════╗
-║       JOB APPLICANT AGENT                     ║
+║       JOB TAILOR AGENT                        ║
 ║  {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC{' ' * 21}║
 ║  Poll interval: {POLL_INTERVAL_MINUTES} min{' ' * 24}║
 ║  Human approval: {'ON' if HUMAN_APPROVAL_REQUIRED else 'OFF'}{' ' * 24}║
 ╚═══════════════════════════════════════════════╝
 """)
 
-    # Always run a single cycle. Use --once for clarity, but bare `python main.py` also runs once.
-    # The polling loop has been removed to prevent unattended API usage.
-    # To run on a schedule, use an external scheduler (cron, Cowork scheduled task, etc.)
+    # Always run a single cycle. Use --once for clarity, but bare invocation
+    # also runs once. The polling loop has been removed to prevent
+    # unattended API usage. To run on a schedule, use an external scheduler
+    # (cron, Cowork scheduled task, etc.)
     run_cycle()
 
 
 if __name__ == "__main__":
-    main()
+    run()

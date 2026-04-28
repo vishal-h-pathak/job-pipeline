@@ -37,7 +37,9 @@ from sources import (  # noqa: E402
     remoteok,
     serpapi,
     greenhouse,
+    lever,
     ashby,
+    workday,
     hn_whoshiring,
     eighty_thousand_hours,
     jsearch,
@@ -66,8 +68,10 @@ logger = logging.getLogger("job_agent")
 # SerpAPI / JSearch calls. That way a Greenhouse posting we already have
 # doesn't spend a paid search just to be deduped after.
 SOURCES = (
-    greenhouse,             # free, curated ATS boards
-    ashby,                  # free, curated ATS boards
+    greenhouse,             # free, curated ATS boards (J-1, portals.yml)
+    lever,                  # free, curated ATS boards (J-1, portals.yml)
+    ashby,                  # free, curated ATS boards (J-1, portals.yml)
+    workday,                # free, curated ATS boards (J-1, portals.yml)
     hn_whoshiring,          # free, monthly HN thread
     eighty_thousand_hours,  # free, mission-driven
     remoteok,               # free, broad remote

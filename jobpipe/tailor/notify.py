@@ -1,17 +1,31 @@
-"""
-notify.py — Notification layer for the job-applicant agent.
+"""notify.py — Notification layer for the job-applicant agent (M-8).
 
 Instead of external push services, notifications are written to a
 Supabase 'notifications' table that the portfolio dashboard reads.
-The dashboard at vishal.pa.thak.io serves as the single notification interface.
+The dashboard at vishal.pa.thak.io serves as the single notification
+interface; each notification's `message` field carries a deep link to
+the cockpit (`/dashboard/review/{job_id}`) so a click takes the user
+directly to the action they need to take.
 """
 
 import logging
+import os
 from datetime import datetime, timezone
 
 from config import SUPABASE_URL, SUPABASE_KEY
 
 logger = logging.getLogger("notify")
+
+# Cockpit base URL. Override via PORTFOLIO_BASE_URL for staging /
+# preview deploys; defaults to the production domain.
+PORTFOLIO_BASE_URL = os.getenv(
+    "PORTFOLIO_BASE_URL", "https://vishal.pa.thak.io"
+).rstrip("/")
+
+
+def cockpit_url(job_id: str | int) -> str:
+    return f"{PORTFOLIO_BASE_URL}/dashboard/review/{job_id}"
+
 
 # Lazy-init to avoid import-time Supabase connection
 _client = None
@@ -57,33 +71,55 @@ def create_notification(notification_type: str, job: dict, message: str = "") ->
 
 
 def notify_ready_for_review(job: dict) -> bool:
-    """Notify that a job application is ready for human review."""
-    message = (
-        f"Score: {job.get('score', '?')}/10 | Tier: {job.get('tier', '?')}\n"
-        f"{job.get('reasoning', '')}"
+    """Notify that a job application is ready for human review (M-8).
+
+    Body now includes score, tier, archetype, and legitimacy alongside
+    the cockpit deep link so the dashboard panel renders enough context
+    to triage at a glance.
+    """
+    parts = [
+        f"Score: {job.get('score', '?')}/10",
+        f"Tier: {job.get('tier', '?')}",
+    ]
+    if job.get("archetype"):
+        parts.append(f"Archetype: {job['archetype']}")
+    if job.get("legitimacy"):
+        parts.append(f"Legitimacy: {job['legitimacy']}")
+    header = " | ".join(parts)
+
+    reasoning = (job.get("reasoning") or "").strip()
+    body_lines = [header]
+    if reasoning:
+        body_lines.append(reasoning)
+    body_lines.append(f"Cockpit: {cockpit_url(job.get('id'))}")
+    return create_notification(
+        "ready_for_review", job, "\n".join(body_lines)
     )
-    return create_notification("ready_for_review", job, message)
 
 
 def notify_awaiting_submit(job: dict, screenshot_path: str = None) -> bool:
     """Notify that the form has been pre-filled and is awaiting the human's
-    review and Submit click in the visible browser (M-5).
+    review and Submit click in the visible browser (M-5/M-8).
 
-    Subject line uses [ACTION] so it stands out in the dashboard's
-    notifications panel — the user is now on the hot path. M-8 will
-    flesh this out with an inline screenshot in an email channel.
+    Subject prefix uses [ACTION] so the dashboard notification panel
+    surfaces this in the hot-path stack. Body includes the cockpit deep
+    link and a reference to the post-fill screenshot the cockpit
+    renders inline.
     """
     company = job.get("company", "Unknown")
     title = job.get("title", "Unknown")
-    message = (
-        f"[ACTION] Form pre-filled for {company} - {title}.\n"
-        f"Browser is open in your local terminal session. Review what was "
-        f"typed, fix anything wrong, click Submit yourself, then come back "
-        f"to the dashboard cockpit and click 'Mark Applied'."
-    )
+    body_lines = [
+        f"[ACTION] Form pre-filled for {company} - {title} - review and submit.",
+        "Browser is open in your local terminal session. Review what was "
+        "typed, fix anything wrong, click Submit yourself, then come back "
+        "to the dashboard cockpit and click 'Mark Applied'.",
+        f"Cockpit: {cockpit_url(job.get('id'))}",
+    ]
     if screenshot_path:
-        message += f"\nScreenshot: {screenshot_path}"
-    return create_notification("awaiting_human_submit", job, message)
+        body_lines.append(f"Pre-fill screenshot: {screenshot_path}")
+    return create_notification(
+        "awaiting_human_submit", job, "\n".join(body_lines)
+    )
 
 
 def notify_applied(job: dict) -> bool:

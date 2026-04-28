@@ -3,11 +3,15 @@ Supabase Schema Migration for Job Applicant Pipeline
 =====================================================
 Adds status workflow columns to the jobs table.
 
-Run once:
-    cd ~/dev/jarvis/job-applicant
-    python scripts/migrate_supabase.py
+Run once from the unified repo root:
+    cd ~/dev/jarvis/job-pipeline
+    python jobpipe/tailor/scripts/migrate_supabase.py
 
-Requires: SUPABASE_URL and SUPABASE_KEY in ../.env or ../job-hunter/.env
+Requires: SUPABASE_URL and SUPABASE_KEY in `<repo_root>/.env`. The repo
+root is resolved by walking up from this script until `pyproject.toml`
+is found (same convention as `jobpipe.profile_loader`). If no `.env`
+exists yet, create one at `<repo_root>/.env` — `.env.example` will
+land alongside the consolidated docs in PR-9.
 """
 
 import os
@@ -15,18 +19,29 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Try loading from job-hunter's .env first, then local
-job_hunter_env = Path(__file__).parent.parent.parent / "job-hunter" / ".env"
-local_env = Path(__file__).parent.parent / ".env"
 
-if job_hunter_env.exists():
-    load_dotenv(job_hunter_env)
-    print(f"Loaded env from {job_hunter_env}")
-elif local_env.exists():
-    load_dotenv(local_env)
-    print(f"Loaded env from {local_env}")
+def _repo_root() -> Path:
+    """Walk up from this script until pyproject.toml is found."""
+    cur = Path(__file__).resolve()
+    for candidate in (cur, *cur.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    raise RuntimeError(
+        "migrate_supabase: could not locate pyproject.toml walking up from "
+        f"{cur}"
+    )
+
+
+repo_env = _repo_root() / ".env"
+
+if repo_env.exists():
+    load_dotenv(repo_env)
+    print(f"Loaded env from {repo_env}")
 else:
-    print("ERROR: No .env found. Create one with SUPABASE_URL and SUPABASE_KEY")
+    print(
+        f"ERROR: No .env found at {repo_env}. "
+        "Create one with SUPABASE_URL and SUPABASE_KEY."
+    )
     sys.exit(1)
 
 from supabase import create_client

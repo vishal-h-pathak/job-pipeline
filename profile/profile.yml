@@ -201,10 +201,13 @@ key_technical_skills:
   - ruggedized sensor + cable deployment, AFSIM surrogate modeling
   - C++, Python
 
-# Canonical answers the job-submitter reads. Keep in sync with
-# `job-submitter/scripts/smoke_greenhouse.py::FAKE_APPLICANT` until the
-# tailor becomes the single writer of `applicant_profile`.
-application_form_defaults:
+# Canonical answers for the application form. Migrated from the
+# applicant CLAUDE.md "Application form defaults" prose section into
+# structured YAML in PR-2. `jobpipe/profile_loader.py::load_application_defaults()`
+# is the single read surface; smoke_greenhouse.py and the form-filler
+# pull from here so prose drift in CLAUDE.md cannot silently change
+# what the submitter sends.
+application_defaults:
   work_authorization: us_citizen
   visa_sponsorship_needed: false
   earliest_start_date: as early as possible; typical notice is two weeks after offer acceptance

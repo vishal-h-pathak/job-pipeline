@@ -1,11 +1,16 @@
 """scripts/cv_sync_check.py — CV / article-digest / BASE_RESUME drift detector (J-9).
 
-Compares quantitative claims across the four sources of truth:
+Compares quantitative claims across the four sources of truth in the
+unified `job-pipeline` repo:
 
-  - `../job-hunter/profile/cv.md`              — master CV (markdown)
-  - `../job-hunter/profile/article-digest.md`  — proof-point digest
+  - `jobpipe/hunt/profile/cv.md`               — master CV (markdown)
+  - `profile/article-digest.md`                — proof-point digest
+                                                 (top-level user layer, moved
+                                                 here in PR-2)
   - `tailor/latex_resume.py::BASE_RESUME`      — structured LaTeX data
-  - `../job-hunter/CLAUDE.md`                  — narrative aggregator
+  - `jobpipe/hunt/CLAUDE.md`                   — narrative aggregator
+                                                 (per-package CLAUDE.md files
+                                                 get consolidated in PR-9)
 
 Reports:
   - Anchored claims (employee number, neuron count, years-of-experience,
@@ -13,7 +18,7 @@ Reports:
   - Anchors that appear in some sources but not others.
 
 Designed to be:
-  - Standalone: `python -m scripts.cv_sync_check` from job-applicant
+  - Standalone: `python -m scripts.cv_sync_check` from `jobpipe/tailor/`
   - Importable: `tailor_resume` calls `warn_if_drift()` once per
     session (cached) so a warning shows up before any LLM call goes
     out — never blocks tailoring.
@@ -35,15 +40,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
-_REPO_ROOT = Path(__file__).parent.parent  # job-applicant/
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+# `_PKG_ROOT` is the tailor package root (`jobpipe/tailor/`); kept on
+# sys.path so `from tailor.latex_resume import BASE_RESUME` resolves
+# when this script is run standalone.
+_PKG_ROOT = Path(__file__).resolve().parent.parent
+if str(_PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PKG_ROOT))
+
+# `_REPO_ROOT` is the unified `job-pipeline/` checkout root, where the
+# top-level `profile/` user layer and `jobpipe/` package live.
+_REPO_ROOT = _PKG_ROOT.parent.parent
 
 logger = logging.getLogger("cv_sync_check")
-
-# Resolution mirrors prompts.load_profile() — canonical lives in sibling
-# job-hunter repo.
-_HUNTER_ROOT = _REPO_ROOT.parent / "job-hunter"
 
 
 # ── Anchored claims ──────────────────────────────────────────────────────
@@ -116,11 +124,15 @@ def _claims_for(text: str) -> dict[str, set[str]]:
 def _gather_sources() -> dict[str, str]:
     """Read all four sources into a {name: text} dict."""
     sources: dict[str, str] = {}
-    sources["profile/cv.md"] = _read(_HUNTER_ROOT / "profile" / "cv.md")
-    sources["profile/article-digest.md"] = _read(
-        _HUNTER_ROOT / "profile" / "article-digest.md"
+    sources["profile/cv.md"] = _read(
+        _REPO_ROOT / "jobpipe" / "hunt" / "profile" / "cv.md"
     )
-    sources["job-hunter/CLAUDE.md"] = _read(_HUNTER_ROOT / "CLAUDE.md")
+    sources["profile/article-digest.md"] = _read(
+        _REPO_ROOT / "profile" / "article-digest.md"
+    )
+    sources["job-hunter/CLAUDE.md"] = _read(
+        _REPO_ROOT / "jobpipe" / "hunt" / "CLAUDE.md"
+    )
 
     # BASE_RESUME — import the dict + serialize so the regex can match.
     try:

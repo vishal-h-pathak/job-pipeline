@@ -23,50 +23,32 @@ from __future__ import annotations
 import json
 import logging
 import re
-from pathlib import Path
 from typing import Any, Optional
 
 import anthropic
-import yaml
 
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from jobpipe import profile_loader
 from prompts import load_profile, load_prompt
 from tailor.archetype import render_archetype_block
 
 logger = logging.getLogger("tailor.form_answers")
 
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
-_PROFILE_YAML_CACHE: Optional[dict] = None
 
 
 # ── Profile loading ────────────────────────────────────────────────────────
 
-def _resolve_profile_yaml_path() -> Optional[Path]:
-    """Find profile.yml. Local first, then sibling job-hunter."""
-    here = Path(__file__).parent.parent
-    for candidate in (
-        here / "profile" / "profile.yml",
-        here.parent / "job-hunter" / "profile" / "profile.yml",
-    ):
-        if candidate.exists():
-            return candidate
-    return None
-
-
 def _load_profile_yaml() -> dict:
-    global _PROFILE_YAML_CACHE
-    if _PROFILE_YAML_CACHE is not None:
-        return _PROFILE_YAML_CACHE
-    path = _resolve_profile_yaml_path()
-    if not path:
-        logger.warning(
-            "profile.yml not found; form_answers identity block will be empty"
-        )
-        _PROFILE_YAML_CACHE = {}
-        return _PROFILE_YAML_CACHE
-    with path.open() as f:
-        _PROFILE_YAML_CACHE = yaml.safe_load(f) or {}
-    return _PROFILE_YAML_CACHE
+    """Return the parsed `profile/profile.yml` via `jobpipe.profile_loader`.
+
+    The loader resolves the user-layer profile dir once (walks up to the
+    repo's `pyproject.toml` or honors `JOBPIPE_PROFILE_DIR`) and returns
+    `{}` when the file is missing — same fallback shape as the previous
+    local implementation, so downstream `.get(...) or {}` calls keep
+    working.
+    """
+    return profile_loader.load_profile()
 
 
 # ── Identity block (pure Python — never LLM-generated) ─────────────────────
@@ -116,7 +98,7 @@ def _build_identity_block(profile_yaml: dict) -> dict[str, Any]:
     model returns."""
     identity = profile_yaml.get("identity") or {}
     loc_comp = profile_yaml.get("location_and_compensation") or {}
-    form_defaults = profile_yaml.get("application_form_defaults") or {}
+    form_defaults = profile_yaml.get("application_defaults") or {}
 
     full_name = identity.get("name") or "Vishal Pathak"
     first, last = _split_full_name(full_name)
@@ -216,10 +198,8 @@ def _resume_context_for_prompt(resume_result: dict | None) -> str:
 
 
 def _voice_profile() -> str:
-    voice_path = (
-        Path(__file__).parent.parent / "templates" / "VOICE_PROFILE.md"
-    )
-    return voice_path.read_text(encoding="utf-8") if voice_path.exists() else ""
+    """Return the full voice-profile markdown for prompt injection."""
+    return profile_loader.load_voice_profile().get("raw", "") or ""
 
 
 def _extract_json_object(text: str) -> dict:

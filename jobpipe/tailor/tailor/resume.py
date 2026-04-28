@@ -15,6 +15,17 @@ from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, CANDIDATE_PROFILE_PATH
 from prompts import load_profile, load_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 
+# J-9: emit a one-time warning to the log if cv.md / article-digest.md /
+# BASE_RESUME / CLAUDE.md disagree on any anchored numeric claim. Never
+# blocks tailoring — just surfaces drift before any LLM call goes out.
+try:
+    from scripts.cv_sync_check import warn_if_drift as _cv_warn_if_drift
+    _cv_warn_if_drift()
+except Exception:
+    # Drift check is best-effort. Tailoring proceeds even if the script
+    # fails to import or run.
+    pass
+
 logger = logging.getLogger("tailor.resume")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)

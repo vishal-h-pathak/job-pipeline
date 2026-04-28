@@ -11,6 +11,7 @@ directly to the action they need to take.
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Union
 
 from config import SUPABASE_URL, SUPABASE_KEY
 
@@ -23,7 +24,7 @@ PORTFOLIO_BASE_URL = os.getenv(
 ).rstrip("/")
 
 
-def cockpit_url(job_id: str | int) -> str:
+def cockpit_url(job_id: Union[str, int]) -> str:
     return f"{PORTFOLIO_BASE_URL}/dashboard/review/{job_id}"
 
 

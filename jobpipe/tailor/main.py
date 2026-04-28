@@ -20,7 +20,6 @@ from pathlib import Path
 from config import POLL_INTERVAL_MINUTES, HUMAN_APPROVAL_REQUIRED
 from db import (
     get_approved_jobs,
-    get_confirmed_jobs,
     get_prefill_requested_jobs,
     mark_preparing,
     mark_ready_for_review,
@@ -463,98 +462,26 @@ def process_prefill_requested_jobs():
                     pass
 
 
-def process_confirmed_jobs():
-    """
-    Phase 2: Submit applications that the user has confirmed.
-
-    Pulls the tailored PDF path (stored inside the resume_path JSON blob) and
-    the cover letter text (stored verbatim in cover_letter_path), then calls
-    the applicant's submit() with both so it can re-fill and click submit.
-    """
-    jobs = get_confirmed_jobs()
-    if not jobs:
-        return
-
-    logger.info(f"Found {len(jobs)} confirmed job(s) to submit")
-
-    for job in jobs:
-        job_id = job["id"]
-        company = job.get("company", "Unknown")
-        title = job.get("title", "Unknown")
-        url = job.get("application_url") or job.get("url", "")
-
-        logger.info(f"Submitting: {company} — {title}")
-
-        tmp_resume_pdf = None
-        try:
-            applicant = get_applicant(url)
-            if applicant:
-                # Resume PDF lives in Supabase Storage. Pull the storage key
-                # (new column preferred; fall back to the JSON blob for
-                # jobs prepared before the migration).
-                import json
-                storage_path = job.get("resume_pdf_path")
-                if not storage_path:
-                    raw_resume = job.get("resume_path") or ""
-                    try:
-                        resume_meta = json.loads(raw_resume) if raw_resume else {}
-                        storage_path = resume_meta.get("storage_path") or resume_meta.get("pdf_path")
-                    except Exception:
-                        logger.warning(f"Could not parse resume_path for job {job_id}")
-
-                if not storage_path:
-                    raise RuntimeError("No resume PDF in Storage or resume_path JSON")
-
-                # Download to a tmp file (ATS form uploads need a real path).
-                tmp_resume_pdf = download_to_tmp(storage_path)
-                logger.info(f"Downloaded {storage_path} to {tmp_resume_pdf}")
-
-                # Cover letter is stored as raw text in cover_letter_path.
-                cover_letter_text = job.get("cover_letter_path") or ""
-
-                result = applicant.submit(
-                    job,
-                    resume_path=str(tmp_resume_pdf),
-                    cover_letter_path=cover_letter_text,
-                )
-                if result.get("success"):
-                    notes = result.get("notes", "")
-                    if result.get("screenshot_path"):
-                        notes = f"{notes}\nScreenshot: {result['screenshot_path']}"
-                    # mark_applied clears Storage by default.
-                    mark_applied(job_id, application_notes=notes)
-                    notify_applied(job)
-                else:
-                    failure_notes = result.get("notes", "submission failed")
-                    if result.get("screenshot_path"):
-                        failure_notes = f"{failure_notes}\nScreenshot: {result['screenshot_path']}"
-                    # Don't clear materials on failure — leave them so the user
-                    # can retry via the dashboard.
-                    mark_failed(job_id, failure_notes)
-                    notify_failed(job, failure_notes)
-            else:
-                # No automated applicant — user confirmed manual application.
-                # Treat as "applied manually" and clear materials.
-                mark_applied(job_id, application_notes="Applied manually (no automated applicant)")
-                notify_applied(job)
-
-        except Exception as e:
-            logger.error(f"Submission failed for {company}: {e}")
-            mark_failed(job_id, str(e))
-            notify_failed(job, str(e))
-        finally:
-            if tmp_resume_pdf is not None:
-                try:
-                    Path(tmp_resume_pdf).unlink(missing_ok=True)
-                except Exception:
-                    pass
-
-
 def run_cycle():
-    """Run one complete poll cycle."""
+    """Run one complete poll cycle (M-7).
+
+    Two phases per cycle, both strictly serial:
+      1. process_approved_jobs() — tailoring + form_answers generation
+         for every job the user approved. Lands rows in ready_for_review.
+      2. process_prefill_requested_jobs() — for every row the user
+         clicked "Pre-fill Form" on in the cockpit, opens a visible
+         browser, dispatches to the per-ATS DOM handler (Ashby /
+         Greenhouse / Lever) or the prepare-only vision agent, takes a
+         screenshot, marks awaiting_human_submit, then BLOCKS on
+         input() so the human can review and submit themselves.
+
+    The system never auto-clicks Submit. The cockpit's "Mark Applied"
+    button is the single source of truth for whether a row was actually
+    submitted (M-6).
+    """
     logger.info(f"=== Cycle at {datetime.utcnow().isoformat()} ===")
     process_approved_jobs()
-    process_confirmed_jobs()
+    process_prefill_requested_jobs()
 
 
 def print_status():
@@ -696,105 +623,12 @@ def test_tailor(job_id: str):
     print(f"{'='*60}\n")
 
 
-def submit_one_visible(job_id: str):
-    """
-    Submit a single confirmed job in non-headless mode — so a human can watch
-    the browser click submit for the first real application.
-
-    Loads the job from Supabase, extracts the stored PDF path + cover letter,
-    and calls the applicant's submit() with headless=False.  Updates status
-    based on the result (applied / failed).
-    """
-    from db import client as supabase_client
-    import json
-
-    print(f"\n{'='*60}")
-    print(f"  SUBMIT (visible) — job_id: {job_id}")
-    print(f"{'='*60}\n")
-
-    result = supabase_client.table("jobs").select("*").eq("id", job_id).execute()
-    if not result.data:
-        print(f"ERROR: No job found with id '{job_id}'")
-        return
-    job = result.data[0]
-
-    print(f"Job: {job.get('title')} at {job.get('company')}")
-    print(f"Status: {job.get('status')} | URL: {job.get('application_url') or job.get('url')}")
-    if job.get("status") != "submit_confirmed":
-        print(f"WARNING: status is '{job.get('status')}', not 'submit_confirmed'.")
-        print("Proceeding anyway, but the normal pipeline expects submit_confirmed.")
-    print()
-
-    url = job.get("application_url") or job.get("url", "")
-    applicant = get_applicant(url)
-    if not applicant:
-        print(f"No automated applicant for {detect_ats(url)} — marking applied manually.")
-        mark_applied(job["id"], application_notes="Applied manually (no automated applicant)")
-        return
-
-    # Resume PDF is in Supabase Storage; pull it to a tmp file.
-    storage_path = job.get("resume_pdf_path")
-    if not storage_path:
-        raw_resume = job.get("resume_path") or ""
-        try:
-            resume_meta = json.loads(raw_resume) if raw_resume else {}
-            storage_path = resume_meta.get("storage_path") or resume_meta.get("pdf_path")
-        except Exception:
-            pass
-
-    if not storage_path:
-        print("ERROR: no resume PDF stored for this job.")
-        return
-
-    tmp_resume_pdf = download_to_tmp(storage_path)
-    cover_letter_text = job.get("cover_letter_path") or ""
-
-    print(f"Resume PDF: downloaded {storage_path} → {tmp_resume_pdf}")
-    print(f"Cover letter: {len(cover_letter_text)} chars")
-    print("Opening browser (non-headless)...")
-
-    sub_result = applicant.submit(
-        job,
-        resume_path=str(tmp_resume_pdf),
-        cover_letter_path=cover_letter_text,
-        headless=False,
-    )
-    try:
-        Path(tmp_resume_pdf).unlink(missing_ok=True)
-    except Exception:
-        pass
-
-    print(f"\n{'='*60}")
-    print(f"  RESULT: success={sub_result.get('success')}, submitted={sub_result.get('submitted')}")
-    print(f"{'='*60}")
-    print(f"Screenshot: {sub_result.get('screenshot_path')}")
-    print(f"Notes:\n{sub_result.get('notes', '')}\n")
-
-    if sub_result.get("success"):
-        notes = sub_result.get("notes", "")
-        if sub_result.get("screenshot_path"):
-            notes = f"{notes}\nScreenshot: {sub_result['screenshot_path']}"
-        mark_applied(job["id"], application_notes=notes)
-        notify_applied(job)
-        print("-> Job marked as applied.")
-    else:
-        failure_notes = sub_result.get("notes", "submission failed")
-        if sub_result.get("screenshot_path"):
-            failure_notes = f"{failure_notes}\nScreenshot: {sub_result['screenshot_path']}"
-        mark_failed(job["id"], failure_notes)
-        notify_failed(job, failure_notes)
-        print("-> Job marked as failed.")
-
-
 def main():
     parser = argparse.ArgumentParser(description="Job Applicant Agent")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
     parser.add_argument("--status", action="store_true", help="Print job counts by status")
     parser.add_argument("--test-tailor", metavar="JOB_ID",
                         help="Test material generation for a job (no status changes)")
-    parser.add_argument("--submit-visible", metavar="JOB_ID",
-                        help="Submit a single confirmed job in non-headless mode so "
-                             "a human can watch the browser click submit")
     args = parser.parse_args()
 
     if args.status:
@@ -803,10 +637,6 @@ def main():
 
     if args.test_tailor:
         test_tailor(args.test_tailor)
-        return
-
-    if args.submit_visible:
-        submit_one_visible(args.submit_visible)
         return
 
     print(f"""

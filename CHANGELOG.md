@@ -120,8 +120,59 @@
   prose, unified pipeline architecture overview, application-form
   defaults appearing exactly once. Replaces the three subpackage
   `CLAUDE.md` files (PR-9).
+- [tests] `tests/fixtures/` — centralized test data: `profile/profile.yml`
+  (+ `voice-profile.md`, `article-digest.md`, `learned-insights.md`)
+  replacing the inline `_FIXTURE_PROFILE_YAML` literals previously
+  embedded in `tests/conftest.py`; `beacon_job.json` (full `jobs`-row
+  shape with every field hunt-scorer / tailor-pipeline / submit-runner
+  consume); `fake_form.html` (Greenhouse + Lever-shaped DOM with the
+  exact `name="job_application[...]"` and `name="urls[LinkedIn]"`
+  selectors that `jobpipe/submit/adapters/prepare_dom/{greenhouse,lever}.py`
+  probe for) (PR-10).
+- [tests] `tests/conftest.py` factory fixtures — `fake_page`,
+  `fake_locator`, `fake_browser` (Playwright/Stagehand surface stand-ins,
+  pure-Python so unit tests collect cleanly without `playwright` /
+  `browserbase` installed), plus `beacon_job` and `fake_form_html`
+  loaders (PR-10).
+- [pipeline] `Makefile` + `scripts/smoke.py` — `make smoke` exercises
+  hunt → tailor → submit import surface and data flow in <60 s with
+  no Supabase / Browserbase / Anthropic calls. Stages 1-3 (hunt /
+  tailor / submit imports) run in subprocesses to dodge the
+  pre-existing cross-subtree `prompts` / `storage` module-cache
+  collision; production is unaffected because each console script
+  runs in its own process anyway (PR-10).
+- [pipeline] CI now runs unit tests and smoke as two parallel jobs
+  (`test`, `smoke`) so total wall-clock time is `max(test, smoke)`
+  rather than `test + smoke`, and a regression in either is
+  distinguishable at a glance (PR-10).
 
 ### Changed
+
+- [tests] Test-count baseline: **148 collected (was 122) due to
+  test_submit_scaffold.py migration into tests/**. The +26 delta is the
+  set of tests that previously lived in `jobpipe/submit/tests/test_scaffold.py`,
+  which sat outside `pyproject.toml::testpaths = ["tests"]` and was
+  therefore never collected by pytest. PR-10 moves the file to
+  `tests/test_submit_scaffold.py` and rewrites its inline
+  `_FakePage`/`_FakeLocator`/`_FakeStagehandSession` helpers to use the
+  new `conftest.py` factory fixtures. **Pre-PR-10 baseline: 122.
+  Post-PR-10 baseline: 148.** This entry exists so future "why did the
+  count change?" debugging can be answered from `git log` alone (PR-10).
+
+### Known
+
+- [pipeline] `scripts/smoke.py` runs stages 1-3 (hunt / tailor / submit
+  imports) in subprocesses rather than in-process. Local run found a
+  pre-existing cross-subtree `prompts` module-cache collision: hunt's
+  `prompts/` and tailor's `prompts/` can't both satisfy bare `from
+  prompts import ...` in the same Python process — once Python caches
+  `prompts` in `sys.modules` from one subtree, the other subtree's
+  imports return the cached module and fail to find their own symbols.
+  Production sidesteps this naturally because the three console
+  scripts (`jobpipe-hunt`, `jobpipe-tailor`, `jobpipe-submit`) each
+  run in their own process; smoke now mirrors that. The underlying
+  collision is not fixed by PR-10 — it's a structural property of the
+  subtree-merged repo that PR-9 did not retire (PR-10).
 
 - [pipeline] Three repos consolidated into `job-pipeline/` over
   PR-0..PR-9. After PR-9 lands, the original

@@ -1,9 +1,17 @@
 """
-test_scaffold.py — Smoke tests to keep the scaffold from silently bit-rotting.
+test_submit_scaffold.py — Smoke tests to keep the submit scaffold from silently
+bit-rotting.
+
+PR-10 moved this file from `jobpipe/submit/tests/test_scaffold.py` so it
+gets collected by `pyproject.toml::testpaths = ["tests"]` like every
+other unit test. The local `_FakePage`/`_FakeLocator`/`_FakeStagehandSession`
+helpers it used to define inline are now factory fixtures in
+`tests/conftest.py` (`fake_page`, `fake_locator`, `fake_browser`).
 
 These don't hit Supabase, Browserbase, or Anthropic. They check that the
-modules import, the contracts are wired correctly, and the Greenhouse adapter
-drives its Stagehand/Playwright dependencies in the right order.
+submit modules import, the contracts are wired correctly, and the
+deterministic adapters drive their Stagehand/Playwright dependencies in
+the right order.
 """
 
 from __future__ import annotations
@@ -14,15 +22,19 @@ from types import SimpleNamespace
 
 import pytest
 
-# Make package imports work when running pytest from the repo root.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
 
 @pytest.fixture(autouse=True)
 def _fill_required_env(monkeypatch):
     """jobpipe/submit/config.py raises at import if required env vars are
     missing (require_env block, fail-loud). Supply placeholders so imports
-    don't explode during scaffold-only tests."""
+    don't explode during scaffold-only tests.
+
+    Importing `jobpipe.submit.runner` triggers the submit subtree's
+    sys.path bootstrap (see jobpipe/submit/runner.py:42-48), so the
+    bare `import router` / `from adapters.base import ...` imports
+    further down each test resolve cleanly even though this file
+    sits at the top-level `tests/` directory.
+    """
     required = {
         "SUPABASE_URL": "https://example.supabase.co",
         "SUPABASE_KEY": "anon-test",
@@ -39,6 +51,9 @@ def _fill_required_env(monkeypatch):
     for m in ("config", "db", "jobpipe.config", "jobpipe.db",
               "jobpipe.submit.config"):
         sys.modules.pop(m, None)
+    # Trigger the submit subtree's sys.path bootstrap so bare imports work
+    # from the top-level tests dir.
+    import jobpipe.submit.runner  # noqa: F401
     yield
 
 
@@ -156,37 +171,8 @@ def test_review_packet_shape():
 
 # ── Greenhouse adapter: exercise with fakes ──────────────────────────────
 
-class _FakeLocator:
-    def __init__(self, count: int = 1):
-        self._count = count
-        self.first = self
-        self.set_input_files_calls: list[str] = []
-    async def count(self): return self._count
-    async def set_input_files(self, path: str): self.set_input_files_calls.append(path)
 
-
-class _FakePage:
-    def __init__(self, file_inputs_exist: bool = True):
-        self._file_inputs_exist = file_inputs_exist
-        self.locator_calls: list[str] = []
-        self._locator = _FakeLocator(count=1 if file_inputs_exist else 0)
-    def locator(self, sel: str):
-        self.locator_calls.append(sel)
-        return self._locator
-
-
-class _FakeStagehandSession:
-    def __init__(self, survey: dict, question_answers: dict[str, dict] | None = None):
-        self._survey = survey
-        self._answers = question_answers or {}
-        self.act_calls: list[str] = []
-        self.extract_calls: list[str] = []
-    # We won't use these directly; the adapter calls the sh_* helpers which
-    # await sess.observe/act/extract/execute — but we short-circuit by
-    # patching sh_act / sh_extract at the adapter-level instead.
-
-
-def test_greenhouse_adapter_happy_path(monkeypatch, tmp_path):
+def test_greenhouse_adapter_happy_path(monkeypatch, tmp_path, fake_page, fake_browser):
     """All core fields present → confidence 0.95, auto_submit.
 
     Mandatory-only policy: the survey no longer reports LinkedIn/website,
@@ -231,8 +217,8 @@ def test_greenhouse_adapter_happy_path(monkeypatch, tmp_path):
         cover_letter_pdf_path=cover,
         cover_letter_text="Dear team...",
         application_url="https://boards.greenhouse.io/x/jobs/1",
-        stagehand_session=_FakeStagehandSession(survey),
-        page=_FakePage(),
+        stagehand_session=fake_browser(survey=survey),
+        page=fake_page(),
         attempt_n=1,
     )
 
@@ -247,7 +233,9 @@ def test_greenhouse_adapter_happy_path(monkeypatch, tmp_path):
     assert not any(s.reason.startswith("required") for s in result.skipped_fields)
 
 
-def test_greenhouse_adapter_routes_to_review_on_missing_resume_input(monkeypatch, tmp_path):
+def test_greenhouse_adapter_routes_to_review_on_missing_resume_input(
+    monkeypatch, tmp_path, fake_page, fake_browser,
+):
     """If the resume file input can't be located, route to review."""
     import asyncio
     from adapters.deterministic import greenhouse as gh_mod
@@ -281,8 +269,8 @@ def test_greenhouse_adapter_routes_to_review_on_missing_resume_input(monkeypatch
         cover_letter_pdf_path=cover,
         cover_letter_text="",
         application_url="https://example.com",
-        stagehand_session=_FakeStagehandSession(survey),
-        page=_FakePage(file_inputs_exist=False),  # ← no file input found
+        stagehand_session=fake_browser(survey=survey),
+        page=fake_page(file_inputs_exist=False),  # ← no file input found
         attempt_n=1,
     )
 
@@ -291,7 +279,9 @@ def test_greenhouse_adapter_routes_to_review_on_missing_resume_input(monkeypatch
     assert any(s.label == "resume" for s in result.skipped_fields)
 
 
-def test_greenhouse_adapter_required_custom_q_routes_to_review(monkeypatch, tmp_path):
+def test_greenhouse_adapter_required_custom_q_routes_to_review(
+    monkeypatch, tmp_path, fake_page, fake_browser,
+):
     """A required custom question we can't answer drops confidence to review."""
     import asyncio
     from adapters.deterministic import greenhouse as gh_mod
@@ -338,8 +328,8 @@ def test_greenhouse_adapter_required_custom_q_routes_to_review(monkeypatch, tmp_
         cover_letter_pdf_path=cover,
         cover_letter_text="",
         application_url="https://example.com",
-        stagehand_session=_FakeStagehandSession(survey),
-        page=_FakePage(),
+        stagehand_session=fake_browser(survey=survey),
+        page=fake_page(),
         attempt_n=1,
     )
 
@@ -349,7 +339,9 @@ def test_greenhouse_adapter_required_custom_q_routes_to_review(monkeypatch, tmp_
                for s in result.skipped_fields)
 
 
-def test_lever_adapter_full_name_variant(monkeypatch, tmp_path):
+def test_lever_adapter_full_name_variant(
+    monkeypatch, tmp_path, fake_page, fake_browser,
+):
     """Lever board with single full-name field + cover letter textarea should
     auto_submit at 0.90+ with all required fields."""
     import asyncio
@@ -384,8 +376,8 @@ def test_lever_adapter_full_name_variant(monkeypatch, tmp_path):
         cover_letter_pdf_path=cover,
         cover_letter_text="Dear hiring team, ..." * 20,
         application_url="https://jobs.lever.co/x/123",
-        stagehand_session=_FakeStagehandSession(survey),
-        page=_FakePage(),
+        stagehand_session=fake_browser(survey=survey),
+        page=fake_page(),
         attempt_n=1,
     )
 
@@ -397,7 +389,9 @@ def test_lever_adapter_full_name_variant(monkeypatch, tmp_path):
     assert any("cover letter" in f.label for f in result.filled_fields)
 
 
-def test_ashby_adapter_missing_location_routes_to_review(monkeypatch, tmp_path):
+def test_ashby_adapter_missing_location_routes_to_review(
+    monkeypatch, tmp_path, fake_page, fake_browser,
+):
     """Ashby counts location as a core field — missing it should route to review."""
     import asyncio
     from adapters.deterministic import ashby as ab_mod
@@ -419,10 +413,9 @@ def test_ashby_adapter_missing_location_routes_to_review(monkeypatch, tmp_path):
     import adapters._common as cmn
     monkeypatch.setattr(cmn, "sh_act", fake_act)
 
-    # Short-circuit the page.wait_for_load_state call by giving it a no-op.
-    class _PageWithWait(_FakePage):
-        async def wait_for_load_state(self, *a, **kw): return None
-    page = _PageWithWait()
+    # The base fake_page already implements wait_for_load_state as a no-op
+    # (see tests/conftest.py::_FakePage), so no test-local subclass is needed.
+    page = fake_page()
 
     resume = tmp_path / "r.pdf"; resume.write_bytes(b"%PDF")
     cover  = tmp_path / "c.pdf"; cover.write_bytes(b"%PDF")
@@ -436,7 +429,7 @@ def test_ashby_adapter_missing_location_routes_to_review(monkeypatch, tmp_path):
         cover_letter_pdf_path=cover,
         cover_letter_text="",
         application_url="https://jobs.ashbyhq.com/x",
-        stagehand_session=_FakeStagehandSession(survey),
+        stagehand_session=fake_browser(survey=survey),
         page=page,
         attempt_n=1,
     )
@@ -812,7 +805,7 @@ def test_router_falls_back_to_generic_for_unknown_kind():
     assert isinstance(adapter, GenericStagehandAdapter)
 
 
-def test_generic_adapter_happy_path(monkeypatch, tmp_path):
+def test_generic_adapter_happy_path(monkeypatch, tmp_path, fake_page):
     """Generic adapter with agent reporting full success → needs_review 0.75.
 
     The generic fallback caps at needs_review by design — agent mode has no
@@ -862,7 +855,7 @@ def test_generic_adapter_happy_path(monkeypatch, tmp_path):
         cover_letter_text="",
         application_url="https://workday.myexampleco.com/en-US/jobs/123",
         stagehand_session=SimpleNamespace(),
-        page=_FakePage(),
+        page=fake_page(),
         attempt_n=1,
     )
 
@@ -885,7 +878,7 @@ def test_generic_adapter_happy_path(monkeypatch, tmp_path):
     assert "Filled all 9 fields" in result.agent_reasoning
 
 
-def test_generic_adapter_missing_required_drops_confidence(monkeypatch, tmp_path):
+def test_generic_adapter_missing_required_drops_confidence(monkeypatch, tmp_path, fake_page):
     """Generic adapter: agent reports missing required field(s) → 0.55 needs_review.
 
     The critical invariant: missing_required labels land with the
@@ -923,7 +916,7 @@ def test_generic_adapter_missing_required_drops_confidence(monkeypatch, tmp_path
         cover_letter_text="",
         application_url="https://careers-myexampleco.icims.com/jobs/123",
         stagehand_session=SimpleNamespace(),
-        page=_FakePage(),
+        page=fake_page(),
         attempt_n=1,
     )
 
@@ -940,7 +933,7 @@ def test_generic_adapter_missing_required_drops_confidence(monkeypatch, tmp_path
     }
 
 
-def test_generic_adapter_execute_failure_aborts(monkeypatch, tmp_path):
+def test_generic_adapter_execute_failure_aborts(monkeypatch, tmp_path, fake_page):
     """Generic adapter: sh_execute raising is a hard abort, not a silent skip."""
     import asyncio
     from adapters import generic_stagehand as gs_mod
@@ -965,7 +958,7 @@ def test_generic_adapter_execute_failure_aborts(monkeypatch, tmp_path):
         cover_letter_text="",
         application_url="https://jobs.smartrecruiters.com/x/123",
         stagehand_session=SimpleNamespace(),
-        page=_FakePage(),
+        page=fake_page(),
         attempt_n=1,
     )
 

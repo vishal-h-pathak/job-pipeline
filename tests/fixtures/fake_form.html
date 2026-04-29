@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<!--
+  Greenhouse + Lever fake application form for the smoke harness and any
+  future DOM-level adapter tests. Selectors mirror the exact patterns
+  jobpipe/submit/adapters/prepare_dom/greenhouse.py and lever.py probe for.
+
+  Greenhouse (greenhouse.py:54-79):
+      input[name="job_application[first_name]"]
+      input[name="job_application[last_name]"]
+      input[name="job_application[email]"]
+      input[name="job_application[phone]"]
+      input[type="file"][name="job_application[resume]"]
+      textarea[name="job_application[cover_letter]"]
+
+  Lever (lever.py:51-86):
+      input[name="name"]
+      input[name="email"]
+      input[name="phone"]
+      input[name="urls[LinkedIn]"]
+      input[type="file"][name="resume"]
+      textarea[name="comments"]
+
+  The form action is "javascript:void(0)" — the fixture is for DOM-fill,
+  never network submission.
+-->
+<html>
+<head><title>Apply: Neuroscientist - Beacon Biosignals (fixture)</title></head>
+<body>
+  <h1>Apply: Neuroscientist, External Scientific Programs at Beacon Biosignals</h1>
+
+  <!-- Greenhouse-shaped form -->
+  <form id="greenhouse-app" action="javascript:void(0)" method="post">
+    <p>
+      <label for="gh_first_name">First name*</label>
+      <input id="gh_first_name" name="job_application[first_name]" type="text" required>
+    </p>
+    <p>
+      <label for="gh_last_name">Last name*</label>
+      <input id="gh_last_name" name="job_application[last_name]" type="text" required>
+    </p>
+    <p>
+      <label for="gh_email">Email*</label>
+      <input id="gh_email" name="job_application[email]" type="email" required>
+    </p>
+    <p>
+      <label for="gh_phone">Phone</label>
+      <input id="gh_phone" name="job_application[phone]" type="tel">
+    </p>
+    <p>
+      <label for="gh_resume">Resume / CV*</label>
+      <input id="gh_resume" name="job_application[resume]" type="file" required>
+    </p>
+    <p>
+      <label for="gh_cover">Cover letter</label>
+      <textarea id="gh_cover" name="job_application[cover_letter]" rows="6" cols="60"></textarea>
+    </p>
+    <fieldset>
+      <legend>Are you authorized to work in the US?*</legend>
+      <label><input type="radio" name="job_application[answers_attributes][0][text_value]" value="Yes" required> Yes</label>
+      <label><input type="radio" name="job_application[answers_attributes][0][text_value]" value="No"> No</label>
+    </fieldset>
+    <p><button type="submit" id="gh-submit">Submit application</button></p>
+  </form>
+
+  <hr>
+
+  <!-- Lever-shaped form -->
+  <form id="lever-app" action="javascript:void(0)" method="post">
+    <p>
+      <label for="lv_name">Full name*</label>
+      <input id="lv_name" name="name" type="text" required>
+    </p>
+    <p>
+      <label for="lv_email">Email*</label>
+      <input id="lv_email" name="email" type="email" required>
+    </p>
+    <p>
+      <label for="lv_phone">Phone</label>
+      <input id="lv_phone" name="phone" type="tel">
+    </p>
+    <p>
+      <label for="lv_linkedin">LinkedIn URL</label>
+      <input id="lv_linkedin" name="urls[LinkedIn]" type="url">
+    </p>
+    <p>
+      <label for="lv_resume">Resume*</label>
+      <input id="lv_resume" name="resume" type="file" required>
+    </p>
+    <p>
+      <label for="lv_comments">Why this role?</label>
+      <textarea id="lv_comments" name="comments" rows="6" cols="60"></textarea>
+    </p>
+    <p><button type="submit" id="lv-submit">Submit application</button></p>
+  </form>
+
+  <p id="status"></p>
+</body>
+</html>

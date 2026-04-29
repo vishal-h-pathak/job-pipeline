@@ -5,8 +5,10 @@ submit_one_legacy.py — Single-job submission attempt (DEPRECATED).
 ║  LEGACY (Path B). Drives the retired Browserbase + Stagehand path    ║
 ║  via ``runner_legacy.process_one``. Renamed from ``submit_one.py``   ║
 ║  during the local-Playwright consolidation; no live target invokes   ║
-║  it. The Path-A debug equivalent is ``jobpipe-tailor --once`` after  ║
-║  flipping a job to ``prefilling`` from the cockpit. Do not extend.   ║
+║  it. The Path-A debug equivalent is ``jobpipe-submit --once`` after  ║
+║  flipping a job to ``prefilling`` from the cockpit (PR-13 split this ║
+║  out of the prior ``jobpipe-tailor --once`` combined cycle).         ║
+║  Do not extend.                                                      ║
 ║                                                                      ║
 ║  NOTE: a different ``submit_one.py`` lives under                     ║
 ║  ``jobpipe/tailor/scripts/`` and is unrelated to this script — that  ║

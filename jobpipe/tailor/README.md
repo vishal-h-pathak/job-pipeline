@@ -115,10 +115,18 @@ playwright install chromium
 
 jobpipe-tailor --status                    # job counts by status
 jobpipe-tailor --test-tailor <job_id>      # smoke-test tailoring + form_answers (read-only)
-jobpipe-tailor                             # one full cycle: tailor approved jobs +
-                                           # prefill any rows the cockpit flagged
-                                           # (visible browser; terminal blocks on input()
-                                           #  so you can review and click Submit yourself)
+jobpipe-tailor                             # tailor approved jobs only (no browser).
+                                           # Runs process_approved_jobs() and exits.
+
+jobpipe-submit --status                    # same status output as --status above
+jobpipe-submit                             # visible-browser pre-fill for any rows the
+                                           # cockpit flagged. Terminal blocks on input()
+                                           # so you can review and click Submit yourself.
+
+# PR-13 split the previous combined cycle into the two scripts above.
+# Run `jobpipe-tailor` whenever there are approved rows to materialize;
+# run `jobpipe-submit` when you're at the keyboard and ready to file a
+# pre-filled application.
 ```
 
 Standalone scripts:

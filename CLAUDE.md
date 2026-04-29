@@ -105,9 +105,16 @@ Three console scripts live in `pyproject.toml::[project.scripts]`:
 
 | Script | Entry point | Role |
 |---|---|---|
-| `jobpipe-hunt`   | `jobpipe.hunt.agent:run`        | discover roles, score, upsert |
-| `jobpipe-tailor` | `jobpipe.tailor.pipeline:run`   | tailor resume / cover letter / form answers |
-| `jobpipe-submit` | `jobpipe.submit.runner:run`     | drive the actual ATS form submission |
+| `jobpipe-hunt`   | `jobpipe.hunt.agent:run`                         | discover roles, score, upsert |
+| `jobpipe-tailor` | `jobpipe.tailor.pipeline:run_tailor_only`        | tailor resume / cover letter / form answers (no browser) |
+| `jobpipe-submit` | `jobpipe.tailor.pipeline:run_submit_only`        | visible-browser pre-fill for rows the cockpit enqueued |
+
+PR-13 split the tailor's combined cycle into two narrower entry points
+so an automated trigger (CI, cron) can hit `jobpipe-tailor` without
+opening a visible browser. The retired Browserbase + Stagehand runner
+lives at `jobpipe/submit/runner_legacy.py` and has no console-script
+binding; PR-13 reused the `jobpipe-submit` script name on purpose for
+the local-Playwright pre-fill phase.
 
 ## Cross-cutting modules (canonical, no per-subtree shims after PR-9)
 

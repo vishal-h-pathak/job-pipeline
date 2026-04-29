@@ -48,14 +48,21 @@ dev = ["pytest>=8", "ruff>=0.5"]
 # PR-3: hunt orchestrator console script. Calls the hunt agent's `run()`
 # which parses CLI args (`--mode`, `--once`) and executes the pipeline once.
 jobpipe-hunt = "jobpipe.hunt.agent:run"
-# PR-4: tailor console script. Calls pipeline.run() which parses CLI args
-# (`--once`, `--status`, `--test-tailor`) and runs one cycle of
-# process_approved_jobs + process_prefill_requested_jobs. The cycle now
-# owns BOTH tailoring and pre-fill (Path A) — the legacy ``jobpipe-submit``
-# console script (Path B / Browserbase) was retired during the local-
-# Playwright consolidation; ``jobpipe/submit/runner_legacy.py`` is kept
-# as reference but has no entry-point binding.
-jobpipe-tailor = "jobpipe.tailor.pipeline:run"
+# PR-13: tailor + submit split into two console scripts so an automated
+# trigger (CI, cron) can hit tailor — pure LLM + LaTeX + Storage,
+# headless-friendly — without dragging in the visible-browser pre-fill
+# phase that needs a human at the keyboard.
+#   jobpipe-tailor → run_tailor_only: process_approved_jobs() only
+#                    (resume + cover letter + form-answers + STAR+R).
+#   jobpipe-submit → run_submit_only: process_prefill_requested_jobs()
+#                    only — opens a visible browser per row the cockpit
+#                    enqueued, fills via the per-ATS DOM handler, blocks
+#                    on terminal input() so the human submits.
+# NOT the retired Browserbase + Stagehand runner — that lives at
+# ``jobpipe/submit/runner_legacy.py`` and has no console-script binding.
+# PR-13 reused the ``jobpipe-submit`` script name on purpose.
+jobpipe-tailor = "jobpipe.tailor.pipeline:run_tailor_only"
+jobpipe-submit = "jobpipe.tailor.pipeline:run_submit_only"
 
 [tool.setuptools]
 # Each listed package needs to be installed so setuptools wires up the

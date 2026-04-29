@@ -1,17 +1,33 @@
 """
-pipeline.py — Tailor Agent entry point (renamed from main.py in PR-4).
+pipeline.py — Tailor + Submit Agent entry points (renamed from main.py
+in PR-4; split into two console scripts in PR-13).
 
-Polls Supabase for approved jobs, tailors application materials,
-fills forms via Playwright, and pauses for human approval before submission.
+Polls Supabase for approved / prefill-requested jobs and runs the
+matching phase. PR-13 split the previous combined cycle into two
+narrower entry points so an automated trigger (CI, cron) can run
+tailoring — pure LLM + LaTeX + Storage, headless-friendly — without
+dragging in the visible-browser pre-fill phase that needs a human at
+the keyboard.
 
-Wired as ``jobpipe-tailor = jobpipe.tailor.pipeline:run`` in pyproject.toml
-(see :func:`run` at the bottom of the file). Legacy ``python main.py``
-invocations should now use ``python pipeline.py`` (or the console script).
+Wiring (pyproject.toml::[project.scripts]):
+    jobpipe-tailor = jobpipe.tailor.pipeline:run_tailor_only
+    jobpipe-submit = jobpipe.tailor.pipeline:run_submit_only
+
+The combined ``run()`` / ``run_cycle()`` pair is kept for backward
+compatibility with tools that invoke them directly (e.g. the legacy
+smoke harness); ``run_cycle()`` emits a deprecation log line on every
+invocation pointing callers at the split entry points.
 
 Usage:
-    jobpipe-tailor                          # Run one cycle
-    jobpipe-tailor --status                 # Print current job counts by status
+    jobpipe-tailor                          # Tailor one cycle (approved jobs)
+    jobpipe-tailor --status                 # Print job counts by status
     jobpipe-tailor --test-tailor <job_id>   # Test material generation for a job (no status changes)
+    jobpipe-submit                          # Pre-fill one cycle (prefill_requested jobs)
+    jobpipe-submit --status                 # Same status output as the tailor
+
+NOTE: ``jobpipe-submit`` here is the local-Playwright pre-fill phase.
+The retired Browserbase + Stagehand runner lives at
+``jobpipe/submit/runner_legacy.py`` and has no console-script binding.
 """
 
 from __future__ import annotations
@@ -597,6 +613,11 @@ def process_prefill_requested_jobs():
 def run_cycle():
     """Run one complete poll cycle (M-7).
 
+    DEPRECATED (PR-13): use ``run_tailor_only()`` for the tailoring
+    phase and ``run_submit_only()`` for the visible-browser pre-fill
+    phase. The combined cycle survives only for tools that already
+    invoke it directly (e.g. ``scripts/smoke_legacy.py``).
+
     Two phases per cycle, both strictly serial:
       1. process_approved_jobs() — tailoring + form_answers generation
          for every job the user approved. Lands rows in ready_for_review.
@@ -611,6 +632,11 @@ def run_cycle():
     button is the single source of truth for whether a row was actually
     submitted (M-6).
     """
+    logger.warning(
+        "run_cycle() is deprecated (PR-13); use run_tailor_only() or "
+        "run_submit_only() instead. Continuing with combined cycle for "
+        "backward compatibility."
+    )
     logger.info(f"=== Cycle at {datetime.utcnow().isoformat()} ===")
     process_approved_jobs()
     process_prefill_requested_jobs()
@@ -792,6 +818,92 @@ def run() -> None:
     # unattended API usage. To run on a schedule, use an external scheduler
     # (cron, Cowork scheduled task, etc.)
     run_cycle()
+
+
+def run_tailor_only() -> None:
+    """Console-script entry point for ``jobpipe-tailor`` (PR-13 split).
+
+    Runs ``process_approved_jobs()`` only — resume + cover letter +
+    LaTeX render + form_answers generation + STAR+R interview stories.
+    Pure LLM + LaTeX + Supabase Storage; no browser. Suitable for
+    GitHub Actions workflow_dispatch (Phase 3) and any other automated
+    trigger that should NOT open a visible browser.
+
+    The visible-browser pre-fill phase used to share this entry point
+    via ``run_cycle()``; it now lives behind ``run_submit_only`` /
+    ``jobpipe-submit``.
+
+    Args mirror the prior ``run()`` shape: ``--once`` (default
+    behavior — bare invocation also runs once), ``--status`` (job
+    counts), ``--test-tailor`` (single-job dry run with no status
+    changes).
+    """
+    parser = argparse.ArgumentParser(
+        description="Job Tailor Agent — tailoring only (PR-13 split)"
+    )
+    parser.add_argument(
+        "--once", action="store_true", help="Run one cycle and exit"
+    )
+    parser.add_argument(
+        "--status", action="store_true", help="Print job counts by status"
+    )
+    parser.add_argument(
+        "--test-tailor", metavar="JOB_ID",
+        help="Test material generation for a job (no status changes)",
+    )
+    args = parser.parse_args()
+
+    if args.status:
+        print_status()
+        return
+
+    if args.test_tailor:
+        test_tailor(args.test_tailor)
+        return
+
+    logger.info(f"=== Tailor cycle at {datetime.utcnow().isoformat()} ===")
+    process_approved_jobs()
+
+
+def run_submit_only() -> None:
+    """Console-script entry point for ``jobpipe-submit`` (PR-13 split).
+
+    Runs ``process_prefill_requested_jobs()`` only — opens a visible
+    browser per row that was clicked "Pre-fill Form" in the cockpit,
+    dispatches to the per-ATS DOM handler (Ashby / Greenhouse / Lever)
+    or the prepare-only vision agent, takes a post-fill screenshot,
+    marks ``awaiting_human_submit``, and BLOCKS on terminal ``input()``
+    so the human can review the visible browser, click Submit
+    themselves, and come back to the dashboard cockpit to click "Mark
+    Applied".
+
+    NOT the retired Browserbase + Stagehand path — that lives at
+    ``jobpipe/submit/runner_legacy.py`` and has no console-script
+    binding. PR-13 reused the ``jobpipe-submit`` script name on
+    purpose.
+
+    Minimal arg surface (no ``--test-tailor`` — that's tailor-side
+    only): ``--once`` runs one cycle and exits; ``--status`` prints job
+    counts.
+    """
+    parser = argparse.ArgumentParser(
+        description="Job Submit Agent — pre-fill only (PR-13 split)"
+    )
+    parser.add_argument(
+        "--once", action="store_true",
+        help="Run one pre-fill cycle and exit",
+    )
+    parser.add_argument(
+        "--status", action="store_true", help="Print job counts by status"
+    )
+    args = parser.parse_args()
+
+    if args.status:
+        print_status()
+        return
+
+    logger.info(f"=== Submit (pre-fill) cycle at {datetime.utcnow().isoformat()} ===")
+    process_prefill_requested_jobs()
 
 
 if __name__ == "__main__":

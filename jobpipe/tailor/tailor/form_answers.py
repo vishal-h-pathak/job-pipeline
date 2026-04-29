@@ -166,6 +166,17 @@ def _build_identity_block(profile_yaml: dict) -> dict[str, Any]:
             or "Algorithms & Analysis Engineer"
         ),
         "years_of_experience": identity.get("years_of_experience") or 7,
+        # Effectively-required Anthropic-style form fields. The submitter's
+        # adapters/_common.applicant_fields reads these from form_answers
+        # so the three-tier classifier can answer them instead of
+        # routing to review. Visa-needed and prior-interview ship as the
+        # raw structures from profile.yml; the submit-side helpers
+        # (_prior_interview_summary etc.) cope with both shapes.
+        "visa_sponsorship_needed": form_defaults.get("visa_sponsorship_needed"),
+        "ai_policy_ack": (form_defaults.get("ai_policy_ack") or "").strip(),
+        "previous_interview_with_company": form_defaults.get(
+            "previous_interview_with_company"
+        ) or {},
     }
 
 

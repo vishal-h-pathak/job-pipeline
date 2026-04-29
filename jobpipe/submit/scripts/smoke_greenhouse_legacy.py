@@ -1,5 +1,13 @@
 """
-smoke_greenhouse.py — M3 validation smoke test.
+smoke_greenhouse_legacy.py — DEPRECATED M3 validation smoke test.
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). Validates the retired Browserbase + Stagehand      ║
+║  Greenhouse adapter against a real Greenhouse URL. Renamed from      ║
+║  ``smoke_greenhouse.py`` during the local-Playwright consolidation;  ║
+║  no live target invokes it. Kept as reference if the Browserbase     ║
+║  fallback ever returns. Do not extend.                               ║
+╚══════════════════════════════════════════════════════════════════════╝
 
 Runs the full Greenhouse adapter loop (survey → fill → score) against a real
 live Greenhouse posting through Browserbase+Stagehand, but WITHOUT the

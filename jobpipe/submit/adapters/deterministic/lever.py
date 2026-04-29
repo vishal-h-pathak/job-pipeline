@@ -1,6 +1,13 @@
 """
 adapters/lever.py — Deterministic adapter for Lever ATS (jobs.lever.co).
 
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). Stagehand + Browserbase Lever adapter, retired     ║
+║  during the local-Playwright consolidation. The live Lever handler   ║
+║  is ``submit/adapters/prepare_dom/lever.py`` (sync Playwright). Do   ║
+║  not extend this module — extend the prepare_dom one instead.        ║
+╚══════════════════════════════════════════════════════════════════════╝
+
 Lever's application form is structurally similar to Greenhouse's but with
 two notable quirks:
 

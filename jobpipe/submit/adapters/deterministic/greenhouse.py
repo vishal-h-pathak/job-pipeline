@@ -1,6 +1,14 @@
 """
 adapters/greenhouse.py — Deterministic adapter for Greenhouse job boards.
 
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). Stagehand + Browserbase Greenhouse adapter,        ║
+║  retired during the local-Playwright consolidation. The live         ║
+║  Greenhouse handler is ``submit/adapters/prepare_dom/greenhouse.py`` ║
+║  (sync Playwright, picked by ``ats_detect.get_applicant``). Do not   ║
+║  extend this module — extend the prepare_dom one instead.            ║
+╚══════════════════════════════════════════════════════════════════════╝
+
 Greenhouse is the happy path. The form DOM is remarkably stable across
 boards (`boards.greenhouse.io/*` and `job-boards.greenhouse.io`), so this
 adapter avoids calling an LLM for anything except extracting what's on the

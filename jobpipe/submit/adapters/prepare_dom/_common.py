@@ -143,8 +143,17 @@ def load_cover_letter(cover_letter_path_or_text: str) -> str:
     if not cover_letter_path_or_text:
         return ""
     path = Path(cover_letter_path_or_text)
-    if path.exists():
-        return path.read_text(encoding="utf-8")
+    # ``path.exists()`` calls ``os.stat()``, which raises
+    # ``OSError [Errno 63] File name too long`` on macOS / Linux when
+    # the argument is a multi-thousand-character cover-letter string
+    # (typical 2k-char cover letters trip macOS PATH_MAX of ~1024).
+    # Catch the OSError and fall through to the inline-text branch so
+    # callers passing a long body get the body back unchanged.
+    try:
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+    except OSError:
+        pass
     if len(cover_letter_path_or_text) > 100:
         return cover_letter_path_or_text
     return ""

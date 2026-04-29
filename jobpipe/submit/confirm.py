@@ -1,6 +1,15 @@
 """
 confirm.py — Decide whether to click submit, then verify it landed.
 
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). The Browserbase + Stagehand submission path was    ║
+║  retired during the local-Playwright consolidation. Path A           ║
+║  (``tailor/pipeline.py::process_prefill_requested_jobs``) never      ║
+║  auto-clicks Submit — the human always does that — so the auto-vs-   ║
+║  review policy this module encodes is dead. Kept only as reference   ║
+║  for any future remote-browser fallback. Do not extend.              ║
+╚══════════════════════════════════════════════════════════════════════╝
+
 The only module that applies the auto-submit-vs-needs-review policy. Adapters
 hand us a SubmissionResult; we read its confidence + recommend fields against
 AUTO_SUBMIT_THRESHOLD (with per-ATS overrides in config.ATS_CONFIDENCE_MIN),

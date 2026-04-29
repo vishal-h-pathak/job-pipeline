@@ -1,6 +1,15 @@
 """
 adapters/_common.py — Async-side shared helpers for deterministic ATS adapters
-(Stagehand + Browserbase). Sibling: ``adapters/prepare_dom/_common.py`` holds
+(Stagehand + Browserbase).
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). Async helpers for the retired Stagehand adapters.  ║
+║  The live pre-fill path uses the SYNC Playwright helpers in          ║
+║  ``adapters/prepare_dom/_common.py`` — that is the only "_common"    ║
+║  module under active maintenance. Do not extend this file.           ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+Sibling: ``adapters/prepare_dom/_common.py`` holds
 the sync Playwright DOM helpers used by the prepare-only fillers. Both files
 exist because the two adapter tracks have incompatible runtimes — async
 Stagehand ``act()`` / ``extract()`` vs sync ``page.locator().fill()`` — so
@@ -51,46 +60,65 @@ CUSTOM_Q_MAX = 20                     # hard cap on questions we'll process
 def applicant_fields(job: dict) -> dict[str, str]:
     """Pull applicant profile values off the job row.
 
-    The tailor writes these into a nested applicant_profile blob; keep this
-    helper tolerant of older rows that may have top-level keys instead.
+    The M-1 schema persists this data in the ``form_answers`` JSONB column
+    (populated by ``tailor.form_answers.generate_form_answers``). Older
+    rows + tests may have used a nested ``applicant_profile`` blob or
+    top-level keys instead, so the lookup falls back through all three
+    in order: ``form_answers`` → ``applicant_profile`` → top-level row.
 
     The second bucket of keys (work_authorization onward) was added in #18
     to power the effectively-required custom-question answers surfaced by
-    the 2026-04-21 Anthropic smoke run. These exist on every form as unasterisked
-    but functionally mandatory fields (work auth, visa sponsorship, earliest
-    start date, relocation / in-person willingness, AI usage policy,
-    prior-interview history). Having truthful values here lets the
-    three-tier classifier answer them instead of routing to review.
+    the 2026-04-21 Anthropic smoke run. These exist on every form as
+    unasterisked but functionally mandatory fields (work auth, visa
+    sponsorship, earliest start date, relocation / in-person willingness,
+    AI usage policy, prior-interview history). Having truthful values
+    here lets the three-tier classifier answer them instead of routing
+    to review.
     """
-    profile = job.get("applicant_profile") or {}
+    blob = job.get("form_answers") or job.get("applicant_profile") or {}
+    if not isinstance(blob, dict):
+        blob = {}
+
     def pick(*keys: str) -> str:
         for k in keys:
-            v = profile.get(k) or job.get(k)
+            v = blob.get(k) or job.get(k)
             if v:
                 return str(v)
         return ""
 
     return {
         # ── Identity + contact ───────────────────────────────────────────
+        # Each fallback chain ends with the M-1 form_answers key the tailor
+        # actually writes (e.g. linkedin_url, portfolio_url, github_url),
+        # but keeps older variants for back-compat with row schemas that
+        # pre-date M-1.
         "first_name":   pick("first_name", "firstName", "candidate_first_name"),
         "last_name":    pick("last_name", "lastName", "candidate_last_name"),
         "full_name":    pick("full_name", "fullName", "candidate_full_name"),
         "email":        pick("email", "candidate_email"),
         "phone":        pick("phone", "phone_number", "candidate_phone"),
         "linkedin":     pick("linkedin_url", "linkedin", "candidate_linkedin"),
-        "website":      pick("website", "portfolio_url", "personal_site"),
-        "github":       pick("github", "github_url"),
-        "location":     pick("location", "candidate_location", "city"),
+        "website":      pick("portfolio_url", "website", "personal_site"),
+        "github":       pick("github_url", "github"),
+        # form_answers stores location as ``current_location``; keep older
+        # ``location`` and ``city`` variants for back-compat.
+        "location":     pick("current_location", "location", "candidate_location", "city"),
         "current_company": pick("current_company", "candidate_company"),
         "current_title":   pick("current_title", "candidate_title", "job_title"),
         # ── Effectively-required form facts (#18) ────────────────────────
+        # form_answers stores these under ``willing_to_relocate``,
+        # ``remote_preference``, and ``availability_to_start``; M-1's
+        # _build_identity_block also forwards ``visa_sponsorship_needed``,
+        # ``ai_policy_ack``, and ``previous_interview_with_company`` from
+        # profile.yml::application_defaults so the agent can answer those
+        # required Anthropic-style questions.
         "work_authorization":      pick("work_authorization", "work_auth"),
         "visa_sponsorship_needed": pick("visa_sponsorship_needed", "visa_needed", "needs_sponsorship"),
-        "earliest_start_date":     pick("earliest_start_date", "start_date", "availability"),
-        "relocation_willingness":  pick("relocation_willingness", "relocation", "open_to_relocation"),
-        "in_person_willingness":   pick("in_person_willingness", "work_mode", "remote_preference"),
+        "earliest_start_date":     pick("availability_to_start", "earliest_start_date", "start_date", "availability"),
+        "relocation_willingness":  pick("willing_to_relocate", "relocation_willingness", "relocation", "open_to_relocation"),
+        "in_person_willingness":   pick("remote_preference", "in_person_willingness", "work_mode"),
         "ai_policy_ack":           pick("ai_policy_ack", "ai_usage_statement", "ai_disclosure"),
-        "previous_interview_summary": _prior_interview_summary(profile, job),
+        "previous_interview_summary": _prior_interview_summary(blob, job),
     }
 
 

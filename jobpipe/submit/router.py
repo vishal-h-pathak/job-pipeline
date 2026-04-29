@@ -1,6 +1,16 @@
 """
 router.py — Dispatch a job to the right ATS adapter based on ats_kind.
 
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). The local-Playwright consolidation retired the     ║
+║  Browserbase + Stagehand submission path; this router only matters   ║
+║  to ``runner_legacy.py`` (no live console-script binding) and the    ║
+║  forensic test suite under ``tests/legacy/``. The canonical pre-fill ║
+║  path uses ``jobpipe/submit/adapters/prepare_dom/*`` directly via    ║
+║  ``jobpipe.shared.ats_detect.get_applicant`` — no router involved.   ║
+║  Do not extend this module.                                          ║
+╚══════════════════════════════════════════════════════════════════════╝
+
 Lookup table only. Any routing logic more interesting than "read the field
 and pick an adapter" belongs in the adapter itself.
 """

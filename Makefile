@@ -1,27 +1,24 @@
 # jobpipe Makefile — convenience targets for local + CI workflows.
 #
-# `make smoke` exercises the hunt → tailor → submit import surface and
-# data flow without hitting Supabase/Browserbase/Anthropic. Designed to
-# run in <60 s alongside (in parallel with) the unit-test job in CI.
-#
-# `make test` runs the pytest suite. CI runs both jobs in parallel; this
-# target exists so a developer can run them sequentially with a single
-# `make` invocation when desired (`make all`).
+# `make test` runs the pytest suite (the default ``-m 'not legacy'``
+# filter in pyproject.toml excludes the retired Path-B forensic
+# scaffold tests under tests/legacy/). The pre-consolidation
+# import-wiring smoke harness was the principal user of the
+# Browserbase + Stagehand path; with that path retired, the harness
+# is parked at ``scripts/smoke_legacy.py`` and is exposed here as
+# ``make legacy-smoke`` for forensics only — it is NOT a CI target.
 
 PYTHON ?= python
 
-.PHONY: smoke test all help
+.PHONY: test legacy-smoke help
 
 help:
 	@echo "Targets:"
-	@echo "  smoke   Run scripts/smoke.py (hunt → tailor → submit imports + data flow)"
-	@echo "  test    Run the pytest suite"
-	@echo "  all     Run test then smoke"
-
-smoke:
-	@$(PYTHON) scripts/smoke.py
+	@echo "  test          Run the pytest suite (default-suite; legacy excluded)"
+	@echo "  legacy-smoke  Run scripts/smoke_legacy.py — Path B forensics only"
 
 test:
 	@$(PYTHON) -m pytest -v
 
-all: test smoke
+legacy-smoke:
+	@$(PYTHON) scripts/smoke_legacy.py

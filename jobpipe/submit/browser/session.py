@@ -1,6 +1,15 @@
 """
 browser/session.py — Browserbase + Stagehand session wrapper.
 
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). Drives the retired Browserbase + Stagehand path.   ║
+║  Path A (``tailor/pipeline.py::process_prefill_requested_jobs``)     ║
+║  uses local Playwright directly — no remote browser. Kept ONLY       ║
+║  because this is the sole Browserbase integration in the repo and    ║
+║  is worth preserving as reference for any future remote-browser      ║
+║  fallback. No live code path imports it. Do not extend.              ║
+╚══════════════════════════════════════════════════════════════════════╝
+
 One SubmissionSession per submit attempt. Always records. Hard-caps runtime
 via SESSION_BUDGET_SECONDS (enforced by the caller with asyncio.wait_for).
 

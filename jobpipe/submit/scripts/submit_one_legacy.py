@@ -1,5 +1,17 @@
 """
-submit_one.py — Run a single submission attempt against a known job_id.
+submit_one_legacy.py — Single-job submission attempt (DEPRECATED).
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). Drives the retired Browserbase + Stagehand path    ║
+║  via ``runner_legacy.process_one``. Renamed from ``submit_one.py``   ║
+║  during the local-Playwright consolidation; no live target invokes   ║
+║  it. The Path-A debug equivalent is ``jobpipe-tailor --once`` after  ║
+║  flipping a job to ``prefilling`` from the cockpit. Do not extend.   ║
+║                                                                      ║
+║  NOTE: a different ``submit_one.py`` lives under                     ║
+║  ``jobpipe/tailor/scripts/`` and is unrelated to this script — that  ║
+║  one is the tailor-side debug tool and is untouched by this rename.  ║
+╚══════════════════════════════════════════════════════════════════════╝
 
 Primary debugging tool during Milestone 3+ bring-up. Bypasses the poll loop
 and runs process_one() directly, optionally in a visible browser so you can

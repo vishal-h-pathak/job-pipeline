@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""scripts/smoke.py — end-to-end pipeline smoke test.
+"""scripts/smoke_legacy.py — DEPRECATED end-to-end pipeline smoke test.
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). Stage 3 imports ``jobpipe.submit.runner`` and      ║
+║  validates the Stagehand greenhouse adapter through the router —     ║
+║  both retired during the local-Playwright consolidation. Renamed     ║
+║  from ``scripts/smoke.py``. ``make smoke`` no longer points here;    ║
+║  the live import-wiring coverage is now provided by                  ║
+║  ``pytest -q`` (default suite excludes legacy). Do not extend.       ║
+╚══════════════════════════════════════════════════════════════════════╝
 
 Exercises the import surface and core wiring of hunt → tailor → submit
 without hitting Supabase, Browserbase, or Anthropic. Designed for

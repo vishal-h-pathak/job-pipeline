@@ -214,6 +214,23 @@ def test_load_cover_letter_long_string_returned_as_inline_text():
     assert load_cover_letter(long_text) == long_text
 
 
+def test_load_cover_letter_pathmax_oserror_returns_inline_text():
+    """Strings longer than the OS PATH_MAX (~1024 on macOS) trip ``os.stat()``
+    inside ``Path.exists()`` with ``OSError [Errno 63] File name too long``.
+    The helper must catch that and fall through to the inline-text branch
+    rather than propagating the error to the per-ATS adapter (which used to
+    crash mid-fill on real cover letters around 2 000 chars long — the
+    Anthropic Fellows pre-fill failure mode that motivated this test).
+    """
+    body = (
+        "Dear Hiring Manager,\n\n"
+        + ("This is a 2000-character cover-letter body. " * 50)
+    )
+    assert len(body) > 1024, "test premise: body must exceed macOS PATH_MAX"
+    # Must not raise; must return the body unchanged.
+    assert load_cover_letter(body) == body
+
+
 def test_load_cover_letter_short_string_with_no_file_returns_empty():
     assert load_cover_letter("not_a_path.txt") == ""
 

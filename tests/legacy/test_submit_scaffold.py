@@ -29,11 +29,13 @@ def _fill_required_env(monkeypatch):
     missing (require_env block, fail-loud). Supply placeholders so imports
     don't explode during scaffold-only tests.
 
-    Importing `jobpipe.submit.runner` triggers the submit subtree's
-    sys.path bootstrap (see jobpipe/submit/runner.py:42-48), so the
-    bare `import router` / `from adapters.base import ...` imports
+    Importing ``jobpipe.submit.runner_legacy`` triggers the submit
+    subtree's sys.path bootstrap (the local-Playwright consolidation
+    renamed ``runner.py`` to ``runner_legacy.py``), so the bare
+    ``import router`` / ``from adapters.base import ...`` imports
     further down each test resolve cleanly even though this file
-    sits at the top-level `tests/` directory.
+    now sits under ``tests/legacy/`` and is excluded from the default
+    pytest invocation.
     """
     required = {
         "SUPABASE_URL": "https://example.supabase.co",
@@ -52,8 +54,9 @@ def _fill_required_env(monkeypatch):
               "jobpipe.submit.config"):
         sys.modules.pop(m, None)
     # Trigger the submit subtree's sys.path bootstrap so bare imports work
-    # from the top-level tests dir.
-    import jobpipe.submit.runner  # noqa: F401
+    # from this directory. Local-Playwright consolidation renamed runner.py
+    # to runner_legacy.py — both files contain the identical bootstrap.
+    import jobpipe.submit.runner_legacy  # noqa: F401
     yield
 
 

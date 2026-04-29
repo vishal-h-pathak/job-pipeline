@@ -48,13 +48,14 @@ dev = ["pytest>=8", "ruff>=0.5"]
 # PR-3: hunt orchestrator console script. Calls the hunt agent's `run()`
 # which parses CLI args (`--mode`, `--once`) and executes the pipeline once.
 jobpipe-hunt = "jobpipe.hunt.agent:run"
-# PR-4: tailor console script. Calls pipeline.run() which parses
-# CLI args (`--once`, `--status`, `--test-tailor`) and runs one cycle of
-# process_approved_jobs + process_prefill_requested_jobs.
+# PR-4: tailor console script. Calls pipeline.run() which parses CLI args
+# (`--once`, `--status`, `--test-tailor`) and runs one cycle of
+# process_approved_jobs + process_prefill_requested_jobs. The cycle now
+# owns BOTH tailoring and pre-fill (Path A) — the legacy ``jobpipe-submit``
+# console script (Path B / Browserbase) was retired during the local-
+# Playwright consolidation; ``jobpipe/submit/runner_legacy.py`` is kept
+# as reference but has no entry-point binding.
 jobpipe-tailor = "jobpipe.tailor.pipeline:run"
-# PR-5: submitter console script. Calls the runner's `run()` which installs
-# signal handlers and drives the polling loop under asyncio.run.
-jobpipe-submit = "jobpipe.submit.runner:run"
 
 [tool.setuptools]
 # Each listed package needs to be installed so setuptools wires up the
@@ -90,6 +91,15 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# Local-Playwright consolidation: the Path-B (Browserbase + Stagehand)
+# scaffold tests live under tests/legacy/ and are auto-tagged with the
+# ``legacy`` marker by tests/legacy/conftest.py. Default pytest run
+# excludes them so future PRs don't have to keep the dead-code suite
+# green. Run them on demand with ``pytest -m legacy``.
+addopts = "-m 'not legacy'"
+markers = [
+    "legacy: Forensic-only tests for the retired Browserbase + Stagehand path. Excluded by default; run with `pytest -m legacy`.",
+]
 
 [tool.ruff]
 target-version = "py39"

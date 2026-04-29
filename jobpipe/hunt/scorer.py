@@ -91,4 +91,17 @@ def should_notify(result: dict) -> bool:
     """
     if result.get("recommended_action") == "notify":
         return True
-    return result.get("score", 0) >= 7 and result.get("tier") in (1, 2)
+    # Defensive int() coercion mirrors the pipeline.py site — guards
+    # against the same score-as-string drift that crashed the tailor's
+    # form_answers gate. See the TODO in
+    # jobpipe/tailor/pipeline.py::process_approved_jobs.
+    try:
+        score_val = int(result.get("score", 0) or 0)
+    except (TypeError, ValueError):
+        score_val = 0
+    tier_val = result.get("tier")
+    try:
+        tier_val = int(tier_val) if tier_val is not None else None
+    except (TypeError, ValueError):
+        pass
+    return score_val >= 7 and tier_val in (1, 2)

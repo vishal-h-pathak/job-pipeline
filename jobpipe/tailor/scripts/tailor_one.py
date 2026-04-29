@@ -56,6 +56,7 @@ from tailor.resume import tailor_resume  # noqa: E402
 from tailor.cover_letter import generate_cover_letter  # noqa: E402
 from tailor.cover_letter_pdf import render_cover_letter_pdf  # noqa: E402
 from tailor.latex_resume import generate_tailored_latex  # noqa: E402
+from tailor.form_answers import generate_form_answers  # noqa: E402
 from jobpipe.shared.ats_detect import detect_ats, get_applicant  # noqa: E402
 from jobpipe.tailor.url_resolver import resolve_application_url  # noqa: E402
 from storage import upload_pdf  # noqa: E402
@@ -162,14 +163,47 @@ def main() -> None:
         print("\n[dry-run] skipping Storage upload + status update")
         return
 
-    # ── 6. Upload PDFs to Supabase Storage ───────────────────────────────
+    # ── 6. Generate form-answer drafts (M-1, "Block H") ──────────────────
+    # Authoritative source for the per-ATS submitter adapters and the
+    # cockpit's copy-paste UI. Identity / contact / location / comp /
+    # work-auth / prior-interview / AI-policy fields come from profile.yml
+    # in Python; the LLM only drafts why_this_role, why_this_company,
+    # additional_info, and any role-specific additional_questions.
+    # Generation failures are non-fatal — we still want PDFs uploaded
+    # and the row marked ready_for_review even when this Sonnet call
+    # fails — but we log them loudly so the user notices at re-run time.
+    # Mirrors the corresponding block in tailor/pipeline.py so behaviour
+    # matches the polling-loop entry point.
+    print("\n--- Form answers (M-1) ---")
+    form_answers = None
+    try:
+        form_answers = generate_form_answers(
+            job, resume_result, archetype_meta=job.get("_archetype")
+        )
+        print(
+            f"form_answers generated — identity + narrative + "
+            f"{len(form_answers.get('additional_questions') or [])} "
+            f"role-specific questions drafted"
+        )
+    except Exception as exc:
+        logger.warning(f"form_answers generation skipped: {exc}")
+
+    # ── 7. Upload PDFs to Supabase Storage ───────────────────────────────
     print("\n--- Storage upload ---")
     resume_path = upload_pdf(job["id"], "resume", resume_pdf_bytes)
     cover_path = upload_pdf(job["id"], "cover_letter", cover_pdf_bytes)
     print(f"resume_path={resume_path}")
     print(f"cover_letter_path={cover_path}")
 
-    # ── 7. Mark ready_to_submit ──────────────────────────────────────────
+    # Persist form_answers BEFORE marking ready_for_review so the cockpit
+    # always finds the drafts when it loads the row.
+    if form_answers:
+        supabase_client.table("jobs").update(
+            {"form_answers": form_answers}
+        ).eq("id", job["id"]).execute()
+        print(f"persisted form_answers to jobs.form_answers")
+
+    # ── 8. Mark ready_for_review ─────────────────────────────────────────
     resolved_ats = detect_ats(resolved_url)
     applicant = get_applicant(resolved_url)
     application_notes = (

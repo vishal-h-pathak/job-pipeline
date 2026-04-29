@@ -1,6 +1,13 @@
 """
 adapters/ashby.py — Deterministic adapter for Ashby ATS (jobs.ashbyhq.com).
 
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). Stagehand + Browserbase Ashby adapter, retired     ║
+║  during the local-Playwright consolidation. The live Ashby handler   ║
+║  is ``submit/adapters/prepare_dom/ashby.py`` (sync Playwright). Do   ║
+║  not extend this module — extend the prepare_dom one instead.        ║
+╚══════════════════════════════════════════════════════════════════════╝
+
 Ashby renders a React SPA with labeled inputs, a file-drop zone for the
 resume, and a "Location" field that is usually required (unique to Ashby
 among the three deterministic adapters).

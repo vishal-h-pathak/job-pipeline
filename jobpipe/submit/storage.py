@@ -11,6 +11,13 @@ from __future__ import annotations
 
 from jobpipe.db import service_client
 
+# PR-1 moved download_to_tmp / download_bytes into jobpipe.shared.storage to
+# unify the previously-divergent applicant + submitter implementations. Re-
+# export them here so ``import storage`` from runner.py (and any other
+# unprefixed-import callsite inside the submit subtree) keeps working — the
+# stated intent of this shim per the module docstring.
+from jobpipe.shared.storage import download_bytes, download_to_tmp  # noqa: F401
+
 BUCKET = "job-materials"
 
 

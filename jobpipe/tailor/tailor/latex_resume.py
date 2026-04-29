@@ -156,6 +156,19 @@ LATEX_TEMPLATE = r"""
 \usepackage{titlesec}
 \usepackage{hyperref}
 \usepackage{xcolor}
+\usepackage{textcomp}
+
+% Defensive macros for special-character commands the LLM occasionally
+% emits instead of the unicode literals it sees in BASE_RESUME (e.g.
+% rewriting "360°" as "360\degree"). _escape_latex_safe deliberately
+% lets backslash sequences pass through (since the template uses many
+% legitimately), so an undefined macro would otherwise crash compile.
+% \providecommand only defines if not already defined, so this is safe
+% even when a future package upgrade ships its own \degree.
+\providecommand{\degree}{\ensuremath{^\circ}}
+\providecommand{\micro}{\ensuremath{\mu}}
+\providecommand{\celsius}{\ensuremath{^\circ}C}
+\providecommand{\ohm}{\ensuremath{\Omega}}
 
 % ── Formatting ─────────────────────────────────────────────────────────────
 \pagestyle{empty}

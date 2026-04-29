@@ -1,6 +1,16 @@
 """
 review/packet.py — Build a review packet for jobs that land in needs_review.
 
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). Built for the Browserbase + Stagehand auto-submit  ║
+║  flow that was retired during the local-Playwright consolidation.    ║
+║  Under Path A, the cockpit's "Pre-fill Form" + visible-browser flow  ║
+║  surfaces the same evidence directly via                             ║
+║  ``application_attempts.notes`` and ``jobs.prefill_screenshot_path`` ║
+║  — no packet build step. Kept only as reference. Do not extend.      ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+
 A packet is the evidence a human needs to triage a failed-to-auto-submit job
 in under a minute from the portfolio dashboard at /review/[job_id]. It
 bundles: the pre-submit screenshot, the list of filled fields + their values,

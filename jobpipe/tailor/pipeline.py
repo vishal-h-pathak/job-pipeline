@@ -43,7 +43,11 @@ import sys  # noqa: E402
 from datetime import datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-from jobpipe.config import POLL_INTERVAL_MINUTES, HUMAN_APPROVAL_REQUIRED  # noqa: E402
+from jobpipe.config import (  # noqa: E402
+    POLL_INTERVAL_MINUTES,
+    HUMAN_APPROVAL_REQUIRED,
+    MAX_ATTEMPTS_PER_JOB,
+)
 from jobpipe.db import (  # noqa: E402
     get_approved_jobs,
     get_prefill_requested_jobs,
@@ -54,6 +58,10 @@ from jobpipe.db import (  # noqa: E402
     mark_tailor_failed,
     mark_skipped,
     get_job_counts_by_status,
+    next_attempt_n,
+    open_attempt,
+    close_attempt,
+    update_job_status,
 )
 from tailor.resume import tailor_resume  # noqa: E402
 from tailor.cover_letter import generate_cover_letter  # noqa: E402
@@ -246,7 +254,15 @@ def process_approved_jobs():
             # Gated on score >= 6 (the existing notify threshold) — below
             # that we won't be applying anyway, so the Sonnet call is
             # wasted. Generation failures are non-fatal.
-            score = job.get("score") or 0
+            # TODO: score type drift — some Supabase rows store ``score`` as
+            # a string (e.g. "7"), others as int. ``"7" >= 6`` raises
+            # TypeError in Py3. Coercing locally here so a stray string row
+            # doesn't crash the tailor; investigate upstream writer
+            # separately.
+            try:
+                score = int(job.get("score") or 0)
+            except (TypeError, ValueError):
+                score = 0
             if score >= 6:
                 try:
                     form_answers = generate_form_answers(
@@ -338,6 +354,20 @@ def process_prefill_requested_jobs():
 
         logger.info(f"Pre-filling: {company} — {title}  ({url})")
 
+        # Max-attempts ceiling — mirrors the runner.py:105-109 check so the
+        # local-Playwright path enforces the same per-job retry budget the
+        # legacy Browserbase runner did. Pre-attempt-row exit (no audit
+        # row yet) — same shape as runner.py's pre-attempt-row failures.
+        attempt_n = next_attempt_n(job_id)
+        if attempt_n > MAX_ATTEMPTS_PER_JOB:
+            mark_tailor_failed(
+                job_id,
+                f"exceeded max attempts ({MAX_ATTEMPTS_PER_JOB})",
+                clear_materials=False,
+            )
+            send_failed(job, f"max attempts ({MAX_ATTEMPTS_PER_JOB}) exceeded")
+            continue
+
         # Resolve aggregator → real ATS once up front (no LLM call).
         try:
             resolved = resolve_application_url(url)
@@ -382,6 +412,13 @@ def process_prefill_requested_jobs():
 
         cover_letter_text = job.get("cover_letter_path") or ""
 
+        # Open the audit row AFTER materials hydration but BEFORE the
+        # browser launches — matches runner.py's ordering so the two paths
+        # write equivalent application_attempts trails. ``adapter`` is the
+        # picked applicant's ``name`` attribute (e.g. ``"greenhouse"``).
+        attempt_id = open_attempt(job_id, attempt_n, adapter=applicant.name)
+        attempt_closed = False
+
         try:
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=False)
@@ -409,6 +446,12 @@ def process_prefill_requested_jobs():
                         f"Pre-fill: page load failed: {exc}",
                         clear_materials=False,
                     )
+                    close_attempt(
+                        attempt_id,
+                        outcome="failed",
+                        notes={"error": f"page load failed: {exc}"},
+                    )
+                    attempt_closed = True
                     send_failed(job, f"Pre-fill page load failed: {exc}")
                     continue
 
@@ -446,6 +489,24 @@ def process_prefill_requested_jobs():
                     mark_awaiting_submit(
                         job_id, screenshot_path=screenshot_storage_key
                     )
+                    # Close the audit row BEFORE the input() block so the
+                    # dashboard sees ``outcome`` immediately — even if the
+                    # human takes minutes to come back and press Enter.
+                    # ``outcome="submitted"`` here means "the adapter
+                    # completed pre-fill cleanly," NOT that the application
+                    # was submitted to the company; the runner uses the
+                    # same convention. ``applied`` only flips when the
+                    # human clicks Mark Applied in the cockpit (M-2).
+                    close_attempt(
+                        attempt_id,
+                        outcome="submitted",
+                        notes={
+                            "prefill_screenshot_path": screenshot_storage_key,
+                            "filled_fields": result.get("fields_filled"),
+                            "notes": result.get("notes"),
+                        },
+                    )
+                    attempt_closed = True
                     send_awaiting_submit(job, screenshot_storage_key)
                 else:
                     fail_notes = result.get("notes") or result.get(
@@ -456,6 +517,30 @@ def process_prefill_requested_jobs():
                         f"Pre-fill: {fail_notes}",
                         clear_materials=False,
                     )
+                    # Parity with the success branch: persist the
+                    # post-fill screenshot key on the jobs row even on
+                    # failure, so the cockpit's failure banner can
+                    # render the same diagnostic surface as the
+                    # success banner. Done as a separate update_job_status
+                    # call rather than threaded through mark_tailor_failed
+                    # because that helper's existing screenshot_path
+                    # kwarg writes to the legacy ``review_screenshot``
+                    # column, not ``prefill_screenshot_path`` (preserved
+                    # for back-compat with M-2 callers).
+                    if screenshot_storage_key:
+                        update_job_status(
+                            job_id, "failed",
+                            prefill_screenshot_path=screenshot_storage_key,
+                        )
+                    close_attempt(
+                        attempt_id,
+                        outcome="failed",
+                        notes={
+                            "error": fail_notes,
+                            "prefill_screenshot_path": screenshot_storage_key,
+                        },
+                    )
+                    attempt_closed = True
                     send_failed(job, fail_notes)
 
                 # ── BLOCK on terminal input() so the browser stays open ─
@@ -491,6 +576,15 @@ def process_prefill_requested_jobs():
                 f"Pre-fill exception: {exc}",
                 clear_materials=False,
             )
+            if not attempt_closed:
+                try:
+                    close_attempt(
+                        attempt_id,
+                        outcome="failed",
+                        notes={"error": str(exc)},
+                    )
+                except Exception:
+                    logger.exception("close_attempt failed for %s", job_id)
             send_failed(job, str(exc))
         finally:
             if tmp_resume_pdf is not None:

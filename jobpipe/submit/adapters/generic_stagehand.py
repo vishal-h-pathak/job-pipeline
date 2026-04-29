@@ -1,6 +1,15 @@
 """
 adapters/generic_stagehand.py — Fallback adapter driven by Stagehand's agent loop.
 
+╔══════════════════════════════════════════════════════════════════════╗
+║  LEGACY (Path B). The Stagehand-agent fallback was retired with the  ║
+║  rest of the Browserbase path. Path A's universal fallback is        ║
+║  ``submit/adapters/prepare_dom/universal.py`` (local Playwright +    ║
+║  the prepare-only Claude tool-use agent), which is what              ║
+║  ``jobpipe.shared.ats_detect.get_applicant`` returns when no         ║
+║  per-ATS handler matches. Do not extend this module.                 ║
+╚══════════════════════════════════════════════════════════════════════╝
+
 The deterministic adapters (Greenhouse, Lever, Ashby) cover ~70% of postings
 job-hunter surfaces. For the rest — Workday, iCIMS, SmartRecruiters, in-house
 forms, anything the detector can't confidently place — we hand the form to

@@ -1,5 +1,25 @@
 """
-runner.py — Polling loop for the job-submitter agent.
+runner_legacy.py — DEPRECATED Browserbase + Stagehand polling loop.
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  DEPRECATED. DO NOT MAINTAIN. DO NOT EXTEND.                         ║
+║                                                                      ║
+║  Renamed from runner.py during the local-Playwright consolidation.   ║
+║  Path B (this file) is dead under the current architecture: the     ║
+║  Browserbase-driven adapters never reached networkidle before        ║
+║  extracting field surveys, so they consistently failed in the field. ║
+║                                                                      ║
+║  The canonical pre-fill path is now Path A:                          ║
+║     jobpipe/tailor/pipeline.py::process_prefill_requested_jobs       ║
+║  which drives a visible local Chromium via Playwright + the          ║
+║  prepare_dom adapters. That path now writes the application_attempts ║
+║  audit row this runner used to own.                                  ║
+║                                                                      ║
+║  The ``jobpipe-submit`` console script that pointed at this module's ║
+║  ``run()`` is gone from pyproject.toml. This file is kept ONLY as    ║
+║  reference for any future Browserbase fallback work; no live code    ║
+║  path imports it.                                                    ║
+╚══════════════════════════════════════════════════════════════════════╝
 
 Reads jobs the cockpit has queued for pre-fill (status='prefilling'),
 dispatches each to its ATS adapter inside a fresh Browserbase session,

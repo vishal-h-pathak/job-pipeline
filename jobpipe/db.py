@@ -453,17 +453,22 @@ def get_job_counts_by_status() -> dict:
 # ══════════════════════════════════════════════════════════════════════════
 
 def get_jobs_ready_for_submission(limit: int = 10) -> list[dict]:
-    """Jobs the tailor has finished preparing.
+    """Jobs the cockpit's "Pre-fill Form" click has queued for the submitter.
 
-    Returned oldest-first so high-score jobs don't indefinitely starve
-    lower-score ones if the former keep failing. Consumes both legacy
-    ``ready_to_submit`` status and the forthcoming ``tailored`` status
-    so the submitter works across the transition.
+    Under M-2 (career-ops alignment), the dashboard cockpit's "Pre-fill
+    Form" button flips a row from ``ready_for_review`` to ``prefilling``;
+    the runner picks those up here. Returned oldest-first so high-score
+    jobs don't indefinitely starve lower-score ones if the former keep
+    failing.
+
+    Legacy values (``ready_to_submit``, ``tailored``) are kept in the IN
+    list for back-compat — both were collapsed by migration 007 but a
+    stray row from a not-yet-migrated agent should still be picked up.
     """
     result = (
         _get_client().table("jobs")
         .select("*")
-        .in_("status", ["ready_to_submit", "tailored"])
+        .in_("status", ["prefilling", "ready_to_submit", "tailored"])
         .order("status_updated_at", desc=False)
         .limit(limit)
         .execute()
@@ -492,9 +497,21 @@ def next_attempt_n(job_id: str) -> int:
 
 
 def mark_submitting(job_id: str) -> None:
-    """Claim a job at the start of a submission attempt."""
+    """Claim a job at the start of a pre-fill attempt.
+
+    Under M-2 the submitter's job is to PRE-FILL the form, not actually
+    click Submit (the human does that in their cockpit). Status flow:
+        ready_for_review (cockpit) -> prefilling (this) -> awaiting_human_submit
+    The function name is kept for back-compat with runner.py callers; the
+    legacy ``submitting`` value was retired by migration 007 and would
+    now fail the jobs_status_check CHECK constraint.
+
+    Idempotent — works whether the cockpit's "Pre-fill Form" click already
+    moved the row to ``prefilling`` or whether ``submit_one.py`` is
+    bypassing the cockpit and starting from ``ready_for_review``.
+    """
     _get_client().table("jobs").update({
-        "status": "submitting",
+        "status": "prefilling",
         "status_updated_at": _utcnow(),
     }).eq("id", job_id).execute()
 
@@ -508,30 +525,50 @@ def record_submission_log(job_id: str, log: dict, confidence: float | None) -> N
 
 
 def mark_submitted(job_id: str, confirmation_evidence: dict) -> None:
-    _get_client().table("jobs").update({
-        "status": "submitted",
-        "status_updated_at": _utcnow(),
-    }).eq("id", job_id).execute()
-    logger.info("job %s submitted (%s)", job_id, confirmation_evidence.get("kind"))
+    """DEPRECATED — under M-2 the submitter never auto-submits. The system
+    pre-fills, leaves the browser open, and waits for the human to click
+    Submit themselves and then "Mark Applied" in the cockpit. Routes any
+    legacy caller to :func:`mark_awaiting_submit` so the row lands in a
+    valid M-2 state instead of writing the now-invalid ``submitted``
+    status.
+
+    Kept temporarily so legacy code paths (the deprecated
+    auto-submit-and-verify flow in ``confirm.py``) don't blow up the
+    CHECK constraint if invoked. ``mark_applied`` is the only path that
+    represents "this application was submitted to the company"; that
+    transition is human-driven via the cockpit's Mark Applied click.
+    """
+    logger.warning(
+        "mark_submitted() is deprecated under M-2; routing job %s to "
+        "awaiting_human_submit (evidence kind=%s, ignored).",
+        job_id, confirmation_evidence.get("kind"),
+    )
+    mark_awaiting_submit(job_id, screenshot_path=None)
 
 
 def mark_needs_review(job_id: str, reason: str, packet_ref: str | None = None) -> None:
-    """Submit-side ``needs_review`` transition for ambiguous post-submit pages.
+    """DEPRECATED — ``needs_review`` was retired by M-2's CHECK enum.
+    Routes to ``failed`` so the cockpit's status banner renders the
+    failure reason; the Browserbase replay URL on application_attempts
+    remains the forensic starting point.
 
-    PR-6 made this the single canonical ``mark_needs_review`` — the M-2
-    deprecated alias on the tailor side (which actually wrote
-    status='failed') was deleted. Tailor-side failures now route to
-    :func:`mark_tailor_failed` instead.
+    Both submit-side and tailor-side failures now share the failed bucket.
+    Tailor-side callers should use :func:`mark_tailor_failed` directly so
+    the additional metadata (uncertain fields, screenshots) is preserved.
     """
+    logger.warning(
+        "mark_needs_review() is deprecated under M-2; routing job %s to "
+        "failed (reason=%s).", job_id, reason,
+    )
     extras: dict[str, Any] = {
-        "status": "needs_review",
+        "status": "failed",
         "status_updated_at": _utcnow(),
         "failure_reason": reason,
     }
     if packet_ref:
         extras["review_packet"] = packet_ref
     _get_client().table("jobs").update(extras).eq("id", job_id).execute()
-    logger.info("job %s -> needs_review (%s)", job_id, reason)
+    logger.info("job %s -> failed (was needs_review; %s)", job_id, reason)
 
 
 def mark_failed(job_id: str, reason: str) -> None:

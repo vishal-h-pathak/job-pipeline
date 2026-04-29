@@ -184,10 +184,7 @@ LATEX_TEMPLATE = r"""
 % ── Education & Skills ─────────────────────────────────────────────────────
 \section{Education \& Technical Skills}
 
-\begin{tabular}{@{}p{4.5cm} p{12.7cm}@{}}
-\textbf{Education} & \textbf{<<SCHOOL>>} -- <<DEGREE>> (<<EDU_PERIOD>>) \\[4pt]
-<<SKILL_ROWS>>
-\end{tabular}
+<<EDU_AND_SKILLS>>
 
 % ── Experience ─────────────────────────────────────────────────────────────
 \section{Experience}
@@ -269,10 +266,117 @@ def _escape_latex_safe(text: str) -> str:
 _escape_latex = _escape_latex_safe
 
 
+# Page typography constants used to fit the Education/Skills block. The
+# document is letterpaper with 0.5in margins, so the usable text width is
+# 8.5in - 2*0.5in = 7.5in ≈ 19.05cm. The original template used 4.5+12.7
+# = 17.2cm and worked fine, so we keep that as the total width budget and
+# vary how it gets split between the two columns.
+_TOTAL_TWO_COL_CM = 17.2
+# Hard cap on the left column. Anything wider than this leaves the right
+# column too narrow to fit a sensible skills sentence; we fall back to a
+# stacked layout instead of pushing past the cap.
+_MAX_LABEL_CM = 7.0
+_MIN_LABEL_CM = 3.5
+# Approximate bold 11pt CMR character width in cm. Empirically, "Evaluation
+# & Infrastructure" (27 chars) doesn't fit in 4.5cm but does in ~6.3cm,
+# which calibrates to roughly 0.22 cm/char + small padding.
+_LABEL_CM_PER_CHAR = 0.22
+_LABEL_PADDING_CM = 0.20
+
+
+def _measure_label_cm(label: str) -> float:
+    """Approximate width of a bold 11pt CMR label in cm."""
+    return len(label) * _LABEL_CM_PER_CHAR + _LABEL_PADDING_CM
+
+
+def _decide_skills_layout(
+    skills: dict, hint: str = "auto",
+) -> tuple[str, float, float]:
+    """Pick the layout and column widths for the Education/Skills block.
+
+    Args:
+        skills: Mapping of category-name → comma-separated skill string.
+        hint: Optional override from the LLM. One of:
+            - ``"auto"`` (default) — pick based on label lengths.
+            - ``"compact"`` — force the original 4.5cm left column.
+            - ``"wide"`` — force the maximum 7.0cm two-column layout.
+            - ``"stacked"`` — force the stacked single-column fallback.
+
+    Returns:
+        Tuple of (layout_name, left_cm, right_cm). For ``"stacked"`` the
+        widths are 0.0 since the renderer doesn't use them.
+    """
+    if hint not in ("auto", "compact", "wide", "stacked"):
+        hint = "auto"
+    if hint == "stacked":
+        return ("stacked", 0.0, 0.0)
+    if hint == "compact":
+        return ("two_col", 4.5, _TOTAL_TWO_COL_CM - 4.5)
+    if hint == "wide":
+        return ("two_col", _MAX_LABEL_CM, _TOTAL_TWO_COL_CM - _MAX_LABEL_CM)
+
+    # Auto: include the literal "Education" row label in the measurement
+    # since it sits in the same column.
+    labels = ["Education"] + list((skills or {}).keys())
+    needed = max((_measure_label_cm(l) for l in labels), default=4.5)
+    if needed > _MAX_LABEL_CM:
+        return ("stacked", 0.0, 0.0)
+    left = max(_MIN_LABEL_CM, min(_MAX_LABEL_CM, round(needed, 1)))
+    return ("two_col", left, round(_TOTAL_TWO_COL_CM - left, 1))
+
+
+def _build_edu_and_skills(
+    skills: dict,
+    school: str,
+    degree: str,
+    edu_period: str,
+    layout_hint: str = "auto",
+) -> str:
+    """Render the entire Education + Technical Skills block.
+
+    Replaces the old fixed-width tabular with a layout that adapts to the
+    longest label the LLM picked. Education sits in the same column so its
+    label width matches the skills labels.
+    """
+    layout, left_cm, right_cm = _decide_skills_layout(skills, layout_hint)
+    edu_value = f"\\textbf{{{school}}} -- {degree} ({edu_period})"
+
+    if layout == "two_col":
+        rows = [
+            f"\\textbf{{Education}} & {edu_value} \\\\[4pt]"
+        ]
+        for category, skill_list in (skills or {}).items():
+            safe_cat = _escape_latex_safe(category)
+            safe_skills = _escape_latex_safe(skill_list)
+            rows.append(f"\\textbf{{{safe_cat}}} & {safe_skills} \\\\")
+        body = "\n".join(rows)
+        return (
+            f"\\begin{{tabular}}{{@{{}}p{{{left_cm}cm}} "
+            f"p{{{right_cm}cm}}@{{}}}}\n"
+            f"{body}\n"
+            f"\\end{{tabular}}"
+        )
+
+    # Stacked: each category on its own line, label bold then value indented.
+    # Used when even the widest two-col layout would wrap a label.
+    blocks = [
+        f"\\textbf{{Education}}\\\\\n\\hspace*{{1em}}{edu_value}"
+    ]
+    for category, skill_list in (skills or {}).items():
+        safe_cat = _escape_latex_safe(category)
+        safe_skills = _escape_latex_safe(skill_list)
+        blocks.append(
+            f"\\textbf{{{safe_cat}}}\\\\\n\\hspace*{{1em}}{safe_skills}"
+        )
+    return "\n\n\\vspace{2pt}\n\n".join(blocks)
+
+
 def _build_skill_rows(skills: dict) -> str:
-    """Build LaTeX table rows for skills section."""
+    """Legacy two-column row builder. Kept as a thin wrapper around the new
+    auto-sizing builder for any caller that still references this name.
+    Use ``_build_edu_and_skills`` for new code."""
     rows = []
-    for category, skill_list in skills.items():
+    for category, skill_list in (skills or {}).items():
         safe_cat = _escape_latex_safe(category)
         safe_skills = _escape_latex_safe(skill_list)
         rows.append(f"\\textbf{{{safe_cat}}} & {safe_skills} \\\\")
@@ -395,13 +499,26 @@ def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
     latex = latex.replace("<<LOCATION>>", BASE_RESUME["location"])
     latex = latex.replace("<<LINKEDIN>>", BASE_RESUME["linkedin"])
     latex = latex.replace("<<WEBSITE>>", BASE_RESUME["website"])
-    latex = latex.replace("<<SCHOOL>>", BASE_RESUME["education"]["school"])
-    latex = latex.replace("<<DEGREE>>", BASE_RESUME["education"]["degree"])
-    latex = latex.replace("<<EDU_PERIOD>>", BASE_RESUME["education"]["period"])
 
-    # Skills
-    skill_rows = _build_skill_rows(tailored.get("skills", BASE_RESUME["skills"]))
-    latex = latex.replace("<<SKILL_ROWS>>", skill_rows)
+    # Education + Skills, with a column width that adapts to the labels the
+    # LLM picked. The ``skills_layout`` hint is optional — the LLM may pass
+    # "auto" (default), "compact", "wide", or "stacked" to override the
+    # auto-fit; anything else is treated as auto.
+    skills_dict = tailored.get("skills") or BASE_RESUME["skills"]
+    layout_hint = (tailored.get("skills_layout") or "auto").lower()
+    edu_skills_block = _build_edu_and_skills(
+        skills=skills_dict,
+        school=BASE_RESUME["education"]["school"],
+        degree=BASE_RESUME["education"]["degree"],
+        edu_period=BASE_RESUME["education"]["period"],
+        layout_hint=layout_hint,
+    )
+    latex = latex.replace("<<EDU_AND_SKILLS>>", edu_skills_block)
+    chosen_layout, _, _ = _decide_skills_layout(skills_dict, layout_hint)
+    logger.info(
+        f"Education/Skills layout: hint={layout_hint!r} → {chosen_layout!r} "
+        f"(longest label = {max([len('Education')] + [len(k) for k in skills_dict.keys()])} chars)"
+    )
 
     # Experience
     exp_blocks = []

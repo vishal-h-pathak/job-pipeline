@@ -1,24 +1,37 @@
 """
 runner.py — Polling loop for the job-submitter agent.
 
-Reads jobs the tailor has marked ready, dispatches each to its ATS adapter
-inside a fresh Browserbase session, runs confirm.py to decide auto-submit
-vs needs_review, records the outcome.
+Reads jobs the cockpit has queued for pre-fill (status='prefilling'),
+dispatches each to its ATS adapter inside a fresh Browserbase session,
+records the outcome, and stops short of clicking Submit. Under the M-2
+career-ops alignment, the human always clicks Submit themselves; the
+submitter's job is to fill the form, take a screenshot, and stand down.
 
 Control flow (per job):
 
-    1. db.get_jobs_ready_for_submission() — pull work
+    1. db.get_jobs_ready_for_submission() — pull 'prefilling' jobs
     2. For each job:
          a. Materials check (resume + CL present, materials_hash matches)
          b. db.mark_submitting() + db.open_attempt()
+            (mark_submitting is now a no-op for status — it stays
+            'prefilling' — the function name is kept for back-compat.)
          c. browser.open_session(application_url)
          d. adapter = router.get_adapter(ats_kind); result = await adapter.run(ctx)
          e. db.record_submission_log(result)
-         f. decision = confirm.decide(result, ats_kind)
-               submit_and_verify -> confirm.click_submit_and_verify() -> mark_submitted | mark_failed
-               route_to_review   -> build review packet, mark_needs_review
-               abort             -> mark_failed
-         g. db.close_attempt()
+         f. Take a "form_filled" screenshot, upload to Storage.
+         g. Branch on adapter result:
+               error / recommend=abort -> db.mark_failed
+               otherwise               -> db.mark_awaiting_submit
+                  (the cockpit shows the screenshot + log + recommend reason;
+                  the human reviews, fixes anything wrong, clicks Submit)
+         h. db.close_attempt()
+
+Note: previous versions of this loop called confirm.click_submit_and_verify
+to auto-click Submit when adapter confidence cleared a threshold. That path
+is intentionally removed under M-2 — no automated path ever clicks Submit.
+confirm.py is left in the repo for now (its decide() helper + ATS success
+signals are still useful reference material for the cockpit's Mark Applied
+flow) but runner.py no longer imports it.
 
 Wired as ``jobpipe-submit = jobpipe.submit.runner:run`` in pyproject.toml
 (see :func:`run` at the bottom of the file).
@@ -56,7 +69,6 @@ from pathlib import Path  # noqa: E402
 
 import jobpipe.db as db  # noqa: E402
 import router  # noqa: E402
-import confirm  # noqa: E402
 import storage  # noqa: E402
 from adapters.base import SubmissionContext  # noqa: E402
 from browser import session as browser_session  # noqa: E402
@@ -66,7 +78,12 @@ from jobpipe.config import (  # noqa: E402
     POLL_INTERVAL_SECONDS,
     SESSION_BUDGET_SECONDS,
 )
-from review_packet import build_packet  # noqa: E402  (PR-5 flatten of review/packet.py)
+# confirm.py and review_packet.py belong to the legacy auto-submit-and-
+# verify flow. M-2 removed that path: the runner pre-fills only and the
+# cockpit renders the structured submission_log + form_filled screenshot
+# directly. Both modules are kept in the repo as reference for the
+# cockpit's Mark Applied verification work, but runner.py no longer
+# imports them.
 
 logging.basicConfig(
     level=logging.INFO,
@@ -125,6 +142,19 @@ async def process_one(job: dict) -> None:
                 timeout=SESSION_BUDGET_SECONDS,
             )
             result.adapter_name = adapter.name
+
+            # M-2: take a "form_filled" screenshot the cockpit can render
+            # inline before any further state changes. Best-effort — a
+            # screenshot failure is not worth aborting the attempt.
+            screenshot_storage_path: str | None = None
+            try:
+                png = await handle.page.screenshot(full_page=True)
+                screenshot_storage_path = storage.upload_review_screenshot(
+                    job_id, label="form_filled", png_bytes=png,
+                )
+            except Exception:
+                logger.exception("post-fill screenshot upload failed")
+
             db.record_submission_log(
                 job_id,
                 log={
@@ -133,60 +163,61 @@ async def process_one(job: dict) -> None:
                     "filled_fields": [f.__dict__ for f in result.filled_fields],
                     "skipped_fields": [s.__dict__ for s in result.skipped_fields],
                     "screenshots": [s.__dict__ for s in result.screenshots],
+                    "form_filled_screenshot_path": screenshot_storage_path,
                     "stagehand_session_id": handle.stagehand_session_id,
                     "browserbase_replay_url": handle.browserbase_replay_url,
                     "agent_reasoning": result.agent_reasoning,
+                    "recommend": result.recommend,
+                    "recommend_reason": result.recommend_reason,
                     "error": result.error,
                 },
                 confidence=result.confidence,
             )
 
-            decision = confirm.decide(result, ats_kind)
-            if decision == "submit_and_verify":
-                outcome = await confirm.click_submit_and_verify(ctx, result)
-                if outcome.decision == "submit_and_verify":
-                    db.mark_submitted(job_id, outcome.evidence)
-                    db.close_attempt(
-                        attempt_id, outcome="submitted",
-                        confidence=result.confidence,
-                        stagehand_session_id=handle.stagehand_session_id,
-                        browserbase_replay_url=handle.browserbase_replay_url,
-                        notes={"evidence": outcome.evidence},
-                    )
-                    return
-                # verification said no — fall through to review
-                decision = "route_to_review"
-
-            if decision == "route_to_review":
-                packet = build_packet(
-                    job, result, attempt_n,
-                    handle.stagehand_session_id,
-                    handle.browserbase_replay_url,
-                    reason=result.recommend_reason or "confidence below threshold",
-                )
-                db.mark_needs_review(job_id, reason=packet["reason"])
+            # Branch on adapter outcome. Under M-2 there are exactly two
+            # post-fill terminal states for the submitter: failed (couldn't
+            # complete pre-fill) and awaiting_human_submit (pre-fill done,
+            # human takes over). The recommend/confidence fields surface
+            # to the cockpit but never trigger an auto-click.
+            if result.error or result.recommend == "abort":
+                db.mark_failed(job_id, reason=result.error or "adapter aborted")
                 db.close_attempt(
-                    attempt_id, outcome="needs_review",
+                    attempt_id, outcome="failed",
                     confidence=result.confidence,
                     stagehand_session_id=handle.stagehand_session_id,
                     browserbase_replay_url=handle.browserbase_replay_url,
-                    notes=packet,
+                    notes={"error": result.error,
+                           "recommend": result.recommend,
+                           "recommend_reason": result.recommend_reason},
                 )
                 return
 
-            # abort
-            db.mark_failed(job_id, reason=result.error or "adapter aborted")
+            db.mark_awaiting_submit(
+                job_id, screenshot_path=screenshot_storage_path,
+            )
+            # application_attempts.outcome enum is independent of jobs.status
+            # and still uses {submitted, needs_review, failed, in_progress}.
+            # We use 'submitted' here to mean "submitter completed its
+            # pre-fill work cleanly" and 'needs_review' to mean "completed
+            # but flagged uncertainty". Neither implies the application was
+            # actually submitted to the company — that only happens when
+            # the human clicks Submit + Mark Applied in the cockpit.
+            audit_outcome = "submitted" if result.recommend == "auto_submit" else "needs_review"
             db.close_attempt(
-                attempt_id, outcome="failed",
+                attempt_id, outcome=audit_outcome,
                 confidence=result.confidence,
                 stagehand_session_id=handle.stagehand_session_id,
                 browserbase_replay_url=handle.browserbase_replay_url,
-                notes={"error": result.error},
+                notes={
+                    "recommend": result.recommend,
+                    "recommend_reason": result.recommend_reason,
+                    "form_filled_screenshot_path": screenshot_storage_path,
+                },
             )
 
     except asyncio.TimeoutError:
-        db.mark_needs_review(job_id, reason=f"session budget ({SESSION_BUDGET_SECONDS}s) exceeded")
-        db.close_attempt(attempt_id, outcome="needs_review", notes={"error": "timeout"})
+        db.mark_failed(job_id, reason=f"session budget ({SESSION_BUDGET_SECONDS}s) exceeded")
+        db.close_attempt(attempt_id, outcome="failed", notes={"error": "timeout"})
     except NotImplementedError as exc:
         # Scaffold-phase guard; clearer than a silent traceback.
         logger.error("scaffold stub hit: %s", exc)

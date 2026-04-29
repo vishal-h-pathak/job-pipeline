@@ -63,6 +63,19 @@ _ASHBY_RESUME_SELECTORS = [
     'input[accept*="application/pdf"]',
 ]
 
+# Phone selector chain for Ashby. Same intl-tel-input coverage motive as
+# Greenhouse — see prepare_dom/greenhouse.py::_GREENHOUSE_PHONE_SELECTORS.
+# Ashby has no Phone entry in a name-map (the adapter falls back to the
+# fuzzy ``input[name*="phone"]`` matcher in ``_ashby_field_selectors``),
+# so the per-form fallback list is the generic ``id`` / ``aria-label``
+# anchors. ``input[type="tel"]:visible`` still leads — intl-tel-input's
+# DOM pattern is library-defined and identical across host ATSes.
+_ASHBY_PHONE_SELECTORS = [
+    'input[type="tel"]:visible',
+    'input[id="phone"]',
+    'input[aria-label="Phone"]',
+]
+
 
 def _ashby_field_selectors(label_text: str) -> list[str]:
     """Ashby falls back to fuzzy ``input[name*="..."]`` matches when the
@@ -118,7 +131,14 @@ class AshbyApplicant(BaseApplicant):
             for label_text, value in field_map.items():
                 if not value:
                     continue
-                if fill_text(page, _ashby_field_selectors(label_text), value, log=logger):
+                if label_text == "Phone":
+                    selectors = (
+                        _ASHBY_PHONE_SELECTORS
+                        + _ashby_field_selectors(label_text)
+                    )
+                else:
+                    selectors = _ashby_field_selectors(label_text)
+                if fill_text(page, selectors, value, log=logger):
                     filled.append(label_text)
 
             notes_parts.append(

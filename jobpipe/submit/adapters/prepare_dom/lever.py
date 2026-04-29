@@ -69,6 +69,20 @@ _LEVER_NAME_MAP = {
     "Website": "urls[Other]",
 }
 
+# Phone selector chain for Lever. Same intl-tel-input coverage motive as
+# Greenhouse — see prepare_dom/greenhouse.py::_GREENHOUSE_PHONE_SELECTORS.
+# intl-tel-input is a generic JS library; its DOM pattern is identical
+# regardless of host ATS, so the same ``type="tel":visible``-first
+# strategy applies. The fallback chain uses Lever's canonical
+# ``name="phone"`` (per ``_LEVER_NAME_MAP``) plus the generic ``id`` /
+# ``aria-label`` anchors.
+_LEVER_PHONE_SELECTORS = [
+    'input[type="tel"]:visible',
+    'input[name="phone"]',
+    'input[id="phone"]',
+    'input[aria-label="Phone"]',
+]
+
 _LEVER_RESUME_SELECTORS = [
     'input[type="file"][name="resume"]',
     'input[type="file"][name*="resume" i]',
@@ -132,10 +146,16 @@ class LeverApplicant(BaseApplicant):
             for label_text, value in field_map.items():
                 if not value:
                     continue
-                selectors = (
-                    name_attr_selectors(_LEVER_NAME_MAP, label_text)
-                    + label_selectors(label_text)
-                )
+                if label_text == "Phone":
+                    selectors = (
+                        _LEVER_PHONE_SELECTORS
+                        + label_selectors(label_text)
+                    )
+                else:
+                    selectors = (
+                        name_attr_selectors(_LEVER_NAME_MAP, label_text)
+                        + label_selectors(label_text)
+                    )
                 if fill_text(page, selectors, value, log=logger):
                     filled.append(label_text)
 

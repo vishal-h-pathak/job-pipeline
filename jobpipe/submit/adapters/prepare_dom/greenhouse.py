@@ -68,6 +68,23 @@ _GREENHOUSE_NAME_MAP = {
     "City": "job_application[location]",
 }
 
+# Phone selector chain for Greenhouse. Leads with
+# ``input[type="tel"]:visible`` because intl-tel-input (used on the
+# Anthropic Fellows form, among others) wraps the real <input type="tel">
+# in a parent that also contains a hidden country-search input. The
+# generic label_selectors chain can match that hidden input first via
+# DOM order, leaving the real tel field empty. The :visible suffix
+# avoids the hidden iti-search match and ``type="tel"`` is
+# semantically the right anchor — name= / id= / aria-label= follow as
+# per-form fallbacks (the canonical Greenhouse name first, then a
+# generic ``id="phone"`` for forms that don't follow that scheme).
+_GREENHOUSE_PHONE_SELECTORS = [
+    'input[type="tel"]:visible',
+    'input[name="job_application[phone]"]',
+    'input[id="phone"]',
+    'input[aria-label="Phone"]',
+]
+
 _GREENHOUSE_RESUME_SELECTORS = [
     'input[type="file"][name="job_application[resume]"]',
     'input[type="file"][name*="resume" i]',
@@ -123,10 +140,16 @@ class GreenhouseApplicant(BaseApplicant):
             for label_text, value in field_map.items():
                 if not value:
                     continue
-                selectors = (
-                    name_attr_selectors(_GREENHOUSE_NAME_MAP, label_text)
-                    + label_selectors(label_text)
-                )
+                if label_text == "Phone":
+                    selectors = (
+                        _GREENHOUSE_PHONE_SELECTORS
+                        + label_selectors(label_text)
+                    )
+                else:
+                    selectors = (
+                        name_attr_selectors(_GREENHOUSE_NAME_MAP, label_text)
+                        + label_selectors(label_text)
+                    )
                 if fill_text(page, selectors, value, log=logger):
                     filled.append(label_text)
 

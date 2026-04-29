@@ -152,6 +152,75 @@ def test_fill_text_returns_false_when_no_selector_matches():
     assert page.fills == []
 
 
+# ── Phone selector ordering (intl-tel-input coverage) ──────────────────────
+
+def test_phone_selectors_pick_visible_tel_before_label_chain():
+    """intl-tel-input wraps a real ``<input type="tel">`` inside a parent
+    that also contains a hidden country-search ``<input>``. The generic
+    ``label_selectors`` chain can match the hidden search input first via
+    DOM order, leaving the real tel field empty (the silent-miss observed
+    on the Anthropic Fellows form). Each per-ATS phone selector list
+    leads with ``input[type="tel"]:visible`` so the tel input wins
+    before the label fallback is even consulted.
+
+    Stub: both the tel-visible selector AND the label-input selector are
+    visible. If the ordering didn't matter, the label selector could
+    have won. The assertion is that only the tel selector got filled
+    and the label fallback was never reached.
+    """
+    from jobpipe.submit.adapters.prepare_dom.greenhouse import (
+        _GREENHOUSE_PHONE_SELECTORS,
+    )
+
+    page = _StubPage({
+        # The phone-specific lead selector — represents the visible
+        # <input type="tel"> that intl-tel-input keeps in the DOM.
+        'input[type="tel"]:visible': {"visible": True},
+        # A generic-label fallback that, if reached, would match the
+        # WRONG element (the hidden iti country-search input the
+        # library injects). Marked visible to prove the ordering — not
+        # because iti-search is actually visible in production.
+        'label:has-text("Phone") input': {"visible": True},
+    })
+
+    full_chain = _GREENHOUSE_PHONE_SELECTORS + label_selectors("Phone")
+    ok = fill_text(page, full_chain, "+1-555-0100")
+
+    assert ok is True
+    assert page.fills == [('input[type="tel"]:visible', "+1-555-0100")]
+    # Walk-through stops at the first visible match — label fallback
+    # never gets queried.
+    assert 'label:has-text("Phone") input' not in page.locator_calls
+
+
+def test_phone_selectors_canonical_order_per_ats():
+    """The three per-ATS phone selector chains all lead with
+    ``input[type="tel"]:visible`` (the intl-tel-input anchor) so the
+    fix has uniform shape across Greenhouse, Lever, and Ashby. Per-ATS
+    fallbacks differ (Greenhouse pins ``name="job_application[phone]"``,
+    Lever pins ``name="phone"``, Ashby has no canonical name and skips
+    that step) — verify the leading selector is identical.
+    """
+    from jobpipe.submit.adapters.prepare_dom.greenhouse import (
+        _GREENHOUSE_PHONE_SELECTORS,
+    )
+    from jobpipe.submit.adapters.prepare_dom.lever import (
+        _LEVER_PHONE_SELECTORS,
+    )
+    from jobpipe.submit.adapters.prepare_dom.ashby import (
+        _ASHBY_PHONE_SELECTORS,
+    )
+
+    for selectors in (
+        _GREENHOUSE_PHONE_SELECTORS,
+        _LEVER_PHONE_SELECTORS,
+        _ASHBY_PHONE_SELECTORS,
+    ):
+        assert selectors[0] == 'input[type="tel"]:visible'
+        assert 'input[id="phone"]' in selectors
+        assert 'input[aria-label="Phone"]' in selectors
+
+
 # ── upload_file ────────────────────────────────────────────────────────────
 
 def test_upload_file_uses_first_selector_with_count_gt_zero():

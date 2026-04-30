@@ -41,8 +41,8 @@ from typing import Any, AsyncIterator
 from jobpipe.config import SESSION_BUDGET_SECONDS
 from jobpipe.submit.config import (
     ANTHROPIC_API_KEY,
-    BROWSERBASE_API_KEY,
-    BROWSERBASE_PROJECT_ID,
+    get_browserbase_api_key,
+    get_browserbase_project_id,
 )
 
 logger = logging.getLogger("submitter.browser")
@@ -118,8 +118,8 @@ async def open_session(url: str) -> AsyncIterator[SessionHandle]:
 
     started = time.time()
     async with AsyncStagehand(
-        browserbase_api_key=BROWSERBASE_API_KEY,
-        browserbase_project_id=BROWSERBASE_PROJECT_ID,
+        browserbase_api_key=get_browserbase_api_key(),
+        browserbase_project_id=get_browserbase_project_id(),
         model_api_key=ANTHROPIC_API_KEY,
     ) as client:
         session = await client.sessions.start(

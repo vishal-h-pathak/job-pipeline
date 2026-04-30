@@ -108,6 +108,16 @@ logging.basicConfig(
 logger = logging.getLogger("pipeline")
 
 
+# ── Cost guards ──────────────────────────────────────────────────────────────
+# Bulk-cron path only — per-row dashboard clicks bypass this. Rows scored
+# below SCORE_THRESHOLD don't get tailored when process_approved_jobs runs
+# every approved row in a loop, since we won't notify or apply to them
+# anyway. When the human clicks Tailor on a specific card, that's an
+# explicit "do the full pipeline" signal and process_one_approved_job
+# runs unconditionally.
+SCORE_THRESHOLD: int = 6
+
+
 def process_one_approved_job(job_id: str) -> None:
     """Tailor a single ``approved`` row end-to-end (PR-14).
 
@@ -284,39 +294,28 @@ def process_one_approved_job(job_id: str) -> None:
         # LLM only drafts why_this_role, why_this_company, optional
         # additional_info, and any role-specific additional_questions.
         #
-        # Gated on score >= 6 (the existing notify threshold) — below
-        # that we won't be applying anyway, so the Sonnet call is
-        # wasted. Generation failures are non-fatal.
-        # TODO: score type drift — some Supabase rows store ``score`` as
-        # a string (e.g. "7"), others as int. ``"7" >= 6`` raises
-        # TypeError in Py3. Coercing locally here so a stray string row
-        # doesn't crash the tailor; investigate upstream writer
-        # separately.
+        # Unconditional here — clicking the dashboard "Tailor" button
+        # implies the user wants the full pipeline regardless of score,
+        # and the bulk-cron cost guard now lives in
+        # process_approved_jobs() (which skips low-score rows before
+        # delegating). Generation failures stay non-fatal so a flaky
+        # LLM call doesn't fail the whole tailor.
         try:
-            score = int(job.get("score") or 0)
-        except (TypeError, ValueError):
-            score = 0
-        if score >= 6:
-            try:
-                form_answers = generate_form_answers(
-                    job, resume_result, archetype_meta=archetype_meta
-                )
-                from jobpipe.db import client as _db_client
-                _db_client.table("jobs").update(
-                    {"form_answers": form_answers}
-                ).eq("id", job_id).execute()
-                logger.info(
-                    f"Form answers generated for {company} "
-                    f"({len(form_answers.get('additional_questions') or [])} "
-                    f"role-specific Qs)"
-                )
-            except Exception as exc:
-                logger.warning(
-                    f"form_answers generation skipped for {company}: {exc}"
-                )
-        else:
+            form_answers = generate_form_answers(
+                job, resume_result, archetype_meta=archetype_meta
+            )
+            from jobpipe.db import client as _db_client
+            _db_client.table("jobs").update(
+                {"form_answers": form_answers}
+            ).eq("id", job_id).execute()
             logger.info(
-                f"form_answers skipped for {company} (score {score} < 6)"
+                f"Form answers generated for {company} "
+                f"({len(form_answers.get('additional_questions') or [])} "
+                f"role-specific Qs)"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"form_answers generation skipped for {company}: {exc}"
             )
 
         # ── Mark ready for review ────────────────────────────────────
@@ -355,6 +354,18 @@ def process_approved_jobs():
     bulk path (cron / CLI / no-arg dashboard click) and the per-row
     path (dashboard "Tailor" button on a single card) share the same
     code.
+
+    Cost guard: skips rows whose score is below
+    :data:`SCORE_THRESHOLD` so the bulk-cron path doesn't burn an
+    LLM call on a row we won't notify or apply to. Per-row dashboard
+    clicks bypass this entirely by calling
+    :func:`process_one_approved_job` directly — clicking Tailor
+    implies the user wants the full pipeline regardless of score.
+
+    Score-type drift: some Supabase rows store ``score`` as a string
+    (e.g. ``"7"``), others as int. ``"7" >= 6`` raises ``TypeError``
+    in Py3, so we coerce locally; investigate upstream writer
+    separately.
     """
     jobs = get_approved_jobs()
     if not jobs:
@@ -363,7 +374,20 @@ def process_approved_jobs():
     logger.info(f"Found {len(jobs)} approved job(s) to process")
 
     for job in jobs:
-        process_one_approved_job(job["id"])
+        job_id = job["id"]
+        try:
+            score = int(job.get("score") or 0)
+        except (TypeError, ValueError):
+            score = 0
+        if score < SCORE_THRESHOLD:
+            company = job.get("company", "Unknown")
+            logger.info(
+                f"Skipping {company} ({job_id}) — score {score} "
+                f"< SCORE_THRESHOLD={SCORE_THRESHOLD} "
+                f"(bulk-cron cost guard; per-row clicks bypass)"
+            )
+            continue
+        process_one_approved_job(job_id)
 
 
 def process_prefill_requested_jobs():

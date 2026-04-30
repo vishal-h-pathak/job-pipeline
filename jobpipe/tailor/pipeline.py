@@ -563,6 +563,7 @@ def process_prefill_requested_jobs():
                         f"Could not upload prefill screenshot: {exc}"
                     )
 
+                bar = "=" * 60
                 if result.get("success"):
                     mark_awaiting_submit(
                         job_id, screenshot_path=screenshot_storage_key
@@ -586,6 +587,18 @@ def process_prefill_requested_jobs():
                     )
                     attempt_closed = True
                     send_awaiting_submit(job, screenshot_storage_key)
+                    print(
+                        f"\n{bar}\n"
+                        f"  Form pre-filled for {company} - {title}\n"
+                        f"  ATS: {ats}  ({type(applicant).__name__})\n"
+                        f"  Browser is open. Review what was typed, click "
+                        f"Submit yourself,\n"
+                        f"  then come back to the dashboard and click "
+                        f"'Mark Applied'.\n"
+                        f"  Press Enter in this terminal to close the browser "
+                        f"when done.\n"
+                        f"{bar}"
+                    )
                 else:
                     fail_notes = result.get("notes") or result.get(
                         "review_reason"
@@ -620,6 +633,16 @@ def process_prefill_requested_jobs():
                     )
                     attempt_closed = True
                     send_failed(job, fail_notes)
+                    print(
+                        f"\n{bar}\n"
+                        f"  Pre-fill failed for {company} - {title}: "
+                        f"{fail_notes}\n"
+                        f"  Browser is still open — manually fix the form "
+                        f"and click Submit yourself if you want.\n"
+                        f"  Press Enter in this terminal to close the browser "
+                        f"when done.\n"
+                        f"{bar}"
+                    )
 
                 # ── BLOCK on terminal input() so the browser stays open ─
                 # The human reviews the visible browser, fixes anything
@@ -627,19 +650,6 @@ def process_prefill_requested_jobs():
                 # the cockpit's form-answer drafts), then comes back here
                 # and presses Enter. The cockpit's "Mark Applied" click
                 # is what flips status to applied — never this code.
-                bar = "=" * 60
-                print(
-                    f"\n{bar}\n"
-                    f"  Form pre-filled for {company} - {title}\n"
-                    f"  ATS: {ats}  ({type(applicant).__name__})\n"
-                    f"  Browser is open. Review what was typed, click "
-                    f"Submit yourself,\n"
-                    f"  then come back to the dashboard and click "
-                    f"'Mark Applied'.\n"
-                    f"  Press Enter in this terminal to close the browser "
-                    f"when done.\n"
-                    f"{bar}"
-                )
                 try:
                     input()
                 except (EOFError, KeyboardInterrupt):

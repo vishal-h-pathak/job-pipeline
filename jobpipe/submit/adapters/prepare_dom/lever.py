@@ -30,6 +30,7 @@ selector lists. The ``BaseApplicant`` import is now the explicit
 import logging
 import time
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 from jobpipe.submit.adapters.applicant_base import BaseApplicant
 from ._common import (
@@ -130,6 +131,26 @@ class LeverApplicant(BaseApplicant):
         notes_parts = []
 
         try:
+            # Lever URLs from the hunt are typically the overview page
+            # (jobs.lever.co/{org}/{job_id}); the application form lives
+            # at /{org}/{job_id}/apply. Lever-specific selectors below
+            # (name="resume", name="comments", name="phone") only exist
+            # on /apply, so without this hop fill_form would survey an
+            # empty page and return success=False. Idempotent — if the
+            # URL already ends in /apply, no extra goto.
+            current = page.url
+            parsed = urlparse(current)
+            path = parsed.path.rstrip("/")
+            if not path.endswith("/apply"):
+                new_path = path + "/apply"
+                target = urlunparse(parsed._replace(path=new_path))
+                logger.info(
+                    f"lever: navigating from overview to form: {target}"
+                )
+                page.goto(
+                    target, wait_until="domcontentloaded", timeout=45000
+                )
+
             page.wait_for_load_state("networkidle", timeout=15000)
             time.sleep(1)
 

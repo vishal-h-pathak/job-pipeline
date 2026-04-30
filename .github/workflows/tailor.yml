@@ -16,6 +16,9 @@ on:
       run_id:
         description: "public.runs.id to update (omit for manual smoke runs)"
         required: false
+      job_id:
+        description: "Single jobs.id to tailor (PR-14). Omit to tailor every approved row."
+        required: false
 
 jobs:
   tailor:
@@ -25,6 +28,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install LaTeX (for resume PDF compile)
+        # ubuntu-latest doesn't ship pdflatex; the tailor pipeline calls
+        # it via jobpipe.tailor.tailor.latex_resume to render the
+        # resume to PDF. --no-install-recommends keeps install at
+        # ~400-600 MB instead of 4+ GB. Verified \usepackage list
+        # against the inline LATEX_TEMPLATE in latex_resume.py — these
+        # four packages cover article + fontenc + geometry + enumitem
+        # + titlesec + hyperref + xcolor + textcomp + Computer Modern.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-base \
+            texlive-latex-recommended \
+            texlive-latex-extra \
+            texlive-fonts-recommended
       - name: Install package
         run: pip install -e .
       - name: Mark run as running
@@ -42,7 +60,11 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: |
-          jobpipe-tailor --once 2>&1 | tee tailor.log
+          if [ -n "${{ inputs.job_id }}" ]; then
+            jobpipe-tailor --once --job-id "${{ inputs.job_id }}" 2>&1 | tee tailor.log
+          else
+            jobpipe-tailor --once 2>&1 | tee tailor.log
+          fi
           echo "EXITCODE=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
       - name: Mark run completed
         if: always() && inputs.run_id != ''

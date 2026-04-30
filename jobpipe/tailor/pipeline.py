@@ -66,6 +66,7 @@ from jobpipe.config import (  # noqa: E402
 )
 from jobpipe.db import (  # noqa: E402
     get_approved_jobs,
+    get_job,
     get_prefill_requested_jobs,
     mark_preparing,
     mark_ready_for_review,
@@ -107,10 +108,253 @@ logging.basicConfig(
 logger = logging.getLogger("pipeline")
 
 
+def process_one_approved_job(job_id: str) -> None:
+    """Tailor a single ``approved`` row end-to-end (PR-14).
+
+    Fetches the row by id, validates ``status == 'approved'``, then runs
+    the same per-row tailoring pipeline that ``process_approved_jobs``
+    runs inside its loop. Two callers:
+
+      - ``process_approved_jobs()`` — the loop body delegates here so
+        the bulk path is the same code as the per-row path.
+      - ``run_tailor_only --job-id <uuid>`` — dashboard "Tailor" button
+        and CLI per-row invocation.
+
+    Returns silently (with a log line) when the row is missing or no
+    longer ``approved`` — guards against a stale dashboard click
+    re-tailoring a row another process already moved on.
+    """
+    job = get_job(job_id)
+    if job is None:
+        logger.warning(
+            f"process_one_approved_job: job not found id={job_id}"
+        )
+        return
+    if job.get("status") != "approved":
+        logger.info(
+            f"process_one_approved_job: skipping {job_id} "
+            f"(status={job.get('status')!r}, not 'approved')"
+        )
+        return
+
+    company = job.get("company", "Unknown")
+    title = job.get("title", "Unknown")
+    url = job.get("url", "")
+
+    logger.info(f"Processing: {company} — {title}")
+
+    # ── Check ATS type ───────────────────────────────────────────────
+    ats = detect_ats(url)
+    if ats == "linkedin":
+        logger.info(f"LinkedIn detected — flagging for manual application")
+        mark_ready_for_review(
+            job_id,
+            application_notes="LinkedIn: human-only application required",
+        )
+        send_awaiting_review(job)
+        return
+
+    # ── Mark as preparing ────────────────────────────────────────────
+    mark_preparing(job_id)
+
+    try:
+        # ── Hydrate the persisted Match Agent chat (if any) into the
+        # job dict so the tailor prompts see Vishal's own framing for
+        # this specific role. The dashboard's MatchAgent.tsx writes
+        # the conversation array to jobs.match_chat after each turn;
+        # here we render it to plain text and store it under the key
+        # the tailor functions expect.
+        chat = job.get("match_chat") or []
+        if chat:
+            transcript_lines = []
+            for msg in chat:
+                role = (msg.get("role") or "").upper()
+                content = (msg.get("content") or "").strip()
+                if not content:
+                    continue
+                transcript_lines.append(f"{role}: {content}")
+            job["match_chat_transcript"] = "\n\n".join(transcript_lines)
+            logger.info(
+                f"Match Agent chat injected for {company} "
+                f"({len(chat)} turns, {len(job['match_chat_transcript'])} chars)"
+            )
+
+        # ── Tailor resume (returns metadata only — no disk writes) ───
+        logger.info(f"Tailoring resume for {company}...")
+        resume_result = tailor_resume(job)
+
+        # ── Generate cover letter text ───────────────────────────────
+        logger.info(f"Generating cover letter for {company}...")
+        cover_result = generate_cover_letter(job, resume_result)
+        cover_text = cover_result.get("cover_letter", "")
+
+        # ── Render LaTeX resume PDF (in-memory) ──────────────────────
+        logger.info(f"Generating tailored LaTeX resume PDF for {company}...")
+        latex_result = generate_tailored_latex(job, resume_result)
+        resume_pdf_bytes = latex_result.get("pdf_bytes")
+        if not latex_result.get("compile_success") or not resume_pdf_bytes:
+            raise RuntimeError(
+                f"Resume PDF compile failed: "
+                f"{latex_result.get('compile_log', '(no log)')[:300]}"
+            )
+
+        # ── Render cover letter PDF (in-memory) ─────────────────────
+        cover_pdf_bytes = render_cover_letter_pdf(
+            cover_text, company=company, role=title,
+        )
+
+        # ── Upload both PDFs to Supabase Storage ────────────────────
+        logger.info(f"Uploading PDFs to Storage for job {job_id}...")
+        resume_storage_path = upload_pdf(job_id, "resume", resume_pdf_bytes)
+        cover_storage_path = upload_pdf(job_id, "cover_letter", cover_pdf_bytes)
+
+        # ── Resolve apply URL (cheap — no agent loop) ───────────────
+        # If the job URL is an aggregator (Remotive, CareerVault, etc.),
+        # find the real ATS apply link via httpx + BeautifulSoup.
+        # No Anthropic calls, no browser.
+        #
+        # The expensive form-fill agent loop has moved to
+        # process_confirmed_jobs — it now only runs after the human
+        # clicks "Confirm Submit" in the dashboard. This keeps the
+        # tailoring phase fast and cheap so materials can be generated
+        # and reviewed without committing to a submission attempt.
+        from url_resolver import resolve_application_url
+        logger.info(f"Resolving apply URL for {company}...")
+        resolved = resolve_application_url(url)
+        resolved_url = resolved.get("resolved") or url
+        resolver_notes = resolved.get("notes", "no resolution needed")
+
+        resolved_ats = detect_ats(resolved_url)
+        applicant = get_applicant(resolved_url)
+        application_notes = (
+            f"ATS: {resolved_ats}\n"
+            f"Original URL: {url}\n"
+            f"Resolved URL: {resolved_url}\n"
+            f"Resolver: {resolver_notes}\n"
+            f"Auto-submittable: "
+            f"{'yes' if applicant else 'no — manual form fill needed'}"
+        )
+
+        # ── Build resume tailoring summary for dashboard ─────────────
+        # Keep it in the resume_path column (TEXT containing JSON) so the
+        # existing ReviewPanel parser works unchanged. The pdf_path key
+        # now references the Supabase Storage object, not a local file.
+        import json
+        resume_summary = json.dumps({
+            "tailored_summary": resume_result.get("tailored_summary", ""),
+            "emphasis_areas": resume_result.get("emphasis_areas", []),
+            "keywords_to_include": resume_result.get("keywords_to_include", []),
+            "experience_order": resume_result.get("experience_order", []),
+            "suggested_bullets": resume_result.get("suggested_bullets", {}),
+            "skills_section": resume_result.get("skills_section", {}),
+            "diff_notes": resume_result.get("diff_notes", ""),
+            "storage_path": resume_storage_path,
+            "compile_success": True,
+        })
+
+        # ── Pull archetype off the resume_result for analytics ──────
+        # tailor_resume() stamps `_archetype` on its return dict (J-4).
+        # Persist the key + confidence so /dashboard/insights and the
+        # pattern-analysis script can group by lane.
+        archetype_meta = resume_result.get("_archetype") or {}
+
+        # ── Generate STAR+R interview stories (J-3) ─────────────────
+        # Side effect of tailoring — accumulate stories into the
+        # star_stories table so before any interview Vishal can pull
+        # 5-10 master stories tagged to the role's archetype + skills.
+        # Failures are non-fatal: tailoring + submission still proceed.
+        try:
+            stories = generate_stories(job, archetype_meta=archetype_meta)
+            if stories:
+                save_stories(
+                    job_id=job_id,
+                    archetype=archetype_meta.get("archetype"),
+                    company=company,
+                    role=title,
+                    stories=stories,
+                )
+                logger.info(f"Generated {len(stories)} STAR+R stories for {company}")
+        except Exception as exc:
+            logger.warning(f"STAR+R generation skipped for {company}: {exc}")
+
+        # ── Generate form-answer drafts (M-1, career-ops "Block H") ──
+        # Authoritative source for the per-ATS DOM handlers (M-3) and
+        # the dashboard cockpit (M-6). Identity / contact / location /
+        # comp / work-auth fields come from profile.yml in Python; the
+        # LLM only drafts why_this_role, why_this_company, optional
+        # additional_info, and any role-specific additional_questions.
+        #
+        # Gated on score >= 6 (the existing notify threshold) — below
+        # that we won't be applying anyway, so the Sonnet call is
+        # wasted. Generation failures are non-fatal.
+        # TODO: score type drift — some Supabase rows store ``score`` as
+        # a string (e.g. "7"), others as int. ``"7" >= 6`` raises
+        # TypeError in Py3. Coercing locally here so a stray string row
+        # doesn't crash the tailor; investigate upstream writer
+        # separately.
+        try:
+            score = int(job.get("score") or 0)
+        except (TypeError, ValueError):
+            score = 0
+        if score >= 6:
+            try:
+                form_answers = generate_form_answers(
+                    job, resume_result, archetype_meta=archetype_meta
+                )
+                from jobpipe.db import client as _db_client
+                _db_client.table("jobs").update(
+                    {"form_answers": form_answers}
+                ).eq("id", job_id).execute()
+                logger.info(
+                    f"Form answers generated for {company} "
+                    f"({len(form_answers.get('additional_questions') or [])} "
+                    f"role-specific Qs)"
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"form_answers generation skipped for {company}: {exc}"
+                )
+        else:
+            logger.info(
+                f"form_answers skipped for {company} (score {score} < 6)"
+            )
+
+        # ── Mark ready for review ────────────────────────────────────
+        # Save the RESOLVED url so process_confirmed_jobs points the
+        # submission agent at the real ATS page, not the aggregator.
+        mark_ready_for_review(
+            job_id,
+            resume_path=resume_summary,
+            cover_letter_path=cover_text,
+            application_url=resolved_url,
+            application_notes=application_notes,
+            resume_pdf_path=resume_storage_path,
+            cover_letter_pdf_path=cover_storage_path,
+            archetype=archetype_meta.get("archetype"),
+            archetype_confidence=archetype_meta.get("confidence"),
+        )
+
+        send_awaiting_review(job)
+        logger.info(f"Ready for review: {company} — {title}")
+
+    except Exception as e:
+        logger.error(f"Failed to process {company} — {title}: {e}")
+        # mark_tailor_failed clears materials by default; the prior
+        # explicit delete_all_for_job is now redundant and removed.
+        mark_tailor_failed(job_id, str(e))
+        send_failed(job, str(e))
+
+
 def process_approved_jobs():
     """
     Phase 1: Pick up approved jobs, tailor materials, fill forms,
     then pause at ready_to_submit for human review.
+
+    PR-14: the per-row body lives in :func:`process_one_approved_job`.
+    This function loops every ``approved`` row and delegates so the
+    bulk path (cron / CLI / no-arg dashboard click) and the per-row
+    path (dashboard "Tailor" button on a single card) share the same
+    code.
     """
     jobs = get_approved_jobs()
     if not jobs:
@@ -119,213 +363,7 @@ def process_approved_jobs():
     logger.info(f"Found {len(jobs)} approved job(s) to process")
 
     for job in jobs:
-        job_id = job["id"]
-        company = job.get("company", "Unknown")
-        title = job.get("title", "Unknown")
-        url = job.get("url", "")
-
-        logger.info(f"Processing: {company} — {title}")
-
-        # ── Check ATS type ───────────────────────────────────────────────
-        ats = detect_ats(url)
-        if ats == "linkedin":
-            logger.info(f"LinkedIn detected — flagging for manual application")
-            mark_ready_for_review(
-                job_id,
-                application_notes="LinkedIn: human-only application required",
-            )
-            send_awaiting_review(job)
-            continue
-
-        # ── Mark as preparing ────────────────────────────────────────────
-        mark_preparing(job_id)
-
-        try:
-            # ── Hydrate the persisted Match Agent chat (if any) into the
-            # job dict so the tailor prompts see Vishal's own framing for
-            # this specific role. The dashboard's MatchAgent.tsx writes
-            # the conversation array to jobs.match_chat after each turn;
-            # here we render it to plain text and store it under the key
-            # the tailor functions expect.
-            chat = job.get("match_chat") or []
-            if chat:
-                transcript_lines = []
-                for msg in chat:
-                    role = (msg.get("role") or "").upper()
-                    content = (msg.get("content") or "").strip()
-                    if not content:
-                        continue
-                    transcript_lines.append(f"{role}: {content}")
-                job["match_chat_transcript"] = "\n\n".join(transcript_lines)
-                logger.info(
-                    f"Match Agent chat injected for {company} "
-                    f"({len(chat)} turns, {len(job['match_chat_transcript'])} chars)"
-                )
-
-            # ── Tailor resume (returns metadata only — no disk writes) ───
-            logger.info(f"Tailoring resume for {company}...")
-            resume_result = tailor_resume(job)
-
-            # ── Generate cover letter text ───────────────────────────────
-            logger.info(f"Generating cover letter for {company}...")
-            cover_result = generate_cover_letter(job, resume_result)
-            cover_text = cover_result.get("cover_letter", "")
-
-            # ── Render LaTeX resume PDF (in-memory) ──────────────────────
-            logger.info(f"Generating tailored LaTeX resume PDF for {company}...")
-            latex_result = generate_tailored_latex(job, resume_result)
-            resume_pdf_bytes = latex_result.get("pdf_bytes")
-            if not latex_result.get("compile_success") or not resume_pdf_bytes:
-                raise RuntimeError(
-                    f"Resume PDF compile failed: "
-                    f"{latex_result.get('compile_log', '(no log)')[:300]}"
-                )
-
-            # ── Render cover letter PDF (in-memory) ─────────────────────
-            cover_pdf_bytes = render_cover_letter_pdf(
-                cover_text, company=company, role=title,
-            )
-
-            # ── Upload both PDFs to Supabase Storage ────────────────────
-            logger.info(f"Uploading PDFs to Storage for job {job_id}...")
-            resume_storage_path = upload_pdf(job_id, "resume", resume_pdf_bytes)
-            cover_storage_path = upload_pdf(job_id, "cover_letter", cover_pdf_bytes)
-
-            # ── Resolve apply URL (cheap — no agent loop) ───────────────
-            # If the job URL is an aggregator (Remotive, CareerVault, etc.),
-            # find the real ATS apply link via httpx + BeautifulSoup.
-            # No Anthropic calls, no browser.
-            #
-            # The expensive form-fill agent loop has moved to
-            # process_confirmed_jobs — it now only runs after the human
-            # clicks "Confirm Submit" in the dashboard. This keeps the
-            # tailoring phase fast and cheap so materials can be generated
-            # and reviewed without committing to a submission attempt.
-            from url_resolver import resolve_application_url
-            logger.info(f"Resolving apply URL for {company}...")
-            resolved = resolve_application_url(url)
-            resolved_url = resolved.get("resolved") or url
-            resolver_notes = resolved.get("notes", "no resolution needed")
-
-            resolved_ats = detect_ats(resolved_url)
-            applicant = get_applicant(resolved_url)
-            application_notes = (
-                f"ATS: {resolved_ats}\n"
-                f"Original URL: {url}\n"
-                f"Resolved URL: {resolved_url}\n"
-                f"Resolver: {resolver_notes}\n"
-                f"Auto-submittable: "
-                f"{'yes' if applicant else 'no — manual form fill needed'}"
-            )
-
-            # ── Build resume tailoring summary for dashboard ─────────────
-            # Keep it in the resume_path column (TEXT containing JSON) so the
-            # existing ReviewPanel parser works unchanged. The pdf_path key
-            # now references the Supabase Storage object, not a local file.
-            import json
-            resume_summary = json.dumps({
-                "tailored_summary": resume_result.get("tailored_summary", ""),
-                "emphasis_areas": resume_result.get("emphasis_areas", []),
-                "keywords_to_include": resume_result.get("keywords_to_include", []),
-                "experience_order": resume_result.get("experience_order", []),
-                "suggested_bullets": resume_result.get("suggested_bullets", {}),
-                "skills_section": resume_result.get("skills_section", {}),
-                "diff_notes": resume_result.get("diff_notes", ""),
-                "storage_path": resume_storage_path,
-                "compile_success": True,
-            })
-
-            # ── Pull archetype off the resume_result for analytics ──────
-            # tailor_resume() stamps `_archetype` on its return dict (J-4).
-            # Persist the key + confidence so /dashboard/insights and the
-            # pattern-analysis script can group by lane.
-            archetype_meta = resume_result.get("_archetype") or {}
-
-            # ── Generate STAR+R interview stories (J-3) ─────────────────
-            # Side effect of tailoring — accumulate stories into the
-            # star_stories table so before any interview Vishal can pull
-            # 5-10 master stories tagged to the role's archetype + skills.
-            # Failures are non-fatal: tailoring + submission still proceed.
-            try:
-                stories = generate_stories(job, archetype_meta=archetype_meta)
-                if stories:
-                    save_stories(
-                        job_id=job_id,
-                        archetype=archetype_meta.get("archetype"),
-                        company=company,
-                        role=title,
-                        stories=stories,
-                    )
-                    logger.info(f"Generated {len(stories)} STAR+R stories for {company}")
-            except Exception as exc:
-                logger.warning(f"STAR+R generation skipped for {company}: {exc}")
-
-            # ── Generate form-answer drafts (M-1, career-ops "Block H") ──
-            # Authoritative source for the per-ATS DOM handlers (M-3) and
-            # the dashboard cockpit (M-6). Identity / contact / location /
-            # comp / work-auth fields come from profile.yml in Python; the
-            # LLM only drafts why_this_role, why_this_company, optional
-            # additional_info, and any role-specific additional_questions.
-            #
-            # Gated on score >= 6 (the existing notify threshold) — below
-            # that we won't be applying anyway, so the Sonnet call is
-            # wasted. Generation failures are non-fatal.
-            # TODO: score type drift — some Supabase rows store ``score`` as
-            # a string (e.g. "7"), others as int. ``"7" >= 6`` raises
-            # TypeError in Py3. Coercing locally here so a stray string row
-            # doesn't crash the tailor; investigate upstream writer
-            # separately.
-            try:
-                score = int(job.get("score") or 0)
-            except (TypeError, ValueError):
-                score = 0
-            if score >= 6:
-                try:
-                    form_answers = generate_form_answers(
-                        job, resume_result, archetype_meta=archetype_meta
-                    )
-                    from jobpipe.db import client as _db_client
-                    _db_client.table("jobs").update(
-                        {"form_answers": form_answers}
-                    ).eq("id", job_id).execute()
-                    logger.info(
-                        f"Form answers generated for {company} "
-                        f"({len(form_answers.get('additional_questions') or [])} "
-                        f"role-specific Qs)"
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        f"form_answers generation skipped for {company}: {exc}"
-                    )
-            else:
-                logger.info(
-                    f"form_answers skipped for {company} (score {score} < 6)"
-                )
-
-            # ── Mark ready for review ────────────────────────────────────
-            # Save the RESOLVED url so process_confirmed_jobs points the
-            # submission agent at the real ATS page, not the aggregator.
-            mark_ready_for_review(
-                job_id,
-                resume_path=resume_summary,
-                cover_letter_path=cover_text,
-                application_url=resolved_url,
-                application_notes=application_notes,
-                resume_pdf_path=resume_storage_path,
-                cover_letter_pdf_path=cover_storage_path,
-                archetype=archetype_meta.get("archetype"),
-                archetype_confidence=archetype_meta.get("confidence"),
-            )
-
-            send_awaiting_review(job)
-            logger.info(f"Ready for review: {company} — {title}")
-
-        except Exception as e:
-            logger.error(f"Failed to process {company} — {title}: {e}")
-            # mark_tailor_failed clears materials by default; the prior
-            # explicit delete_all_for_job is now redundant and removed.
-            mark_tailor_failed(job_id, str(e))
-            send_failed(job, str(e))
+        process_one_approved_job(job["id"])
 
 
 def process_prefill_requested_jobs():
@@ -851,6 +889,11 @@ def run_tailor_only() -> None:
         "--test-tailor", metavar="JOB_ID",
         help="Test material generation for a job (no status changes)",
     )
+    parser.add_argument(
+        "--job-id", metavar="JOB_ID", default=None,
+        help="Tailor a single approved row by id (PR-14 per-row tailor). "
+             "When omitted, tailors every row with status='approved'.",
+    )
     args = parser.parse_args()
 
     if args.status:
@@ -862,7 +905,10 @@ def run_tailor_only() -> None:
         return
 
     logger.info(f"=== Tailor cycle at {datetime.utcnow().isoformat()} ===")
-    process_approved_jobs()
+    if args.job_id:
+        process_one_approved_job(args.job_id)
+    else:
+        process_approved_jobs()
 
 
 def run_submit_only() -> None:

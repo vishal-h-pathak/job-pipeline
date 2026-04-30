@@ -16,6 +16,9 @@ on:
       run_id:
         description: "public.runs.id to update (omit for manual smoke runs)"
         required: false
+      job_id:
+        description: "Single jobs.id to tailor (PR-14). Omit to tailor every approved row."
+        required: false
 
 jobs:
   tailor:
@@ -42,7 +45,11 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: |
-          jobpipe-tailor --once 2>&1 | tee tailor.log
+          if [ -n "${{ inputs.job_id }}" ]; then
+            jobpipe-tailor --once --job-id "${{ inputs.job_id }}" 2>&1 | tee tailor.log
+          else
+            jobpipe-tailor --once 2>&1 | tee tailor.log
+          fi
           echo "EXITCODE=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
       - name: Mark run completed
         if: always() && inputs.run_id != ''

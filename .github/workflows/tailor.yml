@@ -59,13 +59,6 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          # Leftover coupling from pre-PR-11: tailor.url_resolver imports
-          # from jobpipe.submit.config which require_env's the Browserbase
-          # keys at import time. PR-15 will remove the coupling itself;
-          # in the meantime the workflow needs them present so the import
-          # succeeds.
-          BROWSERBASE_API_KEY: ${{ secrets.BROWSERBASE_API_KEY }}
-          BROWSERBASE_PROJECT_ID: ${{ secrets.BROWSERBASE_PROJECT_ID }}
         run: |
           if [ -n "${{ inputs.job_id }}" ]; then
             jobpipe-tailor --once --job-id "${{ inputs.job_id }}" 2>&1 | tee tailor.log

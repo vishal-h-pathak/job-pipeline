@@ -28,6 +28,7 @@ no longer depends on the legacy tailor sys.path bootstrap.
 import logging
 import time
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 from jobpipe.submit.adapters.applicant_base import BaseApplicant
 from ._common import (
@@ -124,6 +125,24 @@ class AshbyApplicant(BaseApplicant):
         notes_parts = []
 
         try:
+            # Ashby URLs from the hunt are typically the overview page
+            # (jobs.ashbyhq.com/{org}/{job_id}); the application form lives
+            # at /{org}/{job_id}/application. Without this hop the surveyor
+            # finds an empty page and returns success=False. Idempotent —
+            # if the URL already ends in /application, no extra goto.
+            current = page.url
+            parsed = urlparse(current)
+            path = parsed.path.rstrip("/")
+            if not path.endswith("/application"):
+                new_path = path + "/application"
+                target = urlunparse(parsed._replace(path=new_path))
+                logger.info(
+                    f"ashby: navigating from overview to form: {target}"
+                )
+                page.goto(
+                    target, wait_until="domcontentloaded", timeout=45000
+                )
+
             page.wait_for_load_state("networkidle", timeout=15000)
             time.sleep(2)  # extra buffer for React hydration
 

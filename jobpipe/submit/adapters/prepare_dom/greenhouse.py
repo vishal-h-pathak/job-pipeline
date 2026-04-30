@@ -7,6 +7,15 @@ over label-based heuristics. Uses ``job["form_answers"]`` (M-1) as the
 authoritative source of identity / contact / location values — zero
 Anthropic API calls.
 
+Greenhouse loads the form directly on the canonical job URL — no
+overview-to-form navigation needed, unlike Ashby and Lever (PR-22). The
+sibling ``prepare_dom/ashby.py`` appends ``/application`` and
+``prepare_dom/lever.py`` appends ``/apply`` before surveying because their
+URL spaces split overview vs. form. Greenhouse does not, so this adapter
+operates directly on whatever URL the orchestrator hands it. If a future
+Greenhouse template introduces a separate overview page, mirror the PR-22
+URL-prepend pattern from those siblings.
+
 Same shape as ``prepare_dom/ashby.py``: static ``detect()``, ``fill_form()``
 returning ``{success, screenshot_path, notes, fields_filled}``. Does NOT
 click Submit. After M-5 the orchestrator screenshots, marks the row

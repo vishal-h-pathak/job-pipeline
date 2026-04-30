@@ -1,0 +1,65 @@
+name: hunt
+
+# Dashboard "Run hunt" button + daily cron.
+#
+# The portfolio dashboard's RunsPanel inserts a public.runs row at click
+# time (status='pending') and dispatches this workflow with the row id as
+# the `run_id` input. scripts/mark_run.py transitions that row through
+# running → completed/failed and attaches the GHA run URL + tail-of-log
+# so the panel can link out and surface failures inline.
+#
+# The daily cron fires the same workflow without a run_id; in that case
+# every mark_run step is skipped (the `if: inputs.run_id != ''` guard)
+# and the run produces no public.runs audit row — the GitHub Actions log
+# itself is the only artifact for cron-triggered runs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "local_remote | us_wide"
+        required: false
+        default: "local_remote"
+      run_id:
+        description: "public.runs.id to update (omit for cron / manual smoke runs)"
+        required: false
+  schedule:
+    - cron: "0 14 * * *"
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: pip install -e .
+      - name: Mark run as running
+        if: inputs.run_id != ''
+        run: python scripts/mark_run.py ${{ inputs.run_id }} running
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      - name: Hunt
+        id: hunt
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          jobpipe-hunt --once --mode "${{ inputs.mode || 'local_remote' }}" 2>&1 | tee hunt.log
+          echo "EXITCODE=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+      - name: Mark run completed
+        if: always() && inputs.run_id != ''
+        run: |
+          python scripts/mark_run.py ${{ inputs.run_id }} \
+            ${{ steps.hunt.outputs.EXITCODE == '0' && 'completed' || 'failed' }} \
+            --log "$(tail -50 hunt.log)" \
+            --gha-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

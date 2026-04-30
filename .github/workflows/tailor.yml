@@ -1,0 +1,56 @@
+name: tailor
+
+# Dashboard "Run tailor" button. Manual-only — no cron because PR-13's
+# split made jobpipe-tailor tailor-only (it processes status='approved'
+# rows), and there's no value in firing it on a clock without fresh
+# human approvals to pick up.
+#
+# Wiring matches hunt.yml: portfolio's RunsPanel inserts a public.runs
+# row at click time, dispatches this workflow with the row id as the
+# `run_id` input, and scripts/mark_run.py transitions the row through
+# running → completed/failed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "public.runs.id to update (omit for manual smoke runs)"
+        required: false
+
+jobs:
+  tailor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: pip install -e .
+      - name: Mark run as running
+        if: inputs.run_id != ''
+        run: python scripts/mark_run.py ${{ inputs.run_id }} running
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      - name: Tailor
+        id: tailor
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          jobpipe-tailor --once 2>&1 | tee tailor.log
+          echo "EXITCODE=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+      - name: Mark run completed
+        if: always() && inputs.run_id != ''
+        run: |
+          python scripts/mark_run.py ${{ inputs.run_id }} \
+            ${{ steps.tailor.outputs.EXITCODE == '0' && 'completed' || 'failed' }} \
+            --log "$(tail -50 tailor.log)" \
+            --gha-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

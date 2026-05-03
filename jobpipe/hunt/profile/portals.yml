@@ -13,13 +13,14 @@
 #   3. Run the hunter once and check `agent.log` for warnings — slugs
 #      that 404 are dropped silently with a warning so they don't break
 #      the run, but you should still remove dead entries.
+#
+# Audit history and unrecovered portals: see jobpipe/hunt/FOLLOWUPS.md.
 
 # ──────────────────────────────────────────────────────────────────────────
 # Greenhouse — public boards-api.greenhouse.io
 # ──────────────────────────────────────────────────────────────────────────
 greenhouse:
   companies:
-    # Confirmed via 2026-04-26 hunter run (200 responses)
     - slug: neuralink
       name: Neuralink
     - slug: anthropic
@@ -28,46 +29,70 @@ greenhouse:
       name: DeepMind
     - slug: scaleai
       name: Scale AI
-    - slug: recursionpharma
+    # 2026-05-03: slug corrected from 'recursionpharma' (404) -> 'recursionpharmaceuticals'.
+    - slug: recursionpharmaceuticals
       name: Recursion
-    - slug: insitro
-      name: Insitro
+    # 2026-05-03: insitro Greenhouse board returned 404; live on Ashby instead.
+    # - slug: insitro
+    #   name: Insitro
     - slug: databricks
       name: Databricks
-    - slug: anyscale
-      name: Anyscale
-    - slug: weightsandbiases
-      name: Weights & Biases
-    - slug: runwayml
-      name: Runway
+    # 2026-05-03: anyscale migrated to Ashby (per their own Lever-board notice).
+    # - slug: anyscale
+    #   name: Anyscale
+    # 2026-05-03: replaces 'weightsandbiases' (404). W&B was acquired by CoreWeave;
+    # the W&B Greenhouse board was consolidated into CoreWeave's. The new board has
+    # 244 jobs (vs. ~30-50 W&B-only) and mixes ML/W&B-relevant roles with cloud-ops
+    # and sales. Per-portal title-filter override is a tracked follow-up — see
+    # FOLLOWUPS.md.
+    - slug: coreweave
+      name: CoreWeave (W&B)
+    # 2026-05-03: runwayml Greenhouse API returned 404; live on Ashby (slug: runway-ml).
+    # - slug: runwayml
+    #   name: Runway
     - slug: stabilityai
       name: Stability AI
     - slug: atomwise
       name: Atomwise
     - slug: isomorphiclabs
       name: Isomorphic Labs
+    # 2026-05-03: migrated from Lever (was lever:togetherai, 404). 51 jobs.
+    - slug: togetherai
+      name: Together AI
+    # 2026-05-03: migrated from Ashby (was ashby:glean, 404). 161 jobs at this slug.
+    - slug: gleanwork
+      name: Glean
 
 # ──────────────────────────────────────────────────────────────────────────
 # Lever — api.lever.co/v0/postings/<slug>
 # ──────────────────────────────────────────────────────────────────────────
+# 2026-05-03: All previous Lever entries went 404. The commented entries below
+# document what each one became. See FOLLOWUPS.md for the unrecovered ones.
 lever:
   companies:
     # Neurotech / BCI (Tier 1)
-    - slug: rainai
-      name: Rain AI
-    - slug: synchron
-      name: Synchron
-    - slug: paradromics
-      name: Paradromics
-    - slug: cortical
-      name: Cortical Labs
+    # 2026-05-03: Rain AI (T1 neuromorphic) migrated to Ashby; live at ashby:rain.
+    # - slug: rainai
+    #   name: Rain AI
+    # 2026-05-03: Synchron (T1 BCI) moved to ADP WorkforceNow (unsupported). See FOLLOWUPS.md.
+    # - slug: synchron
+    #   name: Synchron
+    # 2026-05-03: Paradromics (T1 BCI) moved to ApplyToJob (unsupported). See FOLLOWUPS.md.
+    # - slug: paradromics
+    #   name: Paradromics
+    # 2026-05-03: Cortical Labs (T1 biocomputing) uses a custom interest form (no ATS). See FOLLOWUPS.md.
+    # - slug: cortical
+    #   name: Cortical Labs
     # AI labs / infra
-    - slug: groq
-      name: Groq
-    - slug: togetherai
-      name: Together AI
-    - slug: writer
-      name: Writer
+    # 2026-05-03: Groq moved to Gem (unsupported). See FOLLOWUPS.md.
+    # - slug: groq
+    #   name: Groq
+    # 2026-05-03: Together AI migrated to Greenhouse (slug: togetherai).
+    # - slug: togetherai
+    #   name: Together AI
+    # 2026-05-03: Writer migrated to Ashby (slug: writer).
+    # - slug: writer
+    #   name: Writer
 
 # ──────────────────────────────────────────────────────────────────────────
 # Ashby — api.ashbyhq.com/posting-api/job-board/<slug>
@@ -75,9 +100,13 @@ lever:
 ashby:
   companies:
     # AI infrastructure / inference platforms
-    - slug: replicate
-      name: Replicate
-    - slug: modal-labs
+    # 2026-05-03: Replicate's Ashby posting API returns 404 even though
+    # jobs.ashbyhq.com/replicate exists — board is set to non-public. Re-poll
+    # quarterly. See FOLLOWUPS.md.
+    # - slug: replicate
+    #   name: Replicate
+    # 2026-05-03: slug corrected from 'modal-labs' (404) -> 'modal'.
+    - slug: modal
       name: Modal Labs
     - slug: posthog
       name: PostHog
@@ -90,19 +119,41 @@ ashby:
       name: Decagon
     - slug: sierra
       name: Sierra
-    - slug: glean
-      name: Glean
-    - slug: sakanaai
-      name: Sakana AI
-    - slug: rekaai
+    # 2026-05-03: Glean migrated to Greenhouse (slug: gleanwork).
+    # - slug: glean
+    #   name: Glean
+    # 2026-05-03: Sakana AI uses Google Forms + email (no ATS). See FOLLOWUPS.md.
+    # - slug: sakanaai
+    #   name: Sakana AI
+    # 2026-05-03: slug corrected from 'rekaai' (404) -> 'reka'.
+    - slug: reka
       name: Reka AI
-    - slug: factoryai
+    # 2026-05-03: slug corrected from 'factoryai' (404) -> 'factory'.
+    - slug: factory
       name: Factory AI
     # Vector DB / retrieval (sales-eng targets)
-    - slug: pineconeio
+    # 2026-05-03: slug corrected from 'pineconeio' (404) -> 'pinecone'.
+    - slug: pinecone
       name: Pinecone
     - slug: weaviate
       name: Weaviate
+    # 2026-05-03: migrated from Lever (was lever:rainai, 404). T1 neuromorphic — 68 jobs.
+    - slug: rain
+      name: Rain AI
+    # 2026-05-03: migrated from Lever (was lever:writer, 404). 48 jobs.
+    - slug: writer
+      name: Writer
+    # 2026-05-03: migrated from Greenhouse (was greenhouse:insitro, 404). 13 jobs.
+    - slug: insitro
+      name: Insitro
+    # 2026-05-03: migrated from Greenhouse (was greenhouse:anyscale, 404). 7 jobs.
+    - slug: anyscale
+      name: Anyscale
+    # 2026-05-03: migrated from Greenhouse (was greenhouse:runwayml, 404). NB:
+    # ashby:runway is a different company (Runway Finance); the video-AI Runway
+    # is at slug 'runway-ml'.
+    - slug: runway-ml
+      name: Runway
 
 # ──────────────────────────────────────────────────────────────────────────
 # Workday — <tenant>.wd<N>.myworkdayjobs.com/<site>
@@ -183,3 +234,14 @@ title_filter:
     - "lead"
     - "sr."
     - "sr "
+
+# ──────────────────────────────────────────────────────────────────────────
+# TODO — ATS support follow-ups (see jobpipe/hunt/FOLLOWUPS.md).
+# As of 2026-05-03 the following dead portals could not be auto-recovered:
+#   - Synchron (T1 BCI) — ADP WorkforceNow
+#   - Paradromics (T1 BCI) — ApplyToJob (Resumator)
+#   - Groq — Gem
+#   - Cortical Labs (T1 biocomputing) — custom interest form (drop)
+#   - Replicate — Ashby private posting API (drop, re-poll quarterly)
+#   - Sakana AI — Google Forms (drop)
+# ──────────────────────────────────────────────────────────────────────────

@@ -76,6 +76,20 @@ def test_jobpipe_submit_points_at_run_submit_only():
     )
 
 
+def test_jobpipe_tailor_one_points_at_manual_cli():
+    """PR-tailor-manual-url: ``jobpipe-tailor-one <URL>`` resolves a
+    pasted posting URL into a tailored row (high confidence) or a
+    review-bound row (low confidence — Amendment 1). Entry point lives
+    at ``jobpipe.tailor.manual.cli:run`` so the GHA tailor-manual.yml
+    workflow can invoke it from the dashboard trigger.
+    """
+    scripts = _project_scripts()
+    assert (
+        scripts.get("jobpipe-tailor-one")
+        == "jobpipe.tailor.manual.cli:run"
+    )
+
+
 def test_jobpipe_submit_does_not_point_at_legacy_runner():
     """Belt-and-braces guard against accidental revert.
 

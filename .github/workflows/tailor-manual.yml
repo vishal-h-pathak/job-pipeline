@@ -1,0 +1,89 @@
+name: tailor-manual
+
+# Dashboard "Tailor manual URL" submit. Triggered by the portfolio
+# /api/dashboard/runs/tailor-manual route (step ④). The portfolio
+# inserts a public.runs row (kind='tailor_manual', args={"url": ...}),
+# dispatches this workflow with the row id as `run_id` and the pasted
+# URL as `url`, and the CLI writes runs.result with the scraped
+# job_id + final status + dashboard URL the form polls for.
+#
+# Mirrors tailor.yml's secrets, LaTeX setup, and mark_run lifecycle.
+# Adds Playwright Chromium install — needed for the generic-fallback
+# scraper on non-Greenhouse/Lever/Ashby URLs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "public.runs.id to update with the scrape result"
+        required: false
+      url:
+        description: "Posting URL to scrape + tailor"
+        required: true
+
+jobs:
+  tailor-manual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install LaTeX (for resume PDF compile on high-confidence path)
+        # Same package set as tailor.yml — the high-confidence branch of
+        # jobpipe-tailor-one calls process_one_approved_job which uses
+        # jobpipe.tailor.tailor.latex_resume to render the resume PDF.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-base \
+            texlive-latex-recommended \
+            texlive-latex-extra \
+            texlive-fonts-recommended
+
+      - name: Install package
+        run: pip install -e .
+
+      - name: Install Playwright Chromium (for generic-fallback scrape)
+        # Generic fallback (non-Greenhouse/Lever/Ashby URLs) renders the
+        # posting page through headless Chromium to find JSON-LD
+        # JobPosting or og: meta. Lazy import — skips at runtime if the
+        # per-ATS path matches first.
+        run: |
+          python -m playwright install --with-deps chromium
+
+      - name: Mark run as running
+        if: inputs.run_id != ''
+        run: python scripts/mark_run.py ${{ inputs.run_id }} running
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      - name: Tailor manual URL
+        id: tailor
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          if [ -n "${{ inputs.run_id }}" ]; then
+            jobpipe-tailor-one "${{ inputs.url }}" --run-id "${{ inputs.run_id }}" 2>&1 \
+              | tee tailor-manual.log
+          else
+            jobpipe-tailor-one "${{ inputs.url }}" 2>&1 | tee tailor-manual.log
+          fi
+          echo "EXITCODE=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Mark run completed
+        if: always() && inputs.run_id != ''
+        run: |
+          python scripts/mark_run.py ${{ inputs.run_id }} \
+            ${{ steps.tailor.outputs.EXITCODE == '0' && 'completed' || 'failed' }} \
+            --log "$(tail -50 tailor-manual.log)" \
+            --gha-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

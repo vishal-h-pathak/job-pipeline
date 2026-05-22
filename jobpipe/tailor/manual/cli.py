@@ -31,7 +31,7 @@ import logging
 import sys
 from typing import Optional
 
-from . import ScrapeError, UnsupportedUrl
+from . import ScrapeError, ScrapedPosting, UnsupportedUrl
 from .resolve import resolve_url
 from .upsert import CollisionError, upsert_manual_job
 
@@ -57,6 +57,42 @@ def _tailor_one(job_id: str) -> str:
     process_one_approved_job(job_id)
     row = get_job(job_id) or {}
     return (row.get("status") or "unknown").strip()
+
+
+def _write_run_result(run_id: str, payload: dict) -> None:
+    """Best-effort write of the scrape outcome into public.runs.result.
+
+    Pre-migration-009 (no result column) or any other DB error is logged
+    and swallowed — the dashboard form also reads runs.log_excerpt for
+    correlation, so this is a UX nicety rather than a correctness gate.
+    """
+    try:
+        from jobpipe import db as _db_module
+        _db_module.client.table("runs").update(
+            {"result": payload}
+        ).eq("id", run_id).execute()
+        logger.info("manual: wrote runs.result for run_id=%s", run_id)
+    except Exception as exc:  # noqa: BLE001 — tolerate missing column / network
+        logger.warning(
+            "manual: failed to write runs.result for %s: %s "
+            "(continuing — dashboard will fall back to log_excerpt)",
+            run_id, exc,
+        )
+
+
+def _result_payload(
+    posting: ScrapedPosting, job_id: str, final_status: str, *,
+    review_url: Optional[str] = None, materials_url: Optional[str] = None,
+) -> dict:
+    return {
+        "job_id": job_id,
+        "status": final_status,
+        "confidence": posting.confidence,
+        "title": posting.title,
+        "company": posting.company,
+        "review_url": review_url,
+        "materials_url": materials_url,
+    }
 
 
 def run(argv: Optional[list[str]] = None) -> int:
@@ -122,17 +158,28 @@ def run(argv: Optional[list[str]] = None) -> int:
             "low-confidence scrape — landed at status='discovered'; review URL: %s",
             review,
         )
-        # Single line stdout so the GHA log + the runs.result writer in
-        # step ③ can parse without ambiguity.
+        if args.run_id:
+            _write_run_result(
+                args.run_id,
+                _result_payload(
+                    posting, job_id, final_status, review_url=review,
+                ),
+            )
+        # Single line stdout so the GHA log scraper can parse without ambiguity.
         print(f"job_id={job_id} status=discovered review_url={review}")
         return 0
 
     # High-confidence path.
     end_status = _tailor_one(job_id)
-    print(
-        f"job_id={job_id} status={end_status} "
-        f"materials_url={_materials_url(job_id)}"
-    )
+    materials = _materials_url(job_id)
+    if args.run_id:
+        _write_run_result(
+            args.run_id,
+            _result_payload(
+                posting, job_id, end_status, materials_url=materials,
+            ),
+        )
+    print(f"job_id={job_id} status={end_status} materials_url={materials}")
     return 0
 
 

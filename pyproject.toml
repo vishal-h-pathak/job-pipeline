@@ -63,6 +63,14 @@ jobpipe-hunt = "jobpipe.hunt.agent:run"
 # PR-13 reused the ``jobpipe-submit`` script name on purpose.
 jobpipe-tailor = "jobpipe.tailor.pipeline:run_tailor_only"
 jobpipe-submit = "jobpipe.tailor.pipeline:run_submit_only"
+# PR-tailor-manual-url: manual job-URL tailor — paste a posting URL,
+# resolve it through the per-ATS scrapers (Greenhouse / Lever / Ashby)
+# or the Playwright generic fallback, upsert a jobs row, and either run
+# process_one_approved_job inline (high-confidence) or land it at
+# status='discovered' for the dashboard review surface (low-confidence,
+# Amendment 1). Triggered from the portfolio dashboard via the
+# tailor-manual.yml GHA workflow.
+jobpipe-tailor-one = "jobpipe.tailor.manual.cli:run"
 
 [tool.setuptools]
 # Each listed package needs to be installed so setuptools wires up the
@@ -78,6 +86,7 @@ packages = [
     "jobpipe.tailor",
     "jobpipe.tailor.tailor",
     "jobpipe.tailor.interview_prep",
+    "jobpipe.tailor.manual",
     "jobpipe.tailor.prompts",
     "jobpipe.tailor.scripts",
     "jobpipe.submit",

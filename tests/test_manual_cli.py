@@ -114,3 +114,79 @@ def test_cli_errors_when_url_missing_and_no_status():
     with pytest.raises(SystemExit) as exc:
         run([])
     assert exc.value.code == 2
+
+
+def test_cli_writes_runs_result_when_run_id_supplied_low_confidence(capsys):
+    """Low-confidence path with --run-id should write a result payload."""
+    with patch("jobpipe.tailor.manual.cli.resolve_url",
+               return_value=_posting(confidence="low")), \
+         patch("jobpipe.tailor.manual.cli.upsert_manual_job",
+               return_value=("def4567890abc123", "discovered")), \
+         patch("jobpipe.tailor.manual.cli._write_run_result") as writer:
+        from jobpipe.tailor.manual.cli import run
+        code = run([
+            "https://acme.example.com/careers/role",
+            "--run-id", "11111111-2222-3333-4444-555555555555",
+        ])
+
+    assert code == 0
+    writer.assert_called_once()
+    run_id, payload = writer.call_args.args
+    assert run_id == "11111111-2222-3333-4444-555555555555"
+    assert payload["job_id"] == "def4567890abc123"
+    assert payload["status"] == "discovered"
+    assert payload["confidence"] == "low"
+    assert payload["review_url"] == "/dashboard/review/def4567890abc123"
+    assert payload["materials_url"] is None
+
+
+def test_cli_writes_runs_result_when_run_id_supplied_high_confidence(capsys):
+    """High-confidence path with --run-id should record materials_url."""
+    with patch("jobpipe.tailor.manual.cli.resolve_url",
+               return_value=_posting(confidence="high")), \
+         patch("jobpipe.tailor.manual.cli.upsert_manual_job",
+               return_value=("abc1234567890def", "approved")), \
+         patch("jobpipe.tailor.manual.cli._tailor_one",
+               return_value="ready_for_review"), \
+         patch("jobpipe.tailor.manual.cli._write_run_result") as writer:
+        from jobpipe.tailor.manual.cli import run
+        code = run([
+            "https://job-boards.greenhouse.io/anthropic/jobs/4123456",
+            "--run-id", "22222222-3333-4444-5555-666666666666",
+        ])
+
+    assert code == 0
+    writer.assert_called_once()
+    _, payload = writer.call_args.args
+    assert payload["job_id"] == "abc1234567890def"
+    assert payload["status"] == "ready_for_review"
+    assert payload["confidence"] == "high"
+    assert payload["materials_url"] == "/dashboard/review/abc1234567890def"
+    assert payload["review_url"] is None
+
+
+def test_cli_skips_runs_result_when_no_run_id():
+    with patch("jobpipe.tailor.manual.cli.resolve_url",
+               return_value=_posting(confidence="low")), \
+         patch("jobpipe.tailor.manual.cli.upsert_manual_job",
+               return_value=("abc", "discovered")), \
+         patch("jobpipe.tailor.manual.cli._write_run_result") as writer:
+        from jobpipe.tailor.manual.cli import run
+        run(["https://acme.example.com/careers/role"])
+    writer.assert_not_called()
+
+
+def test_write_run_result_swallows_supabase_errors(monkeypatch):
+    """If the runs.result column doesn't exist yet (pre-migration-009)
+    or the network blips, the CLI must NOT crash — degraded UX only."""
+    from jobpipe.tailor.manual.cli import _write_run_result
+
+    class _BoomClient:
+        def table(self, _):
+            raise RuntimeError("column \"result\" does not exist")
+
+    import jobpipe.db
+    monkeypatch.setattr(jobpipe.db, "client", _BoomClient(), raising=False)
+
+    # Must not raise
+    _write_run_result("some-uuid", {"job_id": "x", "status": "discovered"})

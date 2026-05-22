@@ -1,0 +1,10 @@
+{
+  "id": 4123456,
+  "title": "Software Engineer, ML Research",
+  "absolute_url": "https://job-boards.greenhouse.io/anthropic/jobs/4123456",
+  "content": "<p>We are looking for a Software Engineer to join our ML Research team.</p>\n<h2>About the role</h2>\n<p>You will build production training infrastructure for large language models.</p>",
+  "location": {"name": "San Francisco, CA"},
+  "departments": [{"id": 1, "name": "Research"}],
+  "offices": [{"id": 1, "name": "San Francisco"}],
+  "metadata": []
+}

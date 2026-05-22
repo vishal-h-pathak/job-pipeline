@@ -1,0 +1,27 @@
+{
+  "id": "abc12345-def6-7890-abcd-ef1234567890",
+  "text": "Member of Technical Staff, Inference",
+  "categories": {
+    "team": "Inference",
+    "department": "Engineering",
+    "location": "San Francisco, CA",
+    "commitment": "Full-time"
+  },
+  "descriptionPlain": "We are looking for an exceptional ML engineer to scale our inference infrastructure.",
+  "description": "<p>We are looking for an exceptional ML engineer to scale our inference infrastructure.</p>",
+  "lists": [
+    {
+      "text": "What you'll do",
+      "content": "<ul><li>Optimize inference latency for production LLMs</li><li>Build deployment tooling</li></ul>"
+    },
+    {
+      "text": "Requirements",
+      "content": "<ul><li>5+ years of ML systems experience</li></ul>"
+    }
+  ],
+  "additionalPlain": "Visa sponsorship available.",
+  "additional": "<p>Visa sponsorship available.</p>",
+  "hostedUrl": "https://jobs.lever.co/anthropic/abc12345-def6-7890-abcd-ef1234567890",
+  "applyUrl": "https://jobs.lever.co/anthropic/abc12345-def6-7890-abcd-ef1234567890/apply",
+  "createdAt": 1700000000000
+}

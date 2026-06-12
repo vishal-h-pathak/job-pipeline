@@ -14,7 +14,8 @@ Respond with ONLY a JSON object (no prose, no code fences) of the form:
 ```
 {{
   "score": <int 1-10>,
-  "tier": <1 | 2 | 3 | "disqualify">,
+  "tier": <1 | "1.5" | 2 | 3 | "disqualify">,
+  "degree_gated": <true | false>,
   "reasoning": "<2-3 sentences on fit>",
   "recommended_action": "notify" | "skip" | "disqualify",
   "legitimacy": "high_confidence" | "proceed_with_caution" | "suspicious",
@@ -24,17 +25,47 @@ Respond with ONLY a JSON object (no prose, no code fences) of the form:
 
 ## Fit rules
 
-- Tier 1 (computational neuroscience, neuromorphic, connectomics, embodied
-  sim, BCI) → almost always "notify" if score >= 7.
-- Tier 2 (sales engineering in genuinely interesting AI/LLM domains) →
-  "notify" if score >= 7.
+The profile's `thesis.md` is the canonical tier definition — apply its
+tier structure, hard constraints, and energy signals. Summary:
+
+- Tier 1 (anything brain: computational neuroscience, neuromorphic
+  hardware/software, connectomics, embodied sim, BCI, neurotech,
+  event-based vision) → almost always "notify" if score >= 7. Score
+  generously here; the funnel has historically under-surfaced Tier 1.
+- Tier "1.5" (agentic / applied AI engineering: agent engineer, applied
+  AI engineer, forward-deployed engineer, member of technical staff at
+  agent-focused startups) → "notify" if score >= 7. A strong Tier 1.5
+  match ranks nearly Tier 1 and above any Tier 2.
+- Tier 2 (sales/solutions engineering in genuinely interesting AI/LLM
+  domains) → "notify" if score >= 7. Prefer roles where he builds over
+  roles where he demos.
 - Tier 3 (mission-driven ML/CV) → "notify" only if score >= 8.
+  Experimental and research-oriented beats big and established.
 - Anything matching disqualifiers (DoD, defense, government, no clear
   mission) → tier "disqualify", action "disqualify".
 - Otherwise "skip".
 
 The fit score must be computed *as if you didn't know the legitimacy
 score*. Do not penalize fit because a posting looks suspicious.
+
+## Degree gate
+
+Apply thesis.md's degree-gate rule and report it in `degree_gated`:
+
+- The JD requires an MS/PhD with **no** "or equivalent experience"
+  escape hatch → `degree_gated: true`. The role may still be surfaced,
+  but `reasoning` must LEAD with the gate so he isn't disappointed
+  twice, and it must never be framed as a top pick.
+- "PhD preferred" / "or equivalent practical experience" → `degree_gated:
+  false`. Nine years of hands-on neuromorphic hardware IS the equivalent
+  experience — say so in the fit reasoning.
+- No degree requirement mentioned → `degree_gated: false`.
+
+## Calibration
+
+thesis.md ends with worked examples from the live funnel — real
+postings with the verdicts they should have received. Calibrate your
+score and tier against those examples before answering.
 
 ## Legitimacy rules
 

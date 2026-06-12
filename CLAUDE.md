@@ -72,7 +72,7 @@ legible. Prioritize personality and genuine content over polish.
 ## Personal
 
 From Cape Canaveral, FL. Moved to Atlanta April 2022. Runs a book club
-(papercuts.org). Into cooking, audiobooks, agentic AI projects.
+(papercuts.cc). Into cooking, audiobooks, agentic AI projects.
 
 ## Application form defaults
 

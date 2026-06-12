@@ -271,6 +271,38 @@ def test_upsert_job_update_writes_degree_gated(patch_db_client) -> None:
     assert payload["degree_gated"] is False
 
 
+# ── notify digest handles tier 1.5 ──────────────────────────────────────
+
+
+def _digest_entry(tier) -> dict:
+    return {
+        "job": {"title": f"T{tier}", "company": "c", "location": "Remote",
+                "url": "https://x", "source": "greenhouse"},
+        "score": {"score": 8, "tier": tier, "reasoning": "r"},
+    }
+
+
+def test_tier_key_handles_half_tier() -> None:
+    from jobpipe.notify import _tier_key
+
+    assert _tier_key(1) == 1
+    assert _tier_key("1") == 1
+    assert _tier_key(1.5) == 1.5
+    assert _tier_key("1.5") == 1.5
+    assert _tier_key("disqualify") == 99
+    assert _tier_key(None) == 99
+
+
+def test_digest_sorts_tier_1_5_between_1_and_2() -> None:
+    from jobpipe.notify import _render_digest
+
+    _, body = _render_digest([_digest_entry(t) for t in (2, "1.5", 1)])
+    pos_1 = body.index("Tier 1 <span")
+    pos_15 = body.index("Tier 1.5 <span")
+    pos_2 = body.index("Tier 2 <span")
+    assert pos_1 < pos_15 < pos_2
+
+
 def test_degree_gated_migration_file_present() -> None:
     sql = (
         REPO_ROOT / "jobpipe" / "tailor" / "scripts" / "010_degree_gated.sql"

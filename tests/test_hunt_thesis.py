@@ -188,3 +188,93 @@ def test_should_notify_tier_matrix(tier, score, expected) -> None:
 
 def test_should_notify_recommended_action_short_circuits() -> None:
     assert should_notify({"recommended_action": "notify", "score": 1, "tier": 3})
+
+
+# ── upsert_job writes degree_gated ──────────────────────────────────────
+
+
+class _FakeJobsQuery:
+    """Chainable double for client.table("jobs") in upsert_job."""
+
+    def __init__(self, existing_rows: list[dict]):
+        self._existing = existing_rows
+        self._mode = None
+        self.update_payload: dict | None = None
+        self.upsert_payload: dict | None = None
+
+    def select(self, _cols):
+        self._mode = "select"
+        return self
+
+    def update(self, payload):
+        self._mode = "update"
+        self.update_payload = payload
+        return self
+
+    def upsert(self, payload, **_kw):
+        self._mode = "upsert"
+        self.upsert_payload = payload
+        return self
+
+    def eq(self, _col, _val):
+        return self
+
+    def execute(self):
+        class _R:
+            data = list(self._existing) if self._mode == "select" else []
+
+        return _R()
+
+
+class _FakeDbClient:
+    def __init__(self, existing_rows: list[dict] | None = None):
+        self.query = _FakeJobsQuery(existing_rows or [])
+
+    def table(self, _name):
+        return self.query
+
+
+_SCORE_RESULT = {
+    "score": 8,
+    "tier": 1.5,
+    "degree_gated": True,
+    "reasoning": "r",
+    "recommended_action": "notify",
+    "legitimacy": "high_confidence",
+    "legitimacy_reasoning": "lr",
+}
+
+_JOB = {"id": "j1", "title": "t", "company": "c", "location": "Remote",
+        "description": "d", "url": "u", "source": "greenhouse"}
+
+
+def test_upsert_job_insert_writes_degree_gated_and_tier(patch_db_client) -> None:
+    from jobpipe.db import upsert_job
+
+    fake = _FakeDbClient(existing_rows=[])
+    patch_db_client(fake)
+    upsert_job(_JOB, _SCORE_RESULT)
+    payload = fake.query.upsert_payload
+    assert payload is not None
+    assert payload["degree_gated"] is True
+    assert payload["tier"] == 1.5
+
+
+def test_upsert_job_update_writes_degree_gated(patch_db_client) -> None:
+    from jobpipe.db import upsert_job
+
+    fake = _FakeDbClient(existing_rows=[{"id": "j1"}])
+    patch_db_client(fake)
+    upsert_job(_JOB, {**_SCORE_RESULT, "degree_gated": False})
+    payload = fake.query.update_payload
+    assert payload is not None
+    assert payload["degree_gated"] is False
+
+
+def test_degree_gated_migration_file_present() -> None:
+    sql = (
+        REPO_ROOT / "jobpipe" / "tailor" / "scripts" / "010_degree_gated.sql"
+    ).read_text(encoding="utf-8")
+    assert "degree_gated" in sql
+    assert "rescored_at" in sql
+    assert "DEFAULT FALSE" in sql.upper()

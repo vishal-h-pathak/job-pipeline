@@ -50,9 +50,12 @@ def build_profile_prompt_string() -> str:
     """Build the merged user-layer profile string for LLM prompts.
 
     Concatenates the user-layer files (whichever exist) in the order:
-    ``profile.yml``, ``disqualifiers.yml``, ``cv.md``, ``article-digest.md``,
-    ``learned-insights.md``. Each section is prefixed with a banner so the
-    LLM can tell which file the content came from.
+    ``thesis.md``, ``profile.yml``, ``disqualifiers.yml``, ``cv.md``,
+    ``article-digest.md``, ``learned-insights.md``. Each section is
+    prefixed with a banner so the LLM can tell which file the content
+    came from. ``thesis.md`` is the canonical hunting thesis — it goes
+    FIRST and its banner states that it overrides older profile prose
+    when they conflict.
 
     Renamed from ``load_profile`` in PR-3 to disambiguate from
     ``jobpipe.profile_loader.load_profile`` (which returns a dict).
@@ -81,7 +84,18 @@ def build_profile_prompt_string() -> str:
         # conflict.
         ("learned-insights.md", profile_loader.load_learned_insights()),
     ]
-    parts = [
+    parts = []
+    thesis = profile_loader.load_thesis()
+    if thesis.strip():
+        parts.append(
+            "========== thesis.md (CANONICAL — read first) ==========\n"
+            "The hunting thesis below is the most recent, authoritative "
+            "statement of what Vishal is looking for. Where it conflicts "
+            "with any other profile document in this prompt, thesis.md "
+            "wins.\n\n"
+            f"{thesis.strip()}"
+        )
+    parts += [
         f"========== {label} ==========\n{text.strip()}"
         for label, text in sections
         if text and text.strip()

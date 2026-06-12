@@ -125,6 +125,7 @@ def upsert_job(job: dict, result: dict) -> None:
             {
                 "score": result.get("score"),
                 "tier": result.get("tier"),
+                "degree_gated": bool(result.get("degree_gated", False)),
                 "reasoning": result.get("reasoning"),
                 "action": result.get("recommended_action"),
                 "legitimacy": result.get("legitimacy"),
@@ -143,6 +144,7 @@ def upsert_job(job: dict, result: dict) -> None:
                 "source": job.get("source"),
                 "score": result.get("score"),
                 "tier": result.get("tier"),
+                "degree_gated": bool(result.get("degree_gated", False)),
                 "reasoning": result.get("reasoning"),
                 "action": result.get("recommended_action"),
                 "legitimacy": result.get("legitimacy"),

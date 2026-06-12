@@ -56,12 +56,20 @@ FROM_ADDR = os.environ.get("NOTIFY_FROM", "Job Agent <jobs@vishal.pa.thak.io>")
 TO_ADDR = os.environ.get("NOTIFY_TO", "vishal@pa.thak.io")
 
 
-def _tier_key(tier) -> int:
-    if isinstance(tier, int):
-        return tier
-    if isinstance(tier, str) and tier.isdigit():
-        return int(tier)
-    return 99
+def _tier_key(tier):
+    """Sort/display key for a digest tier section; 99 = unknown bucket.
+
+    Handles the thesis's half tier: 1.5 (or "1.5") sorts between 1 and
+    2 and renders as "Tier 1.5". Whole tiers normalize to int so their
+    headers stay "Tier 1", not "Tier 1.0".
+    """
+    if isinstance(tier, bool):
+        return 99
+    try:
+        f = float(tier)
+    except (TypeError, ValueError):
+        return 99
+    return int(f) if f.is_integer() else f
 
 
 def _render_job(job: dict, score: dict) -> str:

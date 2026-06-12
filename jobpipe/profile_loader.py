@@ -76,6 +76,18 @@ def _clear_cache_for_tests() -> None:
 # ── Public loaders ──────────────────────────────────────────────────────────
 
 
+def load_thesis() -> str:
+    """Return `profile/thesis.md` contents (empty string if missing).
+
+    The hunting thesis is the canonical statement of judgment — tiers,
+    hard constraints, the degree-gate rule, energy signals. Consumers
+    that splice it into LLM prompts must place it FIRST and state that
+    it overrides older profile prose on conflict (see
+    ``jobpipe.hunt.prompts.build_profile_prompt_string``).
+    """
+    return _read_text("thesis.md")
+
+
 def load_profile() -> dict:
     """Return the full parsed `profile.yml` as a dict."""
     return _read_yaml("profile.yml")

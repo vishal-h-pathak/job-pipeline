@@ -9,100 +9,139 @@
 #   1. Find the ATS slug (visit the careers page; the URL usually gives
 #      it away — e.g. boards.greenhouse.io/<slug>, jobs.ashbyhq.com/<slug>,
 #      jobs.lever.co/<slug>, <tenant>.wd1.myworkdayjobs.com/<site>).
-#   2. Drop the row in the matching `companies:` list below.
+#   2. VERIFY the board API returns jobs (curl it), then drop the row in
+#      the matching `companies:` list below with the verification URL as
+#      a comment.
 #   3. Run the hunter once and check `agent.log` for warnings — slugs
 #      that 404 are dropped silently with a warning so they don't break
 #      the run, but you should still remove dead entries.
+#
+# 2026-06-12 (Session G, feat/hunt-thesis): every board below was
+# re-verified by fetching its API and confirming it returns jobs for the
+# RIGHT company. Boards that 404'd were fixed (slug moved) or removed;
+# thesis target companies without a pollable Greenhouse/Lever/Ashby/
+# Workday board are listed at the bottom under "Skipped".
 
 # ──────────────────────────────────────────────────────────────────────────
 # Greenhouse — public boards-api.greenhouse.io
+# Verify: https://boards-api.greenhouse.io/v1/boards/<slug>/jobs
 # ──────────────────────────────────────────────────────────────────────────
 greenhouse:
   companies:
-    # Confirmed via 2026-04-26 hunter run (200 responses)
+    # ── Re-verified 2026-06-12 (200 + jobs for the right org) ──
     - slug: neuralink
-      name: Neuralink
+      name: Neuralink            # …/boards/neuralink/jobs → 74 jobs
     - slug: anthropic
-      name: Anthropic
+      name: Anthropic            # …/boards/anthropic/jobs → 380 jobs
     - slug: deepmind
-      name: DeepMind
+      name: DeepMind             # …/boards/deepmind/jobs → 36 jobs
     - slug: scaleai
-      name: Scale AI
-    - slug: recursionpharma
-      name: Recursion
-    - slug: insitro
-      name: Insitro
+      name: Scale AI             # …/boards/scaleai/jobs → 175 jobs
+    - slug: recursionpharmaceuticals   # slug moved from `recursionpharma` (404)
+      name: Recursion            # …/boards/recursionpharmaceuticals/jobs
     - slug: databricks
-      name: Databricks
-    - slug: anyscale
-      name: Anyscale
-    - slug: weightsandbiases
-      name: Weights & Biases
-    - slug: runwayml
-      name: Runway
+      name: Databricks           # …/boards/databricks/jobs → 792 jobs
     - slug: stabilityai
-      name: Stability AI
+      name: Stability AI         # …/boards/stabilityai/jobs → 5 jobs
     - slug: atomwise
-      name: Atomwise
+      name: Atomwise             # …/boards/atomwise/jobs → 200, currently 0 open
     - slug: isomorphiclabs
-      name: Isomorphic Labs
+      name: Isomorphic Labs      # …/boards/isomorphiclabs/jobs → 27 jobs
+    - slug: gleanwork            # slug moved from Ashby `glean` (404)
+      name: Glean                # …/boards/gleanwork/jobs
+    # ── Added 2026-06-12 (Session G — thesis targets, verified) ──
+    - slug: tenstorrent
+      name: Tenstorrent          # …/boards/tenstorrent/jobs → 120 jobs
+    - slug: arizeai
+      name: Arize AI             # …/boards/arizeai/jobs → 36 jobs
+    - slug: togetherai           # moved here from dead Lever board
+      name: Together AI          # …/boards/togetherai/jobs → 57 jobs
+    - slug: worldlabs
+      name: World Labs           # …/boards/worldlabs/jobs → 13 jobs
+    - slug: imbue
+      name: Imbue                # …/boards/imbue/jobs → 3 jobs
+    - slug: coreweave
+      name: CoreWeave            # …/boards/coreweave/jobs → 262 jobs.
+      # Weights & Biases (thesis target) was acquired by CoreWeave; its
+      # standalone `weightsandbiases` board 404s and W&B roles now post
+      # through coreweave.com/careers → this board.
 
 # ──────────────────────────────────────────────────────────────────────────
 # Lever — api.lever.co/v0/postings/<slug>
+#
+# 2026-06-12: every previous Lever entry was dead ("Document not found"
+# while a control slug returned a valid list). Where the company moved
+# to Greenhouse/Ashby the row moved with it (Together AI, Writer);
+# the rest are in Skipped below. Empty list is safe (source yields
+# nothing).
 # ──────────────────────────────────────────────────────────────────────────
 lever:
-  companies:
-    # Neurotech / BCI (Tier 1)
-    - slug: rainai
-      name: Rain AI
-    - slug: synchron
-      name: Synchron
-    - slug: paradromics
-      name: Paradromics
-    - slug: cortical
-      name: Cortical Labs
-    # AI labs / infra
-    - slug: groq
-      name: Groq
-    - slug: togetherai
-      name: Together AI
-    - slug: writer
-      name: Writer
+  companies: []
 
 # ──────────────────────────────────────────────────────────────────────────
 # Ashby — api.ashbyhq.com/posting-api/job-board/<slug>
 # ──────────────────────────────────────────────────────────────────────────
 ashby:
   companies:
-    # AI infrastructure / inference platforms
-    - slug: replicate
-      name: Replicate
-    - slug: modal-labs
-      name: Modal Labs
+    # ── Re-verified 2026-06-12 (200 + jobs for the right org) ──
     - slug: posthog
-      name: PostHog
+      name: PostHog              # …/job-board/posthog → 16 jobs
     - slug: linear
-      name: Linear
+      name: Linear               # …/job-board/linear → 25 jobs
     - slug: notion
-      name: Notion
-    # Foundation-model adjacent / agentic AI
+      name: Notion               # …/job-board/notion → 149 jobs
     - slug: decagon
-      name: Decagon
+      name: Decagon              # …/job-board/decagon → 109 jobs
     - slug: sierra
-      name: Sierra
-    - slug: glean
-      name: Glean
-    - slug: sakanaai
-      name: Sakana AI
-    - slug: rekaai
-      name: Reka AI
-    - slug: factoryai
-      name: Factory AI
-    # Vector DB / retrieval (sales-eng targets)
-    - slug: pineconeio
-      name: Pinecone
+      name: Sierra               # …/job-board/sierra → 130 jobs
     - slug: weaviate
-      name: Weaviate
+      name: Weaviate             # …/job-board/weaviate → 5 jobs
+    # ── Slug fixes 2026-06-12 (old slug 404'd; company still on Ashby) ──
+    - slug: modal                # was `modal-labs`
+      name: Modal Labs           # …/job-board/modal
+    - slug: reka                 # was `rekaai`
+      name: Reka AI              # …/job-board/reka
+    - slug: factory              # was `factoryai`
+      name: Factory AI           # …/job-board/factory
+    - slug: pinecone             # was `pineconeio`
+      name: Pinecone             # …/job-board/pinecone
+    # ── Moved here from dead Greenhouse boards 2026-06-12 ──
+    - slug: anyscale
+      name: Anyscale             # …/job-board/anyscale
+    - slug: runway               # was Greenhouse `runwayml`
+      name: Runway               # …/job-board/runway
+    - slug: insitro
+      name: Insitro              # …/job-board/insitro
+    # ── Added 2026-06-12 (Session G — thesis targets, verified) ──
+    # Neuromorphic / AI silicon (Tier 1 family)
+    - slug: innatera
+      name: Innatera             # …/job-board/innatera → 7 jobs (neuromorphic)
+    - slug: axelera
+      name: Axelera AI           # …/job-board/axelera → 17 jobs (edge-AI silicon)
+    - slug: etched
+      name: Etched               # …/job-board/etched → 101 jobs (transformer ASIC)
+    - slug: cerebras
+      name: Cerebras             # …/job-board/cerebras → 105 jobs (wafer-scale AI)
+    # Frontier labs / agentic AI / agent infra (Tier 1.5 family)
+    - slug: openai
+      name: OpenAI               # …/job-board/openai → 733 jobs
+    - slug: langchain
+      name: LangChain            # …/job-board/langchain → 108 jobs
+    - slug: browserbase
+      name: Browserbase          # …/job-board/browserbase → 6 jobs
+    - slug: cognition
+      name: Cognition            # …/job-board/cognition → 63 jobs (Devin)
+    - slug: cursor
+      name: Cursor (Anysphere)   # …/job-board/cursor → 101 jobs
+    - slug: letta
+      name: Letta                # …/job-board/letta → 4 jobs (agent memory/harness)
+    - slug: e2b
+      name: E2B                  # …/job-board/e2b → 12 jobs (agent sandboxes)
+    - slug: writer               # moved here from dead Lever board
+      name: Writer               # …/job-board/writer → 50 jobs
+    # Embodied AI / robotics foundation models (Tier 1-adjacent)
+    - slug: physicalintelligence
+      name: Physical Intelligence  # …/job-board/physicalintelligence → 24 jobs
 
 # ──────────────────────────────────────────────────────────────────────────
 # Workday — <tenant>.wd<N>.myworkdayjobs.com/<site>
@@ -116,11 +155,34 @@ ashby:
 #   - Visit their careers page; the URL exposes tenant + site + dc.
 #   - Drop the row below; use a small page cap (default 50) until you
 #     trust the slug isn't going to flood your scorer.
+#
+# 2026-06-12: none of the Session G thesis targets run a public Workday
+# board (BrainChip → custom portal, Synchron → ADP), so this stays empty.
 # ──────────────────────────────────────────────────────────────────────────
 workday:
   companies:
-    # Examples — verify the dc number against the live careers URL before
-    # adding more. Empty list is safe (Workday source returns nothing).
+
+# ──────────────────────────────────────────────────────────────────────────
+# Skipped 2026-06-12 (Session G) — thesis targets with NO pollable
+# Greenhouse/Lever/Ashby/Workday board. Do not add scrapers for these
+# (zero-token rule); re-check occasionally in case they migrate.
+#
+#   moonshot.xyz            — parked domain, listed for sale; no company site
+#   Kernel (kernel.com)     — no careers page; ashby `kernel` is a different
+#                             company (single London client-delivery role)
+#   Rain AI / Rain Neuromorphics — defunct; rainai.com is parked, Lever 404
+#   Synchron                — ADP Workforce Now
+#   Paradromics             — JazzHR (paradromicsinc.applytojob.com)
+#   Precision Neuroscience  — Kula (careers.kula.ai/precision-neuroscience)
+#   Blackrock Neurotech     — Rippling
+#   BrainChip               — custom portal (careers.brainchip.com/ax.do)
+#   Prophesee               — Teamtailor (careers.prophesee.ai)
+#   SynSense                — email-only applications
+#   eon.systems             — careers page lists no openings / no ATS
+#   Groq                    — Gem (jobs.gem.com/groq); old Lever board 404
+#   Cortical Labs           — no careers page; old Lever board 404
+#   Replicate, Sakana AI    — old Ashby boards 404; no new board found
+# ──────────────────────────────────────────────────────────────────────────
 
 # ──────────────────────────────────────────────────────────────────────────
 # Title pre-filter — applied BEFORE LLM scoring (J-1).
@@ -172,6 +234,11 @@ title_filter:
     - "developer relations"
     - "developer advocate"
     - "ai engineer"
+    # Session G (thesis Tier 1.5) — agentic / applied AI titles
+    - "agent engineer"
+    - "applied ai"
+    - "forward deployed"
+    - "member of technical staff"
 
   # Soft seniority hint — boosts logging only. Both individual contributors
   # and senior IC titles are welcome; what we filter against is leadership

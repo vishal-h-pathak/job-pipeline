@@ -221,7 +221,53 @@ def run() -> None:
              "flag exists so cron / verification scripts can pass it for "
              "intent-clarity without breaking.",
     )
+    # ── Rescore mode (Session G) — replay the scorer over existing rows ──
+    parser.add_argument(
+        "--rescore",
+        action="store_true",
+        help="Re-score existing jobs rows against the current thesis "
+             "instead of hunting. DRY-RUN by default: prints the eligible "
+             "row count and an LLM cost estimate, then exits.",
+    )
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="With --rescore: actually spend the tokens and write results. "
+             "Without this flag --rescore is a dry run.",
+    )
+    parser.add_argument(
+        "--status",
+        choices=("new", "discovered", "ignored"),
+        default="new",
+        help="With --rescore: which passive status bucket to re-score "
+             "(default: new). Active statuses (approved onward) are never "
+             "eligible.",
+    )
+    parser.add_argument(
+        "--since",
+        type=int,
+        metavar="DAYS",
+        default=None,
+        help="With --rescore: only rows created in the last DAYS days.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="With --rescore --execute: rows per progress batch "
+             "(default: 25).",
+    )
     args = parser.parse_args()
+    if args.rescore:
+        from jobpipe.hunt import rescore as _rescore
+
+        _rescore.main(
+            status=args.status,
+            since_days=args.since,
+            execute=args.execute,
+            batch_size=args.batch_size or _rescore.DEFAULT_BATCH_SIZE,
+        )
+        return
     if args.mode:
         config.set_mode(args.mode)
     _execute()

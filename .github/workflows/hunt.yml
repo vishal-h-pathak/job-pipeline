@@ -9,9 +9,12 @@ name: hunt
 # so the panel can link out and surface failures inline.
 #
 # The daily cron fires the same workflow without a run_id; in that case
-# every mark_run step is skipped (the `if: inputs.run_id != ''` guard)
-# and the run produces no public.runs audit row — the GitHub Actions log
-# itself is the only artifact for cron-triggered runs.
+# the "Create run row (cron)" step inserts its own public.runs row
+# (kind='hunt', triggered_by='cron', born status='running') via
+# scripts/mark_run.py create, so cron runs show up in the dashboard's
+# runs panel just like dispatched ones. The closing mark_run step
+# resolves the row id from whichever source produced it. Row creation
+# is continue-on-error: a Supabase hiccup must not block the hunt.
 
 on:
   workflow_dispatch:
@@ -36,6 +39,16 @@ jobs:
           python-version: "3.11"
       - name: Install package
         run: pip install -e .
+      - name: Create run row (cron)
+        id: create_run
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        run: |
+          RUN_ID=$(python scripts/mark_run.py create hunt --triggered-by cron)
+          echo "RUN_ID=$RUN_ID" >> "$GITHUB_OUTPUT"
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       - name: Mark run as running
         if: inputs.run_id != ''
         run: python scripts/mark_run.py ${{ inputs.run_id }} running
@@ -54,9 +67,9 @@ jobs:
           jobpipe-hunt --once --mode "${{ inputs.mode || 'local_remote' }}" 2>&1 | tee hunt.log
           echo "EXITCODE=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
       - name: Mark run completed
-        if: always() && inputs.run_id != ''
+        if: always() && (inputs.run_id != '' || steps.create_run.outputs.RUN_ID != '')
         run: |
-          python scripts/mark_run.py ${{ inputs.run_id }} \
+          python scripts/mark_run.py "${{ inputs.run_id || steps.create_run.outputs.RUN_ID }}" \
             ${{ steps.hunt.outputs.EXITCODE == '0' && 'completed' || 'failed' }} \
             --log "$(tail -50 hunt.log)" \
             --gha-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

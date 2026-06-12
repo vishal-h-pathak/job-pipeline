@@ -204,3 +204,32 @@ def fake_browser() -> Callable[..., _FakeStagehandSession]:
             survey=survey, question_answers=question_answers,
         )
     return _build
+
+
+@pytest.fixture
+def patch_db_client(monkeypatch):
+    """Stub jobpipe.db's lazy client without cross-test pollution.
+
+    Two hazards this avoids (session-c CI fix):
+    1. ``monkeypatch.setattr(db, "client", fake)`` probes the attribute
+       first, firing the module ``__getattr__`` → ``create_client()``,
+       which raises in secretless CI (locally .env masks it).
+    2. Tests that assign ``db.client = fake`` directly leave a real
+       module attribute that shadows ``__getattr__`` for every later
+       test, making a plain ``_client`` cache patch invisible.
+
+    Clears any leftover real attribute (restored on undo, so tests that
+    rely on the old pollution pattern keep working) and patches the
+    ``_client`` cache so ``db.client`` resolves to the fake through the
+    normal lazy path.
+
+        def test_x(patch_db_client):
+            patch_db_client(fake)
+    """
+    import jobpipe.db as db
+
+    def _patch(fake):
+        if "client" in vars(db):
+            monkeypatch.delattr(db, "client")
+        monkeypatch.setattr(db, "_client", fake)
+    return _patch

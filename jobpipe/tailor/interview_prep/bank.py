@@ -10,7 +10,11 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Optional
 
-from jobpipe.db import client
+# Module reference, not ``from jobpipe.db import client``: a from-import
+# of the attribute resolves jobpipe.db's lazy __getattr__ at import time,
+# constructing a Supabase client (and raising in secretless CI). Going
+# through the module defers that to first call.
+from jobpipe import db
 
 logger = logging.getLogger("interview_prep.bank")
 
@@ -42,7 +46,7 @@ def save_stories(
     if not rows:
         return 0
     try:
-        client.table("star_stories").insert(rows).execute()
+        db.client.table("star_stories").insert(rows).execute()
     except Exception as exc:
         logger.warning("Saving %d STAR+R stories failed: %s", len(rows), exc)
         return 0
@@ -59,7 +63,7 @@ def list_stories(
     """Fetch stories with optional filters. Used by the dashboard
     /api routes; the dashboard mostly reads directly with the anon key.
     """
-    q = client.table("star_stories").select("*")
+    q = db.client.table("star_stories").select("*")
     if archetype:
         q = q.eq("archetype", archetype)
     if tag:
@@ -72,4 +76,4 @@ def list_stories(
 
 def set_master(story_id: int, is_master: bool) -> None:
     """Toggle whether a story is part of the master set."""
-    client.table("star_stories").update({"is_master": is_master}).eq("id", story_id).execute()
+    db.client.table("star_stories").update({"is_master": is_master}).eq("id", story_id).execute()

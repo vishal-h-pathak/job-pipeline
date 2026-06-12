@@ -28,3 +28,9 @@ jobs:
         run: pytest --collect-only
       - name: Run tests
         run: pytest -v
+      - name: Check profile sync (soft warning)
+        # profile/profile.yml is canonical; CLAUDE.md mirrors it by hand
+        # and drifts (Session C found papercuts.org vs papercuts.cc).
+        # Surface drift as a build annotation without failing CI.
+        continue-on-error: true
+        run: python scripts/check_profile_sync.py

@@ -264,10 +264,16 @@ def test_submit_mark_failed_writes_status_and_reason_only(submit_db):
     assert "cover_letter_pdf_path" not in payload
 
 
-def test_submit_mark_needs_review_writes_real_needs_review_status(submit_db):
+def test_submit_mark_needs_review_routes_to_failed(submit_db):
+    """M-2 retired the ``needs_review`` CHECK-enum value; the deprecated
+    ``mark_needs_review`` deliberately routes to ``failed`` (see its
+    docstring) while preserving the reason and review packet. This test
+    originally asserted the pre-M-2 ``needs_review`` status and went
+    stale when the routing changed; Session C realigned it with the
+    documented contract."""
     db, fake = submit_db
     db.mark_needs_review("job-def", "low confidence", packet_ref="packets/job-def.json")
     payload = fake.calls["update_payload"]
-    assert payload["status"] == "needs_review"
+    assert payload["status"] == "failed"
     assert payload["failure_reason"] == "low confidence"
     assert payload["review_packet"] == "packets/job-def.json"

@@ -59,22 +59,20 @@ class _FakeClient:
 
 
 @pytest.fixture
-def db_with_no_existing(monkeypatch):
-    import jobpipe.db
+def db_with_no_existing(patch_db_client):
     fake = _FakeClient(existing_rows=[])
-    monkeypatch.setattr(jobpipe.db, "client", fake, raising=False)
+    patch_db_client(fake)
     return fake
 
 
 @pytest.fixture
-def db_with_existing(request, monkeypatch):
+def db_with_existing(request, patch_db_client):
     """Parametrize the existing row's status via the ``status`` indirect param."""
     status = getattr(request, "param", "new")
-    import jobpipe.db
     fake = _FakeClient(
         existing_rows=[{"id": "PLACEHOLDER", "status": status}]
     )
-    monkeypatch.setattr(jobpipe.db, "client", fake, raising=False)
+    patch_db_client(fake)
     return fake
 
 
@@ -126,7 +124,7 @@ def test_upsert_low_confidence_inserts_status_discovered(db_with_no_existing):
     assert payload["source"] == "manual"
 
 
-def test_upsert_is_deterministic_on_make_job_id():
+def test_upsert_is_deterministic_on_make_job_id(patch_db_client):
     """Same posting → same job_id (across processes)."""
     from jobpipe.shared.jobid import make_job_id
 
@@ -141,9 +139,8 @@ def test_upsert_is_deterministic_on_make_job_id():
         def table(self, _):
             return self.query
 
-    import jobpipe.db
     for _ in range(2):
-        jobpipe.db.client = _Stub()
+        patch_db_client(_Stub())
         from jobpipe.tailor.manual.upsert import upsert_manual_job
         observed_id, _ = upsert_manual_job(posting)
         assert observed_id == expected
@@ -151,13 +148,12 @@ def test_upsert_is_deterministic_on_make_job_id():
 
 @pytest.mark.parametrize("safe_status", ["new", "discovered", "ignored", "expired"])
 def test_upsert_overwrites_safe_existing_status_via_update_path(
-    monkeypatch, safe_status,
+    patch_db_client, safe_status,
 ):
-    import jobpipe.db
     fake = _FakeClient(
         existing_rows=[{"id": "x", "status": safe_status}]
     )
-    monkeypatch.setattr(jobpipe.db, "client", fake, raising=False)
+    patch_db_client(fake)
 
     from jobpipe.tailor.manual.upsert import upsert_manual_job
     _, final_status = upsert_manual_job(_posting(confidence="high"))
@@ -178,13 +174,12 @@ def test_upsert_overwrites_safe_existing_status_via_update_path(
      "awaiting_human_submit", "applied", "failed", "skipped"],
 )
 def test_upsert_raises_collision_on_unsafe_existing_status(
-    monkeypatch, unsafe_status,
+    patch_db_client, unsafe_status,
 ):
-    import jobpipe.db
     fake = _FakeClient(
         existing_rows=[{"id": "x", "status": unsafe_status}]
     )
-    monkeypatch.setattr(jobpipe.db, "client", fake, raising=False)
+    patch_db_client(fake)
 
     from jobpipe.tailor.manual.upsert import upsert_manual_job, CollisionError
 

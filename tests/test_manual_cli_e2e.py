@@ -78,11 +78,10 @@ class _StubClient:
 
 
 @pytest.fixture(autouse=True)
-def stub_db(monkeypatch):
+def stub_db(patch_db_client):
     """Replace jobpipe.db.client with an in-memory stub for the whole test."""
-    import jobpipe.db
     stub = _StubClient()
-    monkeypatch.setattr(jobpipe.db, "client", stub, raising=False)
+    patch_db_client(stub)
     return stub
 
 

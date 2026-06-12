@@ -176,7 +176,7 @@ def test_cli_skips_runs_result_when_no_run_id():
     writer.assert_not_called()
 
 
-def test_write_run_result_swallows_supabase_errors(monkeypatch):
+def test_write_run_result_swallows_supabase_errors(patch_db_client):
     """If the runs.result column doesn't exist yet (pre-migration-009)
     or the network blips, the CLI must NOT crash — degraded UX only."""
     from jobpipe.tailor.manual.cli import _write_run_result
@@ -185,8 +185,7 @@ def test_write_run_result_swallows_supabase_errors(monkeypatch):
         def table(self, _):
             raise RuntimeError("column \"result\" does not exist")
 
-    import jobpipe.db
-    monkeypatch.setattr(jobpipe.db, "client", _BoomClient(), raising=False)
+    patch_db_client(_BoomClient())
 
     # Must not raise
     _write_run_result("some-uuid", {"job_id": "x", "status": "discovered"})

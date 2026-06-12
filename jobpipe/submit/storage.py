@@ -9,7 +9,11 @@ compatibility with this module's existing callers.
 
 from __future__ import annotations
 
-from jobpipe.db import service_client
+# Module reference, not ``from jobpipe.db import service_client``: the
+# from-import resolves jobpipe.db's lazy __getattr__ at import time,
+# constructing a Supabase client (and raising in secretless CI). Going
+# through the module defers that to first call.
+from jobpipe import db
 
 # PR-1 moved download_to_tmp / download_bytes into jobpipe.shared.storage to
 # unify the previously-divergent applicant + submitter implementations. Re-
@@ -24,7 +28,7 @@ BUCKET = "job-materials"
 def upload_review_screenshot(job_id: str, label: str, png_bytes: bytes) -> str:
     """Upload a review-time screenshot; return the storage key."""
     key = f"{job_id}/review/{label}.png"
-    service_client.storage.from_(BUCKET).upload(
+    db.service_client.storage.from_(BUCKET).upload(
         key,
         png_bytes,
         file_options={"content-type": "image/png", "upsert": "true"},

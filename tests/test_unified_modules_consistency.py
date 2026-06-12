@@ -127,11 +127,6 @@ _EXPECTED_NOTIFY_SIGNATURES: dict[str, tuple[str, ...]] = {
     "send_awaiting_submit":     ("job", "screenshot_path"),
     "send_applied":             ("job",),
     "send_failed":              ("job", "reason"),
-    # PR-8 deprecated aliases (kept until a future sweep PR removes them)
-    "notify_ready_for_review":  ("job",),
-    "notify_awaiting_submit":   ("job", "screenshot_path"),
-    "notify_applied":           ("job",),
-    "notify_failed":            ("job", "reason"),
 }
 
 
@@ -151,44 +146,20 @@ def test_notify_symbol_exists_with_expected_signature(name, expected_params):
     )
 
 
-def test_notify_aliases_forward_to_canonical():
-    """Each ``notify_*`` deprecated alias must forward to the canonical
-    ``send_*`` function — verified by stubbing the canonical send_* with
-    a sentinel-returning stub and confirming the sentinel propagates back
-    through the deprecated alias."""
-    sentinel = "FORWARDED"
-
-    def _stub_send_awaiting_review(job):
-        return sentinel
-
-    def _stub_send_awaiting_submit(job, screenshot_path=None):
-        return sentinel
-
-    def _stub_send_applied(job):
-        return sentinel
-
-    def _stub_send_failed(job, reason):
-        return sentinel
-
-    saved = {
-        "send_awaiting_review": notify.send_awaiting_review,
-        "send_awaiting_submit": notify.send_awaiting_submit,
-        "send_applied": notify.send_applied,
-        "send_failed": notify.send_failed,
-    }
-    try:
-        notify.send_awaiting_review = _stub_send_awaiting_review
-        notify.send_awaiting_submit = _stub_send_awaiting_submit
-        notify.send_applied = _stub_send_applied
-        notify.send_failed = _stub_send_failed
-
-        assert notify.notify_ready_for_review({"id": "job-1"}) == sentinel
-        assert notify.notify_awaiting_submit({"id": "job-2"}, "s") == sentinel
-        assert notify.notify_applied({"id": "job-3"}) == sentinel
-        assert notify.notify_failed({"id": "job-4"}, "boom") == sentinel
-    finally:
-        for k, v in saved.items():
-            setattr(notify, k, v)
+def test_notify_aliases_removed():
+    """Session C removed the PR-8 deprecated ``notify_*`` aliases after
+    verifying no callers remained. They must not silently reappear —
+    ``send_*`` is the only notification surface."""
+    for removed in (
+        "notify_ready_for_review",
+        "notify_awaiting_submit",
+        "notify_applied",
+        "notify_failed",
+    ):
+        assert not hasattr(notify, removed), (
+            f"jobpipe.notify.{removed} was removed in Session C; "
+            "use the canonical send_* function instead"
+        )
 
 
 def test_notification_type_strings_decoupled_from_symbol_names():

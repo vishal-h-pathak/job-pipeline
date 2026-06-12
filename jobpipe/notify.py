@@ -18,9 +18,8 @@ Naming policy (PR-8):
       spec: :func:`send_digest`, :func:`send_awaiting_review`,
       :func:`send_awaiting_submit`, :func:`send_applied`,
       :func:`send_failed`.
-    - The pre-PR-8 ``notify_*`` names remain as deprecated aliases with
-      a once-per-process ``logger.warning`` so call sites can migrate
-      incrementally. Future PR sweeps the aliases.
+    - The pre-PR-8 ``notify_*`` names survived as deprecated aliases
+      until Session C verified no callers remained and removed them.
     - **External-facing strings are decoupled from the rename.** The
       ``notification.type`` field written here stays ``"ready_for_review"``
       / ``"awaiting_human_submit"`` because (a) those values are part of
@@ -275,44 +274,6 @@ def send_failed(job: dict, reason: str) -> bool:
     return create_notification("failed", job, f"Reason: {reason}")
 
 
-# ══════════════════════════════════════════════════════════════════════════
-#  Deprecated aliases (PR-8): notify_* names from pre-PR-8 callers.
-#  Each alias logs once per process, then forwards. Sweep in a follow-up.
-# ══════════════════════════════════════════════════════════════════════════
-
-_warned_aliases: set[str] = set()
-
-
-def _warn_alias_once(old: str, new: str) -> None:
-    if old in _warned_aliases:
-        return
-    _warned_aliases.add(old)
-    logger.warning(
-        "%s() is deprecated (PR-8); use %s() instead. "
-        "This warning fires once per process.",
-        old, new,
-    )
-
-
-def notify_ready_for_review(job: dict) -> bool:
-    """DEPRECATED — use :func:`send_awaiting_review`. Forwards unchanged."""
-    _warn_alias_once("notify_ready_for_review", "send_awaiting_review")
-    return send_awaiting_review(job)
-
-
-def notify_awaiting_submit(job: dict, screenshot_path: str = None) -> bool:
-    """DEPRECATED — use :func:`send_awaiting_submit`. Forwards unchanged."""
-    _warn_alias_once("notify_awaiting_submit", "send_awaiting_submit")
-    return send_awaiting_submit(job, screenshot_path)
-
-
-def notify_applied(job: dict) -> bool:
-    """DEPRECATED — use :func:`send_applied`. Forwards unchanged."""
-    _warn_alias_once("notify_applied", "send_applied")
-    return send_applied(job)
-
-
-def notify_failed(job: dict, reason: str) -> bool:
-    """DEPRECATED — use :func:`send_failed`. Forwards unchanged."""
-    _warn_alias_once("notify_failed", "send_failed")
-    return send_failed(job, reason)
+# The PR-8 deprecated ``notify_*`` → ``send_*`` aliases lived here until
+# Session C verified (by grep across code, scripts, and workflows) that
+# no callers remained and removed them. ``send_*`` is the only surface.

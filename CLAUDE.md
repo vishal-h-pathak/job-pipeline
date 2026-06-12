@@ -126,8 +126,8 @@ the local-Playwright pre-fill phase.
   `client` / `service_client` attributes resolve via module
   `__getattr__` so the import is side-effect-free.
 - `jobpipe.notify` — Resend digest (hunt) + Supabase notifications table
-  (tailor / submit). Canonical `send_*` names plus deprecated `notify_*`
-  aliases that emit a one-shot deprecation warning.
+  (tailor / submit). Canonical `send_*` names only — the deprecated
+  `notify_*` aliases were removed once grep showed no callers.
 - `jobpipe.shared.*` — `jobid`, `validator`, `html`, `storage`,
   `ats_detect`. Pure helpers used by ≥2 subtrees.
 

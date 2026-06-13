@@ -15,7 +15,7 @@ JOB POSTING:
 Title: {job_title}
 Company: {company}
 Description: {job_desc}
-Job Tier: {tier} (1=neuro/dream job, 2=sales eng, 3=ML/CV)
+Job Tier: {tier} (1=neuro/dream job, 1.5=agentic/applied-AI builder, 2=sales eng, 3=ML/CV)
 {context}
 {match_chat_block}
 
@@ -50,7 +50,16 @@ WRITING RULES — follow these strictly:
 5. HONESTY: Do NOT fabricate experiences or skills. If the role asks for something he
    doesn't have, don't address it. Focus on what's genuinely relevant.
 
-6. ROLE-TYPE AWARENESS: For Tier 2 (sales/solutions engineering) applications:
+6. TIER 1.5 FRAMING (agentic / applied-AI / forward-deployed engineering roles): lead
+   with the autonomous job pipeline as a concrete, running system he designed and
+   operates — what the stages are (multi-source discovery, LLM scoring on a dual
+   fit/legitimacy axis, tailored materials generation, browser pre-fill that deliberately
+   stops at submit for a human gate), the evidenced audit trail behind every attempt,
+   the CI, the closed-loop pattern analysis of outcomes. Never call it "an AI project" —
+   describe what it does. Then bring in the neuromorphic thread as the differentiator:
+   he built neurons in silicon before he built agent systems.
+
+7. ROLE-TYPE AWARENESS: For Tier 2 (sales/solutions engineering) applications:
    Vishal doesn't have formal SE experience, so DO NOT pretend he does. Instead, draw
    the honest parallel: at GTRI he regularly presented technical work to program sponsors,
    translated research outcomes for non-technical stakeholders, and built demos to secure

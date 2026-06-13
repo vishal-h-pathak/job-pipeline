@@ -38,6 +38,18 @@ from jobpipe.profile_loader import load_archetypes
 logger = logging.getLogger("tailor.archetype")
 
 _FALLBACK_KEY = "tier_3_mission_ml"
+_AGENTIC_KEY = "tier_1_5_agentic_builder"
+
+
+def _is_tier_1_5(tier) -> bool:
+    """True when the scorer tiered this job 1.5 (agentic / applied AI).
+
+    The jobs.tier column is text, so 1.5 may arrive as "1.5" or 1.5.
+    """
+    try:
+        return float(tier) == 1.5
+    except (TypeError, ValueError):
+        return False
 
 
 def _load_archetypes() -> dict:
@@ -147,12 +159,23 @@ def classify_archetype(job: dict) -> dict:
             "reasoning": "no archetypes configured",
         }
 
+    # Tier 1.5 routes deterministically: the scorer only emits 1.5 for
+    # agentic / applied-AI engineering roles (thesis.md), which is
+    # exactly what tier_1_5_agentic_builder frames. Skip the LLM call.
+    if _is_tier_1_5(job.get("tier")) and _AGENTIC_KEY in archs:
+        return {
+            "archetype": _AGENTIC_KEY,
+            "confidence": 1.0,
+            "reasoning": "tier 1.5 routes deterministically to the agentic builder lane",
+        }
+
     prompt = load_prompt(
         "classify_archetype",
         thesis_block=thesis_section(),
         archetypes_block=_archetypes_block_for_classifier(),
         job_title=job.get("title", ""),
         company=job.get("company", ""),
+        tier=job.get("tier", "unknown"),
         job_desc=(job.get("description", "") or "")[:4000],
     )
 

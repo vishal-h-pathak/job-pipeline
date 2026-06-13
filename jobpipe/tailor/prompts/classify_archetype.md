@@ -13,12 +13,20 @@ one with stronger evidence. If the JD doesn't fit any archetype,
 return `tier_3_mission_ml` as the fallback (mission-driven ML/CV is
 the broadest lane).
 
+ROUTING RULE — `tier_1_5_agentic_builder`: pick this archetype when the
+job's tier is 1.5, or when the JD is centrally about building LLM-agent
+systems, applied-AI products, agent infrastructure, or forward-deployed
+engineering — even if the scorer tiered the job differently. "Centrally
+about" means the day-to-day work is building/operating agent systems,
+not a role that merely mentions AI tooling in passing.
+
 ARCHETYPE OPTIONS:
 {archetypes_block}
 
 JOB POSTING:
 Title: {job_title}
 Company: {company}
+Tier: {tier}
 Description: {job_desc}
 
 Respond with ONLY a JSON object (no prose, no code fences) of the form:

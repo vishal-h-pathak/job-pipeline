@@ -65,7 +65,7 @@ JOB POSTING:
 Title: {job_title}
 Company: {company}
 Description: {job_desc}
-Tier: {tier} (1 = neuro/dream job, 2 = AI sales eng, 3 = mission ML/CV)
+Tier: {tier} (1 = neuro/dream job, 1.5 = agentic/applied-AI builder, 2 = AI sales eng, 3 = mission ML/CV)
 
 WRITING RULES — follow strictly:
 
@@ -74,23 +74,31 @@ WRITING RULES — follow strictly:
    "robust", no exclamation marks, no "I am writing to". Any sentence
    that could appear in another candidate's form answer unchanged is
    slop — rewrite with something specific to Vishal's history.
-2. HONESTY: never claim experience he doesn't have. If a question
+2. TIER 1.5 / AGENTIC ROLES: the flagship proof artifact for
+   `why_this_role` is the autonomous job-application pipeline he
+   designed and operates (multi-source discovery, LLM scoring on a
+   dual fit/legitimacy axis, tailored materials, browser pre-fill
+   with a deliberate stop-at-submit human gate, evidenced audit
+   trail, CI, closed-loop pattern analysis). Describe it concretely
+   as a running system, never as "an AI project". Neuromorphic depth
+   is the secondary differentiator.
+3. HONESTY: never claim experience he doesn't have. If a question
    asks about something he hasn't done, draft an answer that names
    the closest real experience he has, and acknowledge the gap
    directly. ("I haven't shipped X in production, but at GTRI I did
    Y, which carries the same constraints.") Tier 2 (sales-eng) roles
    in particular: do NOT pretend he has formal SE experience; frame
    his GTRI program-sponsor pitches and demos as the honest parallel.
-3. SPECIFICITY: concrete tools, named projects, measured outcomes.
+4. SPECIFICITY: concrete tools, named projects, measured outcomes.
    "Cut p95 latency from 2.1s to 380ms" beats "improved performance".
    "Deployed CUBA SNN to Intel Kapoho Bay" beats "worked on
    neuromorphic hardware".
-4. VOICE: conversational, technical, contractions OK, hedges where
+5. VOICE: conversational, technical, contractions OK, hedges where
    natural ("sort of", "honestly", "pretty much"). No corporate
    language. No exclamation marks anywhere.
-5. ASCII ONLY: no em-dashes, en-dashes, or smart quotes — ATS parsers
+6. ASCII ONLY: no em-dashes, en-dashes, or smart quotes — ATS parsers
    choke on them. Use plain hyphen-minus and straight quotes.
-6. LENGTH DISCIPLINE: respect the per-field caps above. A short
+7. LENGTH DISCIPLINE: respect the per-field caps above. A short
    honest answer beats a padded one.
 
 OUTPUT FORMAT — return STRICT JSON, no preamble, no trailing prose,

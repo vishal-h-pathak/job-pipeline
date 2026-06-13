@@ -7,13 +7,12 @@ that emphasizes relevant experience and skills.
 
 import json
 import logging
-from pathlib import Path
 from datetime import datetime
 
 import anthropic
 from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
 from jobpipe.tailor.paths import CANDIDATE_PROFILE_PATH
-from prompts import load_profile, load_prompt
+from prompts import cached_system_blocks, load_task_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 
 # J-9: emit a one-time warning to the log if cv.md / article-digest.md /
@@ -32,15 +31,6 @@ logger = logging.getLogger("tailor.resume")
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
-def load_candidate_profile() -> str:
-    """Load the merged user-layer candidate profile.
-
-    Reads from `profile/` (top-level) + `jobpipe/hunt/profile/`
-    and falls back to legacy `CLAUDE.md` if `profile/` is missing.
-    """
-    return load_profile()
-
-
 def tailor_resume(job: dict) -> dict:
     """
     Generate a tailored resume for a specific job posting.
@@ -55,16 +45,9 @@ def tailor_resume(job: dict) -> dict:
             - output_path: str — path to the generated resume file
             - diff_notes: str — what changed from the base resume
     """
-    profile = load_candidate_profile()
     job_desc = job.get("description", "")
     job_title = job.get("title", "Unknown")
     company = job.get("company", "Unknown")
-
-    # Load voice profile if available
-    voice_profile = ""
-    voice_path = Path(__file__).parent.parent / "templates" / "VOICE_PROFILE.md"
-    if voice_path.exists():
-        voice_profile = voice_path.read_text(encoding="utf-8")
 
     # Optional Match Agent transcript — captured from the dashboard chat. When
     # present, it carries Vishal's own framing of why the role matters and
@@ -96,10 +79,8 @@ def tailor_resume(job: dict) -> dict:
             archetype_meta.get("reasoning", ""),
         )
 
-    prompt = load_prompt(
+    prompt = load_task_prompt(
         "tailor_resume",
-        voice_profile=voice_profile,
-        profile=profile,
         job_title=job_title,
         company=company,
         job_desc=job_desc,
@@ -108,9 +89,12 @@ def tailor_resume(job: dict) -> dict:
         archetype_block=archetype_block,
     )
 
+    # Session I: static rules + profile + voice ride in the cached
+    # system prefix; only the per-job prompt above goes uncached.
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=2000,
+        system=cached_system_blocks(),
         messages=[{"role": "user", "content": prompt}],
     )
 

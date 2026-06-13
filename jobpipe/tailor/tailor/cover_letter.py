@@ -5,27 +5,17 @@ Generates a personalized cover letter for each job application.
 """
 
 import logging
-from pathlib import Path
 from datetime import datetime
 
 import anthropic
 from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
 from jobpipe.tailor.paths import CANDIDATE_PROFILE_PATH
-from prompts import load_profile, load_prompt
+from prompts import cached_system_blocks, degree_gate_block, load_task_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 
 logger = logging.getLogger("tailor.cover_letter")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-
-def load_candidate_profile() -> str:
-    """Load the merged user-layer candidate profile.
-
-    Reads from `profile/` (top-level) + `jobpipe/hunt/profile/`
-    and falls back to legacy `CLAUDE.md` if `profile/` is missing.
-    """
-    return load_profile()
 
 
 def generate_cover_letter(job: dict, resume_tailoring: dict = None) -> dict:
@@ -41,7 +31,6 @@ def generate_cover_letter(job: dict, resume_tailoring: dict = None) -> dict:
             - cover_letter: str — the full cover letter text
             - output_path: str — path to the saved file
     """
-    profile = load_candidate_profile()
     job_desc = job.get("description", "")
     job_title = job.get("title", "Unknown")
     company = job.get("company", "Unknown")
@@ -54,12 +43,6 @@ RESUME TAILORING CONTEXT (maintain consistency with these choices):
 - Emphasis areas: {', '.join(resume_tailoring.get('emphasis_areas', []))}
 - Keywords: {', '.join(resume_tailoring.get('keywords_to_include', []))}
 """
-
-    # Load voice profile if available
-    voice_profile = ""
-    voice_path = Path(__file__).parent.parent / "templates" / "VOICE_PROFILE.md"
-    if voice_path.exists():
-        voice_profile = voice_path.read_text(encoding="utf-8")
 
     # Optional Match Agent transcript — direct quotes from Vishal's own
     # conversation about this role, captured in the dashboard chat. When
@@ -87,10 +70,8 @@ RESUME TAILORING CONTEXT (maintain consistency with these choices):
     job["_archetype"] = archetype_meta
     archetype_block = render_archetype_block(archetype_meta.get("archetype", ""))
 
-    prompt = load_prompt(
+    prompt = load_task_prompt(
         "tailor_cover_letter",
-        voice_profile=voice_profile,
-        profile=profile,
         job_title=job_title,
         company=company,
         job_desc=job_desc,
@@ -98,11 +79,15 @@ RESUME TAILORING CONTEXT (maintain consistency with these choices):
         context=context,
         match_chat_block=match_chat_block,
         archetype_block=archetype_block,
+        degree_gate_block=degree_gate_block(job),
     )
 
+    # Session I: static rules + profile + voice ride in the cached
+    # system prefix; only the per-job prompt above goes uncached.
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=1500,
+        system=cached_system_blocks(),
         messages=[{"role": "user", "content": prompt}],
     )
 

@@ -18,9 +18,64 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from jobpipe import profile_loader
+
 _PROMPTS_DIR = Path(__file__).parent
 _SHARED_CACHE: Optional[str] = None
 _PROFILE_CACHE: Optional[str] = None
+
+# Banner glued onto thesis.md wherever it is spliced into an LLM prompt.
+# Mirrors jobpipe.hunt.prompts.build_profile_prompt_string — thesis.md is
+# the canonical judgment document and must go FIRST, with the
+# wins-on-conflict statement, in every profile context the tailor builds.
+_THESIS_BANNER = (
+    "========== thesis.md (CANONICAL — read first) ==========\n"
+    "The hunting thesis below is the most recent, authoritative "
+    "statement of what Vishal is looking for. Where it conflicts "
+    "with any other profile document in this prompt, thesis.md "
+    "wins.\n\n"
+)
+
+
+def thesis_section() -> str:
+    """Return the bannered canonical thesis block, or "" if thesis.md is
+    missing. Callers that build their own context (the archetype
+    router) splice this in as their FIRST profile document."""
+    thesis = profile_loader.load_thesis().strip()
+    if not thesis:
+        return ""
+    return _THESIS_BANNER + thesis
+
+
+# Degree-gate framing (Session I, thesis.md degree-gate rule). Injected
+# into the cover-letter and form-answers prompts ONLY when the scorer
+# flagged jobs.degree_gated — a JD that hard-requires an MS/PhD with no
+# equivalent-experience escape hatch. The move is preemption, not
+# evasion: lead with the equivalence case, never imply a degree he lacks.
+_DEGREE_GATE_BLOCK = """\
+DEGREE GATE — this JD hard-requires an advanced degree (MS/PhD) with no
+"or equivalent experience" escape hatch. Binding rules for this output:
+
+- LEAD with the equivalence case: Vishal has a BS in Electrical
+  Engineering plus nine years of hands-on neuromorphic/embedded work —
+  Rain Neuromorphics employee #5 at 19 building memristive neuron PCBs,
+  four years deploying SNNs on Intel Loihi-class hardware and writing
+  VHDL neuron models at GTRI. Present that record explicitly as the
+  equivalent of the listed degree requirement, in the opening (cover
+  letter first paragraph / why_this_role first sentences) — preempt the
+  gate before the reader applies it, don't bury the case at the end.
+- HONESTY UNCHANGED: never claim or imply a degree he doesn't have. No
+  "MS-level", no vague "graduate work", no degree-adjacent hedging. The
+  move is preemption, not evasion: name the BS, then make the case that
+  the work itself is the qualification."""
+
+
+def degree_gate_block(job: dict) -> str:
+    """Return the degree-gate framing block when the job row carries
+    ``degree_gated=true``, else the empty string. Callers splice the
+    result into their prompt unconditionally — ungated jobs get no gate
+    framing at all."""
+    return _DEGREE_GATE_BLOCK if job.get("degree_gated") else ""
 
 # User-layer files in the order they should appear when concatenated for
 # an LLM. profile.yml first (structured ground truth), then disqualifiers,
@@ -95,6 +150,11 @@ def load_profile() -> str:
     search_dirs = _resolve_profile_search_dirs()
     if search_dirs:
         parts: list[str] = []
+        # thesis.md is canonical and goes FIRST — same contract as the
+        # hunt scorer's build_profile_prompt_string.
+        thesis = thesis_section()
+        if thesis:
+            parts.append(thesis)
         for name in _USER_LAYER_FILES:
             for d in search_dirs:
                 f = d / name
@@ -134,6 +194,67 @@ def load_prompt(*names: str, **vars: object) -> str:
         `_shared.md` + each prompt body, joined with `---` separators.
     """
     parts = [_shared()]
+    for n in names:
+        body = (_PROMPTS_DIR / f"{n}.md").read_text(encoding="utf-8")
+        if vars:
+            body = body.format(**vars)
+        parts.append(body)
+    return "\n\n---\n\n".join(parts)
+
+
+# ── Prompt caching (Session I) ──────────────────────────────────────────────
+# Every tailor LLM call splits its context into:
+#   system  — the static prefix (_shared.md rules + the merged candidate
+#             profile, thesis-first + the voice profile), identical for
+#             every call site, marked with cache_control so the API
+#             caches it once and serves cache reads (≈10% of input
+#             price) for every subsequent call within the TTL.
+#   user    — the per-job task prompt (template + JD + archetype +
+#             tailoring context), never cached.
+# The prefix must be byte-identical across call sites for the cache to
+# hit, which is why this lives here and not per-module.
+
+_SYSTEM_BLOCKS_CACHE: Optional[list] = None
+
+
+def cached_system_blocks() -> list:
+    """Return the shared static system prefix as Anthropic content
+    blocks with ``cache_control`` on the final (only) block.
+
+    Contents, in order: ``_shared.md`` global rules, the merged
+    candidate profile (thesis.md canonical-first via
+    :func:`load_profile`), and the voice profile
+    (``profile/voice-profile.md``). Built once per process.
+    """
+    global _SYSTEM_BLOCKS_CACHE
+    if _SYSTEM_BLOCKS_CACHE is None:
+        parts = [
+            _shared().strip(),
+            "========== CANDIDATE PROFILE ==========\n" + load_profile().strip(),
+        ]
+        voice = (profile_loader.load_voice_profile().get("raw") or "").strip()
+        if voice:
+            parts.append("========== VOICE PROFILE ==========\n" + voice)
+        _SYSTEM_BLOCKS_CACHE = [
+            {
+                "type": "text",
+                "text": "\n\n---\n\n".join(parts),
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+    return _SYSTEM_BLOCKS_CACHE
+
+
+def load_task_prompt(*names: str, **vars: object) -> str:
+    """Load prompts/{name}.md for the *user* turn of a cached call.
+
+    Same templating as :func:`load_prompt` but WITHOUT _shared.md
+    prepended — the global rules ride in :func:`cached_system_blocks`.
+    Call sites that use ``system=cached_system_blocks()`` must build
+    their user content with this, not ``load_prompt``, or the rules
+    would appear twice.
+    """
+    parts = []
     for n in names:
         body = (_PROMPTS_DIR / f"{n}.md").read_text(encoding="utf-8")
         if vars:

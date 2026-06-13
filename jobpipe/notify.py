@@ -161,6 +161,130 @@ def send_digest(entries: list[dict]) -> bool:
     return True
 
 
+# ── Morning digest (Session I) ─────────────────────────────────────────────
+# A second, narrower Resend surface: the top-N freshly-hunted jobs worth a
+# look, sent by hunt.yml's cron path right after the hunt completes. The
+# caller (scripts/send_morning_digest.py) queries the rows (status='new',
+# created in the last 24h); this function applies the score bar, sorts,
+# caps, renders, and sends. Empty result → no email at all (no noise).
+
+MORNING_DIGEST_SCORE_BAR = 7
+MORNING_DIGEST_TOP_N = 5
+
+
+def _one_line(text: str, limit: int = 180) -> str:
+    """Collapse a reasoning blob to a single ≤limit-char line."""
+    t = " ".join((text or "").split())
+    if len(t) <= limit:
+        return t
+    return t[:limit].rsplit(" ", 1)[0] + "..."
+
+
+def _tier_pill(tier) -> str:
+    key = _tier_key(tier)
+    label = f"Tier {key}" if key != 99 else "Tier ?"
+    return (
+        '<span style="display:inline-block; border:1px solid #ccc; '
+        'border-radius:10px; padding:1px 8px; font-size:12px; '
+        f'color:#333;">{html.escape(label)}</span>'
+    )
+
+
+def _render_morning_digest(top: list[dict]) -> tuple[str, str]:
+    n = len(top)
+    subject = f"hunt digest — {n} worth a look"
+    cards = []
+    for job in top:
+        review_url = cockpit_url(job.get("id"))
+        cards.append(
+            '<div style="margin: 0 0 18px 0;">'
+            f'<div><strong>{html.escape(job.get("title") or "?")}</strong>'
+            f' — {html.escape(job.get("company") or "?")}</div>'
+            f'<div style="color:#555; margin:2px 0;">{_tier_pill(job.get("tier"))}'
+            f' &nbsp;<strong>{job.get("score")}/10</strong></div>'
+            f'<p style="line-height:1.5; margin:6px 0;">'
+            f'{html.escape(_one_line(job.get("reasoning")))}</p>'
+            f'<a href="{html.escape(review_url)}">Review &rarr;</a>'
+            "</div>"
+        )
+    body = (
+        '<div style="font-family: -apple-system, system-ui, sans-serif; '
+        'max-width: 640px;">'
+        f'<p style="color:#555;">New in the last 24h, score &ge; '
+        f"{MORNING_DIGEST_SCORE_BAR}:</p>"
+        + "".join(cards)
+        + "</div>"
+    )
+    return subject, body
+
+
+def select_morning_digest(
+    jobs: list[dict], top_n: int = MORNING_DIGEST_TOP_N
+) -> list[dict]:
+    """Apply the digest policy: score ≥ bar, sorted desc, capped at top_n."""
+    candidates = []
+    for job in jobs or []:
+        try:
+            score = int(job.get("score") or 0)
+        except (TypeError, ValueError):
+            score = 0
+        if score >= MORNING_DIGEST_SCORE_BAR:
+            candidates.append((score, job))
+    candidates.sort(key=lambda pair: pair[0], reverse=True)
+    return [job for _, job in candidates[:top_n]]
+
+
+def send_morning_digest(
+    jobs: list[dict],
+    top_n: int = MORNING_DIGEST_TOP_N,
+    subject_prefix: str = "",
+) -> bool:
+    """Send the morning hunt digest via Resend.
+
+    ``jobs`` are candidate rows (the caller pre-filters to status='new'
+    entering in the last 24h); this function keeps score ≥ 7, sorts by
+    score desc, caps at ``top_n``, and sends. Sends NOTHING when the
+    filtered list is empty — an empty digest is noise. Returns True only
+    when an email actually went out.
+
+    ``subject_prefix`` exists for test sends ("[test] " per the session
+    rules); production callers leave it empty.
+    """
+    top = select_morning_digest(jobs, top_n)
+    if not top:
+        print("[notifier] morning digest: no jobs over the bar — not sending")
+        return False
+
+    subject, html_body = _render_morning_digest(top)
+    subject = f"{subject_prefix}{subject}"
+
+    api_key = os.environ.get("RESEND_API_KEY")
+    if not api_key:
+        print(
+            f"[notifier] RESEND_API_KEY not set; would send morning digest "
+            f"({len(top)} jobs)"
+        )
+        return False
+    resp = requests.post(
+        RESEND_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "from": FROM_ADDR,
+            "to": [TO_ADDR],
+            "subject": subject,
+            "html": html_body,
+        },
+        timeout=20,
+    )
+    if resp.status_code >= 300:
+        print(f"[notifier] resend failed {resp.status_code}: {resp.text}")
+        return False
+    return True
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  Tailor / submit — Supabase notifications table (was jobpipe/tailor/notify.py)
 # ══════════════════════════════════════════════════════════════════════════

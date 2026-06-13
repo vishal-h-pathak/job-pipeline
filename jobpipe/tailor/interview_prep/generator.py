@@ -16,7 +16,7 @@ from typing import Optional
 import anthropic
 
 from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
-from prompts import load_profile, load_prompt
+from prompts import cached_system_blocks, load_task_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 
 logger = logging.getLogger("interview_prep.generator")
@@ -56,9 +56,8 @@ def generate_stories(job: dict, archetype_meta: Optional[dict] = None) -> list[d
     archetype_meta = archetype_meta or classify_archetype(job)
     archetype_key = archetype_meta.get("archetype", "")
 
-    prompt = load_prompt(
+    prompt = load_task_prompt(
         "star_stories",
-        profile=load_profile(),
         archetype_block=render_archetype_block(archetype_key) or "(no archetype)",
         job_title=job.get("title", ""),
         company=job.get("company", ""),
@@ -66,9 +65,12 @@ def generate_stories(job: dict, archetype_meta: Optional[dict] = None) -> list[d
     )
 
     try:
+        # Session I: static rules + profile + voice ride in the cached
+        # system prefix; only the per-job prompt above goes uncached.
         resp = _client_lazy().messages.create(
             model=CLAUDE_MODEL,
             max_tokens=3000,
+            system=cached_system_blocks(),
             messages=[{"role": "user", "content": prompt}],
         )
         text = "".join(b.text for b in resp.content if hasattr(b, "text"))

@@ -29,7 +29,7 @@ import anthropic
 
 from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
 from jobpipe import profile_loader
-from prompts import load_profile, load_prompt
+from prompts import cached_system_blocks, degree_gate_block, load_task_prompt
 from tailor.archetype import render_archetype_block
 
 logger = logging.getLogger("tailor.form_answers")
@@ -208,11 +208,6 @@ def _resume_context_for_prompt(resume_result: dict | None) -> str:
     return "\n".join(parts) if parts else "(no resume tailoring context)"
 
 
-def _voice_profile() -> str:
-    """Return the full voice-profile markdown for prompt injection."""
-    return profile_loader.load_voice_profile().get("raw", "") or ""
-
-
 def _extract_json_object(text: str) -> dict:
     """Pull the first balanced JSON object out of a model response."""
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
@@ -260,12 +255,11 @@ def generate_form_answers(
         else "(no archetype classified)"
     )
 
-    prompt = load_prompt(
+    prompt = load_task_prompt(
         "form_answers",
         identity_summary=_identity_summary_for_prompt(identity),
-        voice_profile=_voice_profile(),
-        profile=load_profile(),
         archetype_block=archetype_block,
+        degree_gate_block=degree_gate_block(job),
         resume_context=_resume_context_for_prompt(resume_result),
         job_title=job.get("title", ""),
         company=job.get("company", ""),
@@ -273,9 +267,12 @@ def generate_form_answers(
         tier=job.get("tier", "unknown"),
     )
 
+    # Session I: static rules + profile + voice ride in the cached
+    # system prefix; only the per-job prompt above goes uncached.
     response = _client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=2000,
+        system=cached_system_blocks(),
         messages=[{"role": "user", "content": prompt}],
     )
 

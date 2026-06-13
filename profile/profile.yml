@@ -127,6 +127,43 @@ archetypes:
       Example: "Built rugged sensor enclosure with Jetson Orin +
       Ouster LiDAR + DAGR receiver, validated SLAM on campus scale."
 
+  tier_1_5_agentic_builder:
+    label: Agentic / applied AI engineering (LLM agents, agent infra, forward-deployed)
+    framing: |
+      Engineer who builds agentic AI systems end-to-end as a daily
+      practice. Flagship proof artifact: the autonomous job-application
+      pipeline he designed and operates — multi-source discovery, LLM
+      scoring with a dual fit/legitimacy axis, tailored resume +
+      cover-letter generation, browser pre-fill with a deliberate
+      stop-at-submit human gate, a full audit trail (every attempt
+      writes an evidenced row), CI, and closed-loop pattern analysis
+      over outcomes. Describe this system concretely — stages, gates,
+      data flow — never as "an AI project". Secondary differentiator:
+      neuromorphic depth. Among agent engineers he is the one who built
+      neurons in silicon first — memristive neuron PCBs at Rain, VHDL
+      LIF/CUBA models, Intel Loihi deployment — and now builds agent
+      systems with the same systems-level rigor.
+    emphasis_proof_points:
+      - Autonomous job pipeline he operates daily — multi-source discovery, LLM scoring with a dual fit/legitimacy axis, tailored materials generation, browser pre-fill stopping at submit for a human gate
+      - Full audit trail by design — every submission attempt writes an evidenced row; CI on the pipeline; closed-loop pattern analysis of application outcomes
+      - Human-in-the-loop architecture as a deliberate choice — review gates, confidence scoring, bounded LLM call budgets in the deterministic paths
+      - Neuromorphic depth as the differentiator — built neurons in silicon (Rain PCBs, VHDL SNNs, Kapoho Bay) before building agent systems
+      - End-to-end solo ownership — Anthropic SDK, Playwright, Supabase, LaTeX render pipeline, GitHub Actions
+    tone_guidance: |
+      Builder-to-builder. Concrete about architecture: name the stages,
+      the gates, the failure handling. This audience pattern-matches
+      "worked with LLMs" to prompt-tinkering — the counter-signal is
+      operational detail (audit trails, confidence gating, CI, bounded
+      LLM budgets). Lead with the pipeline as a shipped, running
+      system; bring the neuromorphic story in as the differentiator,
+      not the headline.
+    bullet_template: |
+      [verb] [agent-system component] with [orchestration/gating
+      detail], [operational outcome].
+      Example: "Built browser pre-fill agent with deterministic
+      per-ATS adapters and a stop-at-submit human gate; every attempt
+      writes an evidenced audit row."
+
   tier_2_ai_se:
     label: AI / LLM sales engineering, solutions engineering
     framing: |

@@ -5,17 +5,15 @@ professional — no personal statements, no interests section, no
 "passionate about" language. Every bullet should describe something
 concrete that was built, deployed, or shipped.
 
-VOICE PROFILE (for tone of summary only):
-{voice_profile}
-
-CANDIDATE PROFILE:
-{profile}
+The CANDIDATE PROFILE (thesis.md canonical-first) and VOICE PROFILE are
+in the system prompt. Use the voice profile for the tone of the summary
+only.
 
 JOB POSTING:
 Title: {job_title}
 Company: {company}
 Description: {job_desc}
-Job Tier: {tier} (1=neuro/dream job, 2=sales eng, 3=ML/CV)
+Job Tier: {tier} (1=neuro/dream job, 1.5=agentic/applied-AI builder, 2=sales eng, 3=ML/CV)
 {match_chat_block}
 
 CHOSEN ARCHETYPE (J-4 — bias your framing, emphasis areas, and bullet
@@ -50,7 +48,19 @@ RESUME RULES — follow these strictly:
 
 6. DO NOT fabricate experiences, skills, certifications, or metrics he doesn't have.
 
-7. TIER 2 FRAMING (for sales/solutions engineering roles): Vishal has no formal SE title,
+7. TIER 1.5 / AGENTIC BUILDER FRAMING (for LLM-agent, applied-AI, agent-infra, or
+   forward-deployed engineering roles): The flagship proof artifact is the autonomous
+   job-application pipeline he designed and operates — multi-source discovery, LLM scoring
+   with a dual fit/legitimacy axis, tailored materials generation, browser pre-fill with a
+   deliberate stop-at-submit human gate, a full audit trail (every attempt writes an
+   evidenced row), CI, and closed-loop pattern analysis. Describe it concretely as a
+   running system — stages, gates, data flow — NEVER as "an AI project". Personal projects
+   ARE the relevant experience lane here: give the pipeline a Projects entry near the top.
+   Secondary differentiator: his neuromorphic depth — among agent engineers he is the
+   person who built neurons in silicon (Rain PCBs, VHDL SNNs, Loihi) before building
+   agent systems.
+
+8. TIER 2 FRAMING (for sales/solutions engineering roles): Vishal has no formal SE title,
    but he has relevant experience: presenting to DoD program sponsors, writing technical
    proposals, translating complex research into stakeholder-friendly deliverables, and
    building demos for non-technical decision-makers. Frame these GTRI experiences through

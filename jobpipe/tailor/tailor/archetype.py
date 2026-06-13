@@ -6,8 +6,10 @@ Classifies a JD into the best-fit archetype with a single Sonnet-class
 call, then exposes the archetype config for downstream prompts
 (``tailor_resume.md``, ``tailor_cover_letter.md``).
 
-The classifier is intentionally cheap. It reads only title +
-description + the framings YAML — no profile injection, no resume.
+The classifier is intentionally cheap. It reads title + description +
+the framings YAML + the canonical thesis (thesis.md, spliced in first
+so tier semantics and the wins-on-conflict rule bind routing) — no
+full profile injection, no resume.
 Output is a single archetype key + confidence; downstream tailoring
 prompts get the full framing/emphasis/tone/bullet_template via
 ``render_archetype_block(key)``.
@@ -30,12 +32,24 @@ import re
 import anthropic
 
 from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
-from prompts import load_prompt
+from prompts import cached_system_blocks, load_task_prompt
 from jobpipe.profile_loader import load_archetypes
 
 logger = logging.getLogger("tailor.archetype")
 
 _FALLBACK_KEY = "tier_3_mission_ml"
+_AGENTIC_KEY = "tier_1_5_agentic_builder"
+
+
+def _is_tier_1_5(tier) -> bool:
+    """True when the scorer tiered this job 1.5 (agentic / applied AI).
+
+    The jobs.tier column is text, so 1.5 may arrive as "1.5" or 1.5.
+    """
+    try:
+        return float(tier) == 1.5
+    except (TypeError, ValueError):
+        return False
 
 
 def _load_archetypes() -> dict:
@@ -145,18 +159,33 @@ def classify_archetype(job: dict) -> dict:
             "reasoning": "no archetypes configured",
         }
 
-    prompt = load_prompt(
+    # Tier 1.5 routes deterministically: the scorer only emits 1.5 for
+    # agentic / applied-AI engineering roles (thesis.md), which is
+    # exactly what tier_1_5_agentic_builder frames. Skip the LLM call.
+    if _is_tier_1_5(job.get("tier")) and _AGENTIC_KEY in archs:
+        return {
+            "archetype": _AGENTIC_KEY,
+            "confidence": 1.0,
+            "reasoning": "tier 1.5 routes deterministically to the agentic builder lane",
+        }
+
+    prompt = load_task_prompt(
         "classify_archetype",
         archetypes_block=_archetypes_block_for_classifier(),
         job_title=job.get("title", ""),
         company=job.get("company", ""),
+        tier=job.get("tier", "unknown"),
         job_desc=(job.get("description", "") or "")[:4000],
     )
 
     try:
+        # Session I: the shared cached system prefix carries the
+        # canonical thesis (FIRST profile document) + global rules, so
+        # routing binds to thesis tier semantics at cache-read price.
         resp = _client_lazy().messages.create(
             model=CLAUDE_MODEL,
             max_tokens=300,
+            system=cached_system_blocks(),
             messages=[{"role": "user", "content": prompt}],
         )
         text = "".join(b.text for b in resp.content if hasattr(b, "text"))

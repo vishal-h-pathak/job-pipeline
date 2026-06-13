@@ -81,7 +81,11 @@ higher comp. Small weird ambitious > large stable boring.
 Dream-tier: **eon.systems** (the reference point), **Rain Neuromorphics** (his
 old start — returning interest is real), **Kernel (kernel.co)** (non-invasive
 brain interfaces; founder eccentricity is not a deterrent), **Neuralink**
-(same vein), **moonshot.xyz** (named directly as incredibly interesting).
+(same vein), **X, the moonshot factory (x.company)** (named directly as
+incredibly interesting — the experimental zero-to-one register generalizes:
+corporate skunkworks and moonshot labs count as small-and-weird even inside
+giants; note X hires through Google's own careers portal, no pollable ATS
+board, so it's a scoring anchor rather than a discovery source).
 Generalize: small-to-mid companies attacking the brain or the frontier with
 actual hardware or actual agents — not consultancies orbiting them.
 

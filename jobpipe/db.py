@@ -19,8 +19,10 @@ Behavior contract (preserves PR-6's failure split):
       transition (rename from the M-2 ``mark_failed`` did during PR-6).
     - ``mark_failed`` is the canonical submit-side failure transition.
       Required-attempt-row preconditions documented at the call site.
-    - ``mark_needs_review`` is submit-only (the M-2 deprecated tailor
-      alias was deleted in PR-6).
+    - Session E removed the remaining deprecated status shims
+      (``mark_ready_to_submit`` / ``mark_submitted`` /
+      ``mark_needs_review`` / ``get_confirmed_jobs``). Every transition
+      now validates against ``jobpipe.shared.status.CANONICAL_STATUSES``.
 
 Behavior delta vs. the three pre-PR-8 sources:
     - Supabase clients: hunt used a per-call ``_client()`` factory,
@@ -32,8 +34,6 @@ Behavior delta vs. the three pre-PR-8 sources:
       client creation. Why this won: fewest handshakes per job under
       polling load, and import-time has no side effects so the module
       is testable without secrets.
-    - ``mark_ready_to_submit`` deprecated alias: kept (still emits
-      logger.warning) — PR-8 doesn't sweep deprecation aliases.
 """
 
 from __future__ import annotations
@@ -44,17 +44,21 @@ from datetime import datetime, timezone
 from typing import Any
 
 from jobpipe.config import (
-    SUPABASE_KEY,
     SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_URL,
+    classify_supabase_key,
 )
+from jobpipe.shared.status import CANONICAL_STATUSES
 
 logger = logging.getLogger("jobpipe.db")
 
 
 # ── Lazy Supabase client singletons ───────────────────────────────────────
-# Two clients: anon for reads / standard writes, service-role for Storage
-# operations. Both are created on first access so this module is
+# Both clients are service-role: the pipeline tables have RLS enabled
+# with no anon policies, so an anon key silently reads empty (HTTP 200,
+# zero rows — discovered the hard way in Session G when --rescore saw 0
+# of 560 rows). ``client`` is the general data client, ``service_client``
+# the Storage one; both are created on first access so this module is
 # importable without env vars (tests, CI).
 
 _client = None
@@ -62,14 +66,31 @@ _service_client = None
 
 
 def _get_client():
-    """Return the lazily-initialised anon Supabase client."""
+    """Return the lazily-initialised Supabase data client (service-role).
+
+    Refuses to construct a client from a demonstrably anon key: against
+    RLS-without-policies tables an anon client doesn't error, it just
+    sees empty tables, and every downstream behavior (re-scoring every
+    posting, "no jobs ready") looks plausible. Fail loud instead.
+    """
     global _client
     if _client is None:
         # Lazy import: keeps ``import jobpipe.db`` cheap and lets the
         # supabase SDK stay an optional dependency for tooling that
         # only needs the function signatures.
         from supabase import create_client
-        _client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        # SUPABASE_SERVICE_ROLE_KEY falls back to SUPABASE_KEY in config;
+        # the deployed contract is that SUPABASE_KEY holds the service
+        # key when SUPABASE_SERVICE_ROLE_KEY isn't set separately.
+        if classify_supabase_key(SUPABASE_SERVICE_ROLE_KEY) == "anon":
+            raise RuntimeError(
+                "jobpipe.db resolved an ANON Supabase key. The pipeline "
+                "tables (jobs/runs/application_attempts) have RLS with no "
+                "anon policies, so every read would silently return empty. "
+                "Set SUPABASE_SERVICE_ROLE_KEY (or point SUPABASE_KEY at "
+                "the service-role key) in .env / workflow secrets."
+            )
+        _client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     return _client
 
 
@@ -182,9 +203,12 @@ def get_seen_ids() -> set[str]:
 #     skipped                 — user opted out of this row
 #     expired                 — posting taken down (J-8)
 #
-# Legacy statuses (ready_to_submit / submit_confirmed / submitting) were
-# collapsed into ready_for_review by migration 007. The CHECK constraint
-# on jobs.status enforces the new enum.
+# The canonical list lives in jobpipe.shared.status.CANONICAL_STATUSES
+# (and its generated status.json artifact, which the portfolio dashboard
+# consumes). Legacy statuses were collapsed by migration 007 and the
+# CHECK constraint re-asserted canonical-only by migration 011;
+# update_job_status() validates before writing so a bad value fails here
+# rather than at the constraint.
 #
 # The system NEVER auto-sets status='applied'. Only the dashboard cockpit's
 # "Mark Applied" PATCH does — that click is the single source of truth for
@@ -218,31 +242,25 @@ def get_prefill_requested_jobs(limit: int = 10) -> list[dict]:
     return get_jobs_by_status("prefilling", limit)
 
 
-def get_confirmed_jobs(limit: int = 10) -> list[dict]:
-    """DEPRECATED — ``submit_confirmed`` no longer exists under the M-2
-    CHECK enum. Returns []. Kept so legacy callers
-    (``process_confirmed_jobs``, removed in M-7) don't crash on import.
-    Use :func:`get_prefill_requested_jobs` instead.
-    """
-    logger.warning(
-        "get_confirmed_jobs() is deprecated; status 'submit_confirmed' "
-        "was removed in M-2. Use get_prefill_requested_jobs(). Returning []."
-    )
-    return []
-
-
 def update_job_status(job_id: str, status: str, **extra_fields) -> dict:
     """Update a job's status and any additional fields.
 
     Args:
         job_id: The job's primary key.
-        status: New status value (must satisfy the M-2 CHECK enum).
+        status: New status value — must be one of
+            ``jobpipe.shared.status.CANONICAL_STATUSES`` (raises
+            ``ValueError`` otherwise, before any network call).
         **extra_fields: Additional columns to update (e.g., resume_path,
             failure_reason, screenshot path).
 
     Returns:
         The updated row data.
     """
+    if status not in CANONICAL_STATUSES:
+        raise ValueError(
+            f"invalid jobs.status {status!r}; canonical values are "
+            f"{CANONICAL_STATUSES}"
+        )
     data = {
         "status": status,
         "status_updated_at": _utcnow(),
@@ -304,17 +322,6 @@ def mark_ready_for_review(job_id: str, resume_path: str = None,
     if sub_url:
         extras["submission_url"] = sub_url
     return update_job_status(job_id, "ready_for_review", **extras)
-
-
-def mark_ready_to_submit(*args, **kwargs) -> dict:
-    """DEPRECATED alias for :func:`mark_ready_for_review` (M-2). Forwards
-    all arguments unchanged. Logged once per call so the sweep to update
-    callers is visible. Remove after every caller migrates."""
-    logger.warning(
-        "mark_ready_to_submit() is deprecated; use mark_ready_for_review() "
-        "instead. Forwarding..."
-    )
-    return mark_ready_for_review(*args, **kwargs)
 
 
 def mark_prefilling(job_id: str) -> dict:
@@ -463,14 +470,13 @@ def get_jobs_ready_for_submission(limit: int = 10) -> list[dict]:
     jobs don't indefinitely starve lower-score ones if the former keep
     failing.
 
-    Legacy values (``ready_to_submit``, ``tailored``) are kept in the IN
-    list for back-compat — both were collapsed by migration 007 but a
-    stray row from a not-yet-migrated agent should still be picked up.
+    Session E dropped the legacy back-compat values from the IN list —
+    migration 011 guarantees only canonical statuses exist.
     """
     result = (
         _get_client().table("jobs")
         .select("*")
-        .in_("status", ["prefilling", "ready_to_submit", "tailored"])
+        .in_("status", ["prefilling"])
         .order("status_updated_at", desc=False)
         .limit(limit)
         .execute()
@@ -524,53 +530,6 @@ def record_submission_log(job_id: str, log: dict, confidence: float | None) -> N
         "submission_log": log,
         "confidence": confidence,
     }).eq("id", job_id).execute()
-
-
-def mark_submitted(job_id: str, confirmation_evidence: dict) -> None:
-    """DEPRECATED — under M-2 the submitter never auto-submits. The system
-    pre-fills, leaves the browser open, and waits for the human to click
-    Submit themselves and then "Mark Applied" in the cockpit. Routes any
-    legacy caller to :func:`mark_awaiting_submit` so the row lands in a
-    valid M-2 state instead of writing the now-invalid ``submitted``
-    status.
-
-    Kept temporarily so legacy code paths (the deprecated
-    auto-submit-and-verify flow in ``confirm.py``) don't blow up the
-    CHECK constraint if invoked. ``mark_applied`` is the only path that
-    represents "this application was submitted to the company"; that
-    transition is human-driven via the cockpit's Mark Applied click.
-    """
-    logger.warning(
-        "mark_submitted() is deprecated under M-2; routing job %s to "
-        "awaiting_human_submit (evidence kind=%s, ignored).",
-        job_id, confirmation_evidence.get("kind"),
-    )
-    mark_awaiting_submit(job_id, screenshot_path=None)
-
-
-def mark_needs_review(job_id: str, reason: str, packet_ref: str | None = None) -> None:
-    """DEPRECATED — ``needs_review`` was retired by M-2's CHECK enum.
-    Routes to ``failed`` so the cockpit's status banner renders the
-    failure reason; the Browserbase replay URL on application_attempts
-    remains the forensic starting point.
-
-    Both submit-side and tailor-side failures now share the failed bucket.
-    Tailor-side callers should use :func:`mark_tailor_failed` directly so
-    the additional metadata (uncertain fields, screenshots) is preserved.
-    """
-    logger.warning(
-        "mark_needs_review() is deprecated under M-2; routing job %s to "
-        "failed (reason=%s).", job_id, reason,
-    )
-    extras: dict[str, Any] = {
-        "status": "failed",
-        "status_updated_at": _utcnow(),
-        "failure_reason": reason,
-    }
-    if packet_ref:
-        extras["review_packet"] = packet_ref
-    _get_client().table("jobs").update(extras).eq("id", job_id).execute()
-    logger.info("job %s -> failed (was needs_review; %s)", job_id, reason)
 
 
 def mark_failed(job_id: str, reason: str) -> None:

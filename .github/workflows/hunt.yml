@@ -60,6 +60,10 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          # Key contract (Session E): the pipeline tables have RLS with no
+          # anon policies, so jobpipe runs service-role only. The
+          # SUPABASE_KEY secret also holds the service-role key (legacy
+          # fallback name); jobpipe.db fails loud on a demonstrably anon key.
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}

@@ -42,7 +42,6 @@ _EXPECTED_DB_SIGNATURES: dict[str, tuple[str, ...]] = {
     "get_jobs_by_status":       ("status", "limit"),
     "get_approved_jobs":        ("limit",),
     "get_prefill_requested_jobs": ("limit",),
-    "get_confirmed_jobs":       ("limit",),
     "update_job_status":        ("job_id", "status"),
     "mark_preparing":           ("job_id",),
     "mark_ready_for_review": (
@@ -50,7 +49,6 @@ _EXPECTED_DB_SIGNATURES: dict[str, tuple[str, ...]] = {
         "application_notes", "resume_pdf_path", "cover_letter_pdf_path",
         "archetype", "archetype_confidence", "submission_url",
     ),
-    "mark_ready_to_submit":     (),  # *args/**kwargs forwarder
     "mark_prefilling":          ("job_id",),
     "mark_awaiting_submit":     ("job_id", "screenshot_path"),
     "mark_skipped":             ("job_id", "reason"),
@@ -69,8 +67,6 @@ _EXPECTED_DB_SIGNATURES: dict[str, tuple[str, ...]] = {
     "next_attempt_n":           ("job_id",),
     "mark_submitting":          ("job_id",),
     "record_submission_log":    ("job_id", "log", "confidence"),
-    "mark_submitted":           ("job_id", "confirmation_evidence"),
-    "mark_needs_review":        ("job_id", "reason", "packet_ref"),
     "mark_failed":              ("job_id", "reason"),
     "open_attempt":             ("job_id", "attempt_n", "adapter"),
     "close_attempt": (

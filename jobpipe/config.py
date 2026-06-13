@@ -64,11 +64,46 @@ def _bool(name: str, default: str = "true") -> bool:
 # Submit subtree wraps these names in require_env() at startup; tailor
 # tolerates empty values so the package can be imported without secrets
 # during tests.
+#
+# KEY CONTRACT (Session E): the pipeline tables (jobs / runs /
+# application_attempts) have RLS enabled with NO anon policies, so an
+# anon key gets HTTP 200 + empty result sets — no error, just silence.
+# jobpipe therefore runs service-role everywhere: ``jobpipe.db`` resolves
+# its client from SUPABASE_SERVICE_ROLE_KEY (which falls back to
+# SUPABASE_KEY below) and refuses to start if the resolved key is
+# demonstrably anon. In GitHub Actions the SUPABASE_KEY secret already
+# holds the service-role key; locally, set SUPABASE_SERVICE_ROLE_KEY in
+# .env (or point SUPABASE_KEY at the service key).
 SUPABASE_URL: Final[str]              = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY: Final[str]              = os.environ.get("SUPABASE_KEY", "")
 SUPABASE_SERVICE_ROLE_KEY: Final[str] = (
     os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or SUPABASE_KEY
 )
+
+
+def classify_supabase_key(key: str) -> str:
+    """Best-effort role of a Supabase API key: 'service_role' | 'anon' | 'unknown'.
+
+    Handles both key formats: the new publishable/secret prefixes and the
+    legacy JWT keys (role claim in the unverified payload — we only need
+    the label, not authenticity). Returns 'unknown' for anything
+    unparseable so callers can choose to proceed (tests, fakes).
+    """
+    if not key:
+        return "unknown"
+    if key.startswith("sb_secret_"):
+        return "service_role"
+    if key.startswith("sb_publishable_"):
+        return "anon"
+    try:
+        import base64
+        import json
+        payload = key.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        role = json.loads(base64.urlsafe_b64decode(payload)).get("role", "")
+        return role if role in ("service_role", "anon") else "unknown"
+    except Exception:
+        return "unknown"
 
 
 # ── Anthropic (soft default) ──────────────────────────────────────────────

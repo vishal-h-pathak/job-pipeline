@@ -158,7 +158,8 @@ required). Materials live in Supabase Storage (`job-materials/{job_id}/`)
 ### Contract with the tailor (input)
 
 A job is eligible when the `jobs` row has:
-- `status = 'ready_to_submit'` (legacy) OR `status = 'tailored'`
+- `status = 'prefilling'` (the cockpit's "Pre-fill Form" click; legacy
+  aliases were retired by migration 011 — canonical statuses only)
 - `resume_pdf_path` + `cover_letter_pdf_path` (Storage keys)
 - `cover_letter_path` — plain-text body for form-paste fields
 - `application_url` — canonical ATS URL (aggregator-resolved)

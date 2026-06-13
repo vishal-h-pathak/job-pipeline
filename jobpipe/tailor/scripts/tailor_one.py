@@ -51,7 +51,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from jobpipe.db import client as supabase_client, mark_ready_to_submit, mark_preparing  # noqa: E402
+from jobpipe.db import client as supabase_client, mark_ready_for_review, mark_preparing  # noqa: E402
 from tailor.resume import tailor_resume  # noqa: E402
 from tailor.cover_letter import generate_cover_letter  # noqa: E402
 from tailor.cover_letter_pdf import render_cover_letter_pdf  # noqa: E402
@@ -227,7 +227,7 @@ def main() -> None:
         "storage_path": resume_path,
         "compile_success": True,
     })
-    mark_ready_to_submit(
+    mark_ready_for_review(
         job["id"],
         resume_path=resume_summary,
         cover_letter_path=cover_text,
@@ -236,7 +236,7 @@ def main() -> None:
         resume_pdf_path=resume_path,
         cover_letter_pdf_path=cover_path,
     )
-    print(f"\n[ok] job {job['id']} → ready_to_submit")
+    print(f"\n[ok] job {job['id']} → ready_for_review")
     print("Visit your dashboard to review and submit.")
 
 

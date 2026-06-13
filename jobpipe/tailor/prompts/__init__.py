@@ -18,9 +18,33 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from jobpipe import profile_loader
+
 _PROMPTS_DIR = Path(__file__).parent
 _SHARED_CACHE: Optional[str] = None
 _PROFILE_CACHE: Optional[str] = None
+
+# Banner glued onto thesis.md wherever it is spliced into an LLM prompt.
+# Mirrors jobpipe.hunt.prompts.build_profile_prompt_string — thesis.md is
+# the canonical judgment document and must go FIRST, with the
+# wins-on-conflict statement, in every profile context the tailor builds.
+_THESIS_BANNER = (
+    "========== thesis.md (CANONICAL — read first) ==========\n"
+    "The hunting thesis below is the most recent, authoritative "
+    "statement of what Vishal is looking for. Where it conflicts "
+    "with any other profile document in this prompt, thesis.md "
+    "wins.\n\n"
+)
+
+
+def thesis_section() -> str:
+    """Return the bannered canonical thesis block, or "" if thesis.md is
+    missing. Callers that build their own profile context (the archetype
+    router) splice this in as their FIRST profile document."""
+    thesis = profile_loader.load_thesis().strip()
+    if not thesis:
+        return ""
+    return _THESIS_BANNER + thesis
 
 # User-layer files in the order they should appear when concatenated for
 # an LLM. profile.yml first (structured ground truth), then disqualifiers,
@@ -95,6 +119,11 @@ def load_profile() -> str:
     search_dirs = _resolve_profile_search_dirs()
     if search_dirs:
         parts: list[str] = []
+        # thesis.md is canonical and goes FIRST — same contract as the
+        # hunt scorer's build_profile_prompt_string.
+        thesis = thesis_section()
+        if thesis:
+            parts.append(thesis)
         for name in _USER_LAYER_FILES:
             for d in search_dirs:
                 f = d / name

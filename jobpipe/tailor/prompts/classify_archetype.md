@@ -5,6 +5,8 @@ Vishal Pathak. Archetypes are different lanes the same candidate can
 be framed as — pick the one whose framing, emphasis points, and tone
 most closely match this specific JD.
 
+{thesis_block}
+
 The archetypes available are listed below with their framings. You must
 return ONE archetype key. If the JD straddles two archetypes, pick the
 one with stronger evidence. If the JD doesn't fit any archetype,

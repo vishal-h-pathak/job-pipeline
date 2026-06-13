@@ -6,8 +6,10 @@ Classifies a JD into the best-fit archetype with a single Sonnet-class
 call, then exposes the archetype config for downstream prompts
 (``tailor_resume.md``, ``tailor_cover_letter.md``).
 
-The classifier is intentionally cheap. It reads only title +
-description + the framings YAML — no profile injection, no resume.
+The classifier is intentionally cheap. It reads title + description +
+the framings YAML + the canonical thesis (thesis.md, spliced in first
+so tier semantics and the wins-on-conflict rule bind routing) — no
+full profile injection, no resume.
 Output is a single archetype key + confidence; downstream tailoring
 prompts get the full framing/emphasis/tone/bullet_template via
 ``render_archetype_block(key)``.
@@ -30,7 +32,7 @@ import re
 import anthropic
 
 from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
-from prompts import load_prompt
+from prompts import load_prompt, thesis_section
 from jobpipe.profile_loader import load_archetypes
 
 logger = logging.getLogger("tailor.archetype")
@@ -147,6 +149,7 @@ def classify_archetype(job: dict) -> dict:
 
     prompt = load_prompt(
         "classify_archetype",
+        thesis_block=thesis_section(),
         archetypes_block=_archetypes_block_for_classifier(),
         job_title=job.get("title", ""),
         company=job.get("company", ""),

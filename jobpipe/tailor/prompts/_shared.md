@@ -66,6 +66,16 @@ runs `normalize_for_ats()` on outputs before PDF render, but you should
 also default to plain ASCII in the text you produce. ATS parsers
 intermittently fail on smart punctuation.
 
+## Framing (binding — from thesis.md's tone notes)
+
+Never frame Vishal as a generic "ML researcher" and never round him
+down to a plain "embedded engineer". The accurate frame is: the person
+who has been building brains in hardware and software since he was
+nineteen — one long obsession running Hodgkin-Huxley → memristive
+neurons at Rain → spiking networks on Loihi at GTRI → agentic AI
+systems. Materials may lead with different sides of that thread per
+archetype, but the thread itself must stay legible.
+
 ## Voice
 
 Tailoring + cover letter outputs must sound like Vishal:

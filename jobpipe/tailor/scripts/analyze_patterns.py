@@ -45,14 +45,17 @@ from jobpipe.db import client  # noqa: E402
 
 logger = logging.getLogger("analyze_patterns")
 
-# Status buckets that count as "the funnel made progress past application
-# submission". These are the rates we surface in the report. Session E:
-# legacy aliases dropped — migration 011 guarantees canonical-only, and
-# 'applied' is the sole canonical post-submission status.
+# 'applied' is the sole canonical post-submission status (migration 011
+# guarantees canonical-only). Employer outcomes live on their own axis:
+# jobs.response_status (migration 012, Session I) — none → rejected |
+# screen | interview | offer — written by the portfolio's "log response"
+# feature. The pre-012 RESPONDED/INTERVIEW/OFFER status sets referenced
+# values that never existed in the canonical enum, so every rate they
+# fed was structurally zero; the buckets below consume the real column.
 APPLIED_STATUSES = {"applied"}
-RESPONDED_STATUSES = {"responded", "interview", "interviewing", "offer", "rejected_post_interview"}
-INTERVIEW_STATUSES = {"interview", "interviewing", "offer"}
-OFFER_STATUSES = {"offer", "accepted"}
+RESPONSE_STATUSES = {"rejected", "screen", "interview", "offer"}
+INTERVIEW_RESPONSES = {"interview", "offer"}
+OFFER_RESPONSES = {"offer"}
 
 # Default group-by dimensions. Any of these can be overridden at the CLI.
 DEFAULT_DIMENSIONS = ("archetype", "ats_kind")
@@ -174,11 +177,15 @@ def aggregate(jobs: list[dict], dimensions: tuple[str, ...]) -> dict[str, GroupS
         status = (job.get("status") or "").lower()
         if status in APPLIED_STATUSES:
             b["applied"] += 1
-        if status in RESPONDED_STATUSES:
+        # Outcomes ride jobs.response_status (migration 012); rows
+        # predating the column or untouched by "log response" read as
+        # 'none' and count nowhere below.
+        response = (job.get("response_status") or "none").lower()
+        if response in RESPONSE_STATUSES:
             b["responded"] += 1
-        if status in INTERVIEW_STATUSES:
+        if response in INTERVIEW_RESPONSES:
             b["interviewed"] += 1
-        if status in OFFER_STATUSES:
+        if response in OFFER_RESPONSES:
             b["offered"] += 1
     return {
         k: GroupStats(name=k, n=v["n"], applied=v["applied"],

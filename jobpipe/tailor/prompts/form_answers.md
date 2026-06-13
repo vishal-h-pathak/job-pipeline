@@ -57,6 +57,8 @@ CHOSEN ARCHETYPE (use this lane's framing, emphasis points, and tone
 for `why_this_role`):
 {archetype_block}
 
+{degree_gate_block}
+
 RESUME TAILORING CONTEXT (stay consistent with these choices — the
 reviewer will read both the resume and the form draft):
 {resume_context}

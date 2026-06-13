@@ -24,6 +24,8 @@ opening + middle paragraphs should lead with the emphasis points below
 rather than other parts of his history):
 {archetype_block}
 
+{degree_gate_block}
+
 WRITING RULES — follow these strictly:
 
 1. TONE: Write like Vishal explaining to a smart friend why this role makes sense for him.

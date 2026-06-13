@@ -29,7 +29,7 @@ import anthropic
 
 from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
 from jobpipe import profile_loader
-from prompts import load_profile, load_prompt
+from prompts import degree_gate_block, load_profile, load_prompt
 from tailor.archetype import render_archetype_block
 
 logger = logging.getLogger("tailor.form_answers")
@@ -266,6 +266,7 @@ def generate_form_answers(
         voice_profile=_voice_profile(),
         profile=load_profile(),
         archetype_block=archetype_block,
+        degree_gate_block=degree_gate_block(job),
         resume_context=_resume_context_for_prompt(resume_result),
         job_title=job.get("title", ""),
         company=job.get("company", ""),

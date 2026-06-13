@@ -39,12 +39,43 @@ _THESIS_BANNER = (
 
 def thesis_section() -> str:
     """Return the bannered canonical thesis block, or "" if thesis.md is
-    missing. Callers that build their own profile context (the archetype
+    missing. Callers that build their own context (the archetype
     router) splice this in as their FIRST profile document."""
     thesis = profile_loader.load_thesis().strip()
     if not thesis:
         return ""
     return _THESIS_BANNER + thesis
+
+
+# Degree-gate framing (Session I, thesis.md degree-gate rule). Injected
+# into the cover-letter and form-answers prompts ONLY when the scorer
+# flagged jobs.degree_gated — a JD that hard-requires an MS/PhD with no
+# equivalent-experience escape hatch. The move is preemption, not
+# evasion: lead with the equivalence case, never imply a degree he lacks.
+_DEGREE_GATE_BLOCK = """\
+DEGREE GATE — this JD hard-requires an advanced degree (MS/PhD) with no
+"or equivalent experience" escape hatch. Binding rules for this output:
+
+- LEAD with the equivalence case: Vishal has a BS in Electrical
+  Engineering plus nine years of hands-on neuromorphic/embedded work —
+  Rain Neuromorphics employee #5 at 19 building memristive neuron PCBs,
+  four years deploying SNNs on Intel Loihi-class hardware and writing
+  VHDL neuron models at GTRI. Present that record explicitly as the
+  equivalent of the listed degree requirement, in the opening (cover
+  letter first paragraph / why_this_role first sentences) — preempt the
+  gate before the reader applies it, don't bury the case at the end.
+- HONESTY UNCHANGED: never claim or imply a degree he doesn't have. No
+  "MS-level", no vague "graduate work", no degree-adjacent hedging. The
+  move is preemption, not evasion: name the BS, then make the case that
+  the work itself is the qualification."""
+
+
+def degree_gate_block(job: dict) -> str:
+    """Return the degree-gate framing block when the job row carries
+    ``degree_gated=true``, else the empty string. Callers splice the
+    result into their prompt unconditionally — ungated jobs get no gate
+    framing at all."""
+    return _DEGREE_GATE_BLOCK if job.get("degree_gated") else ""
 
 # User-layer files in the order they should appear when concatenated for
 # an LLM. profile.yml first (structured ground truth), then disqualifiers,

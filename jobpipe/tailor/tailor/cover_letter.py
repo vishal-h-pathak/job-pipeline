@@ -11,7 +11,7 @@ from datetime import datetime
 import anthropic
 from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
 from jobpipe.tailor.paths import CANDIDATE_PROFILE_PATH
-from prompts import load_profile, load_prompt
+from prompts import degree_gate_block, load_profile, load_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 
 logger = logging.getLogger("tailor.cover_letter")
@@ -98,6 +98,7 @@ RESUME TAILORING CONTEXT (maintain consistency with these choices):
         context=context,
         match_chat_block=match_chat_block,
         archetype_block=archetype_block,
+        degree_gate_block=degree_gate_block(job),
     )
 
     response = client.messages.create(

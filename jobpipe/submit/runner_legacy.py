@@ -134,7 +134,9 @@ async def process_one(job: dict) -> None:
         cover_local = storage.download_to_tmp(job["cover_letter_pdf_path"], suffix=".pdf")
         cover_text = job.get("cover_letter_path") or ""
         if not db.verify_materials_hash(job, resume_local.read_bytes(), cover_text):
-            db.mark_needs_review(job_id, reason="materials_hash mismatch")
+            # Session E: mark_needs_review was deleted (it already routed
+            # to 'failed' under M-2) — call the canonical transition.
+            db.mark_failed(job_id, "materials_hash mismatch")
             return
     except Exception as exc:
         logger.exception("materials hydration failed for %s", job_id)

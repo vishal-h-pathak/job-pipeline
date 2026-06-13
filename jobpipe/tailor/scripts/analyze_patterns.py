@@ -46,8 +46,10 @@ from jobpipe.db import client  # noqa: E402
 logger = logging.getLogger("analyze_patterns")
 
 # Status buckets that count as "the funnel made progress past application
-# submission". These are the rates we surface in the report.
-APPLIED_STATUSES = {"applied", "submitted", "submit_confirmed", "ready_to_submit"}
+# submission". These are the rates we surface in the report. Session E:
+# legacy aliases dropped — migration 011 guarantees canonical-only, and
+# 'applied' is the sole canonical post-submission status.
+APPLIED_STATUSES = {"applied"}
 RESPONDED_STATUSES = {"responded", "interview", "interviewing", "offer", "rejected_post_interview"}
 INTERVIEW_STATUSES = {"interview", "interviewing", "offer"}
 OFFER_STATUSES = {"offer", "accepted"}

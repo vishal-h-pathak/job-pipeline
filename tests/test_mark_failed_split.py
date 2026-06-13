@@ -65,11 +65,17 @@ def test_canonical_db_defines_mark_tailor_failed():
     )
 
 
-def test_canonical_db_keeps_mark_failed_and_mark_needs_review():
-    """Canonical jobpipe/db.py defines both submit-side state transitions."""
+def test_canonical_db_keeps_mark_failed_and_drops_deprecated_shims():
+    """Canonical jobpipe/db.py keeps the canonical submit-side failure
+    transition and (Session E) no longer defines the deprecated legacy
+    status shims."""
     funcs = _toplevel_funcs(CANONICAL_DB)
     assert "mark_failed" in funcs
-    assert "mark_needs_review" in funcs
+    for gone in ("mark_needs_review", "mark_submitted",
+                 "mark_ready_to_submit", "get_confirmed_jobs"):
+        assert gone not in funcs, (
+            f"Session E deleted jobpipe.db.{gone}; it must not come back"
+        )
 
 
 def _ast_referenced_names(py_path: Path) -> set[str]:
@@ -164,6 +170,9 @@ def tailor_db(monkeypatch):
     import jobpipe.db as db
     monkeypatch.setattr(db, "_client", None)
     monkeypatch.setattr(db, "_service_client", None)
+    # Session E: _get_client() refuses demonstrably-anon keys; pin the
+    # module constant so the host's real .env can't influence the test.
+    monkeypatch.setattr(db, "SUPABASE_SERVICE_ROLE_KEY", "service-test")
 
     # ``mark_tailor_failed(clear_materials=True)`` does
     # ``from storage import delete_all_for_job`` lazily — provide a stub.
@@ -245,6 +254,9 @@ def submit_db(monkeypatch):
     import jobpipe.db as db
     monkeypatch.setattr(db, "_client", None)
     monkeypatch.setattr(db, "_service_client", None)
+    # Session E: _get_client() refuses demonstrably-anon keys; pin the
+    # module constant so the host's real .env can't influence the test.
+    monkeypatch.setattr(db, "SUPABASE_SERVICE_ROLE_KEY", "service-test")
 
     db.client = fake
     db.service_client = fake
@@ -264,16 +276,3 @@ def test_submit_mark_failed_writes_status_and_reason_only(submit_db):
     assert "cover_letter_pdf_path" not in payload
 
 
-def test_submit_mark_needs_review_routes_to_failed(submit_db):
-    """M-2 retired the ``needs_review`` CHECK-enum value; the deprecated
-    ``mark_needs_review`` deliberately routes to ``failed`` (see its
-    docstring) while preserving the reason and review packet. This test
-    originally asserted the pre-M-2 ``needs_review`` status and went
-    stale when the routing changed; Session C realigned it with the
-    documented contract."""
-    db, fake = submit_db
-    db.mark_needs_review("job-def", "low confidence", packet_ref="packets/job-def.json")
-    payload = fake.calls["update_payload"]
-    assert payload["status"] == "failed"
-    assert payload["failure_reason"] == "low confidence"
-    assert payload["review_packet"] == "packets/job-def.json"

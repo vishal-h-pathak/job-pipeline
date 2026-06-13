@@ -96,6 +96,11 @@ packages = [
     "jobpipe.submit.browser",
 ]
 
+[tool.setuptools.package-data]
+# status.json is the generated cross-repo enum artifact (Session E) —
+# ship it with the package so installed copies can read it too.
+"jobpipe.shared" = ["status.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # PR-5: dropped `pythonpath = ["."]` — `pip install -e .` now installs

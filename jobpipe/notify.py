@@ -40,7 +40,7 @@ import requests
 
 from jobpipe.config import (
     PORTFOLIO_BASE_URL,
-    SUPABASE_KEY,
+    SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_URL,
 )
 
@@ -179,8 +179,10 @@ def _get_client():
     global _client
     if _client is None:
         # Lazy SDK import — keeps `import jobpipe.notify` cheap.
+        # Service-role per the Session E key contract (see README) —
+        # SUPABASE_SERVICE_ROLE_KEY falls back to SUPABASE_KEY in config.
         from supabase import create_client
-        _client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        _client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     return _client
 
 

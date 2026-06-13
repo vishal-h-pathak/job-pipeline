@@ -45,3 +45,24 @@ git log --follow jobpipe/submit/runner.py     # was jobpipe/submit/main.py    (P
 pip install -e '.[dev]'
 pytest
 ```
+
+### Supabase key contract
+
+The pipeline tables (`jobs`, `runs`, `application_attempts`) have RLS
+enabled with **no anon policies** — an anon key gets HTTP 200 and empty
+result sets, no error. jobpipe therefore runs **service-role only**:
+`jobpipe.db` resolves its client from `SUPABASE_SERVICE_ROLE_KEY`
+(falling back to `SUPABASE_KEY`, which in GitHub Actions also holds the
+service-role key) and raises at startup if the resolved key is
+demonstrably anon. Put the service-role key in your local `.env` as
+`SUPABASE_SERVICE_ROLE_KEY`.
+
+### Canonical job statuses
+
+`jobpipe/shared/status.py` is the single source of truth for the
+`jobs.status` enum; `jobpipe/shared/status.json` is its generated
+artifact (regenerate with `python -m jobpipe.shared.status`), consumed
+by the portfolio dashboard's type generator. The Postgres CHECK
+constraint mirrors the same list
+(`jobpipe/tailor/scripts/011_canonical_status.sql`).
+`tests/test_status_contract.py` fails CI if any of the three drift.

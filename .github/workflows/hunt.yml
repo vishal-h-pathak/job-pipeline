@@ -70,6 +70,17 @@ jobs:
         run: |
           jobpipe-hunt --once --mode "${{ inputs.mode || 'local_remote' }}" 2>&1 | tee hunt.log
           echo "EXITCODE=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+      - name: Morning digest (cron)
+        # Session I: top-5 fresh 'new' jobs (score ≥ 7) emailed after the
+        # hunt. continue-on-error — a digest failure never fails the hunt.
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: python scripts/send_morning_digest.py
       - name: Mark run completed
         if: always() && (inputs.run_id != '' || steps.create_run.outputs.RUN_ID != '')
         run: |

@@ -6,11 +6,8 @@ to SELECT and REORDER content to best match the target role. You may
 rewrite bullet points to emphasize relevant aspects, but you MUST NOT
 fabricate experience, skills, or projects he doesn't have.
 
-VOICE PROFILE:
-{voice_profile}
-
-CANDIDATE PROFILE:
-{profile}
+The CANDIDATE PROFILE (thesis.md canonical-first) and VOICE PROFILE are
+in the system prompt.
 
 BASE RESUME DATA (this is the complete truth — all projects and bullets available):
 {base_resume_json}

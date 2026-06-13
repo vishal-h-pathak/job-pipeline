@@ -200,3 +200,64 @@ def load_prompt(*names: str, **vars: object) -> str:
             body = body.format(**vars)
         parts.append(body)
     return "\n\n---\n\n".join(parts)
+
+
+# ── Prompt caching (Session I) ──────────────────────────────────────────────
+# Every tailor LLM call splits its context into:
+#   system  — the static prefix (_shared.md rules + the merged candidate
+#             profile, thesis-first + the voice profile), identical for
+#             every call site, marked with cache_control so the API
+#             caches it once and serves cache reads (≈10% of input
+#             price) for every subsequent call within the TTL.
+#   user    — the per-job task prompt (template + JD + archetype +
+#             tailoring context), never cached.
+# The prefix must be byte-identical across call sites for the cache to
+# hit, which is why this lives here and not per-module.
+
+_SYSTEM_BLOCKS_CACHE: Optional[list] = None
+
+
+def cached_system_blocks() -> list:
+    """Return the shared static system prefix as Anthropic content
+    blocks with ``cache_control`` on the final (only) block.
+
+    Contents, in order: ``_shared.md`` global rules, the merged
+    candidate profile (thesis.md canonical-first via
+    :func:`load_profile`), and the voice profile
+    (``profile/voice-profile.md``). Built once per process.
+    """
+    global _SYSTEM_BLOCKS_CACHE
+    if _SYSTEM_BLOCKS_CACHE is None:
+        parts = [
+            _shared().strip(),
+            "========== CANDIDATE PROFILE ==========\n" + load_profile().strip(),
+        ]
+        voice = (profile_loader.load_voice_profile().get("raw") or "").strip()
+        if voice:
+            parts.append("========== VOICE PROFILE ==========\n" + voice)
+        _SYSTEM_BLOCKS_CACHE = [
+            {
+                "type": "text",
+                "text": "\n\n---\n\n".join(parts),
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+    return _SYSTEM_BLOCKS_CACHE
+
+
+def load_task_prompt(*names: str, **vars: object) -> str:
+    """Load prompts/{name}.md for the *user* turn of a cached call.
+
+    Same templating as :func:`load_prompt` but WITHOUT _shared.md
+    prepended — the global rules ride in :func:`cached_system_blocks`.
+    Call sites that use ``system=cached_system_blocks()`` must build
+    their user content with this, not ``load_prompt``, or the rules
+    would appear twice.
+    """
+    parts = []
+    for n in names:
+        body = (_PROMPTS_DIR / f"{n}.md").read_text(encoding="utf-8")
+        if vars:
+            body = body.format(**vars)
+        parts.append(body)
+    return "\n\n---\n\n".join(parts)

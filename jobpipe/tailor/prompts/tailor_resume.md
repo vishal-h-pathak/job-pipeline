@@ -5,11 +5,9 @@ professional — no personal statements, no interests section, no
 "passionate about" language. Every bullet should describe something
 concrete that was built, deployed, or shipped.
 
-VOICE PROFILE (for tone of summary only):
-{voice_profile}
-
-CANDIDATE PROFILE:
-{profile}
+The CANDIDATE PROFILE (thesis.md canonical-first) and VOICE PROFILE are
+in the system prompt. Use the voice profile for the tone of the summary
+only.
 
 JOB POSTING:
 Title: {job_title}

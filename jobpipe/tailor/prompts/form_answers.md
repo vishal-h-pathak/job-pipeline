@@ -47,11 +47,8 @@ CONTEXT — IDENTITY ALREADY FILLED IN (do not regenerate or echo back):
 {identity_summary}
 ```
 
-VOICE PROFILE:
-{voice_profile}
-
-CANDIDATE PROFILE:
-{profile}
+The CANDIDATE PROFILE (thesis.md canonical-first) and VOICE PROFILE are
+in the system prompt.
 
 CHOSEN ARCHETYPE (use this lane's framing, emphasis points, and tone
 for `why_this_role`):

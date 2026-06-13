@@ -5,11 +5,9 @@ important instruction: the letter must sound like Vishal wrote it himself
 — not like an AI, not like a career coach, not like a template. Read the
 voice profile carefully and match his tone exactly.
 
-VOICE PROFILE:
-{voice_profile}
-
-CANDIDATE PROFILE:
-{profile}
+The CANDIDATE PROFILE (thesis.md canonical-first) and VOICE PROFILE are
+in the system prompt. Read the voice profile carefully and match his
+tone exactly.
 
 JOB POSTING:
 Title: {job_title}

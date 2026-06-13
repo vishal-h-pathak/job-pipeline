@@ -8,8 +8,8 @@ ask for THIS role.
 The +R is *Reflection* — what he learned, what he'd do differently. It
 turns a generic STAR into a story the interviewer remembers.
 
-CANDIDATE PROFILE:
-{profile}
+The CANDIDATE PROFILE (thesis.md canonical-first) and VOICE PROFILE are
+in the system prompt.
 
 CHOSEN ARCHETYPE (lean these stories toward this lane):
 {archetype_block}

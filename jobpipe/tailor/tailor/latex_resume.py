@@ -18,7 +18,7 @@ from pathlib import Path
 import anthropic
 from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
 from jobpipe.tailor.paths import CANDIDATE_PROFILE_PATH
-from prompts import load_profile, load_prompt
+from prompts import cached_system_blocks, load_task_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 from tailor.normalize import normalize_for_ats
 
@@ -443,12 +443,6 @@ def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
     Returns:
         Dict with latex_source, pdf_path, and compilation status.
     """
-    # Load voice profile
-    voice_path = Path(__file__).parent.parent / "templates" / "VOICE_PROFILE.md"
-    voice_profile = voice_path.read_text(encoding="utf-8") if voice_path.exists() else ""
-
-    profile = load_profile()
-
     job_title = job.get("title", "Unknown")
     company = job.get("company", "Unknown")
     job_desc = job.get("description", "")
@@ -476,10 +470,8 @@ def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
     job["_archetype"] = archetype_meta
     archetype_block = render_archetype_block(archetype_meta.get("archetype", ""))
 
-    prompt = load_prompt(
+    prompt = load_task_prompt(
         "tailor_latex_resume",
-        voice_profile=voice_profile,
-        profile=profile,
         base_resume_json=json.dumps(BASE_RESUME, indent=2),
         tailoring_json=json.dumps(tailoring, indent=2),
         job_title=job_title,
@@ -489,9 +481,12 @@ def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
         archetype_block=archetype_block,
     )
 
+    # Session I: static rules + profile + voice ride in the cached
+    # system prefix; only the per-job prompt above goes uncached.
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=4000,
+        system=cached_system_blocks(),
         messages=[{"role": "user", "content": prompt}],
     )
 

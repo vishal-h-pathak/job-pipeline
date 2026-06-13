@@ -32,7 +32,7 @@ import re
 import anthropic
 
 from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
-from prompts import load_prompt, thesis_section
+from prompts import cached_system_blocks, load_task_prompt
 from jobpipe.profile_loader import load_archetypes
 
 logger = logging.getLogger("tailor.archetype")
@@ -169,9 +169,8 @@ def classify_archetype(job: dict) -> dict:
             "reasoning": "tier 1.5 routes deterministically to the agentic builder lane",
         }
 
-    prompt = load_prompt(
+    prompt = load_task_prompt(
         "classify_archetype",
-        thesis_block=thesis_section(),
         archetypes_block=_archetypes_block_for_classifier(),
         job_title=job.get("title", ""),
         company=job.get("company", ""),
@@ -180,9 +179,13 @@ def classify_archetype(job: dict) -> dict:
     )
 
     try:
+        # Session I: the shared cached system prefix carries the
+        # canonical thesis (FIRST profile document) + global rules, so
+        # routing binds to thesis tier semantics at cache-read price.
         resp = _client_lazy().messages.create(
             model=CLAUDE_MODEL,
             max_tokens=300,
+            system=cached_system_blocks(),
             messages=[{"role": "user", "content": prompt}],
         )
         text = "".join(b.text for b in resp.content if hasattr(b, "text"))

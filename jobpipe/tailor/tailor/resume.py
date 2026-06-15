@@ -9,8 +9,8 @@ import json
 import logging
 from datetime import datetime
 
-import anthropic
-from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
+from jobpipe.config import TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
+from jobpipe.shared import llm
 from jobpipe.tailor.paths import CANDIDATE_PROFILE_PATH
 from prompts import cached_system_blocks, load_task_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
@@ -27,8 +27,6 @@ except Exception:
     pass
 
 logger = logging.getLogger("tailor.resume")
-
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
 def tailor_resume(job: dict) -> dict:
@@ -91,14 +89,13 @@ def tailor_resume(job: dict) -> dict:
 
     # Session I: static rules + profile + voice ride in the cached
     # system prefix; only the per-job prompt above goes uncached.
-    response = client.messages.create(
+    # Credits-first with subscription-OAuth fallback — see jobpipe.shared.llm.
+    response_text = llm.complete(
+        system=cached_system_blocks(),
+        prompt=prompt,
         model=CLAUDE_MODEL,
         max_tokens=2000,
-        system=cached_system_blocks(),
-        messages=[{"role": "user", "content": prompt}],
     )
-
-    response_text = response.content[0].text
 
     # Parse JSON from response (handle markdown code blocks)
     if "```json" in response_text:

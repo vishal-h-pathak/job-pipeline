@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from jobpipe.tailor import pipeline  # noqa: F401 — sys.path bootstrap
+from jobpipe.shared import llm
 
 import prompts as tailor_prompts
 from tailor import archetype
@@ -101,7 +102,11 @@ def test_classifier_prompt_includes_thesis(monkeypatch):
     class _FakeClient:
         messages = _FakeMessages()
 
-    monkeypatch.setattr(archetype, "_client_lazy", lambda: _FakeClient())
+    # PR-15: classify_archetype routes through jobpipe.shared.llm; an
+    # un-benched key takes the Messages API path patched here.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setattr(llm, "_api_key_cool_off_until", 0.0)
+    monkeypatch.setattr(llm, "_anthropic_client", lambda *a, **k: _FakeClient())
 
     result = archetype.classify_archetype(
         {"title": "Test Role", "company": "TestCo", "description": "A JD."}

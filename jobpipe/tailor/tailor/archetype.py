@@ -29,9 +29,8 @@ import json
 import logging
 import re
 
-import anthropic
-
-from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
+from jobpipe.config import TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
+from jobpipe.shared import llm
 from prompts import cached_system_blocks, load_task_prompt
 from jobpipe.profile_loader import load_archetypes
 
@@ -134,16 +133,6 @@ def _extract_json(text: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
-_client = None
-
-
-def _client_lazy() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    return _client
-
-
 def classify_archetype(job: dict) -> dict:
     """Classify a JD into one archetype key with a cheap Sonnet call.
 
@@ -182,13 +171,14 @@ def classify_archetype(job: dict) -> dict:
         # Session I: the shared cached system prefix carries the
         # canonical thesis (FIRST profile document) + global rules, so
         # routing binds to thesis tier semantics at cache-read price.
-        resp = _client_lazy().messages.create(
+        # Credits-first with subscription-OAuth fallback — see
+        # jobpipe.shared.llm.
+        text = llm.complete(
+            system=cached_system_blocks(),
+            prompt=prompt,
             model=CLAUDE_MODEL,
             max_tokens=300,
-            system=cached_system_blocks(),
-            messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(b.text for b in resp.content if hasattr(b, "text"))
         result = _extract_json(text)
     except Exception as exc:
         logger.warning("archetype classify failed: %s — falling back", exc)

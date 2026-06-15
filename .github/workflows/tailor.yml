@@ -28,6 +28,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Claude Code CLI (for OAuth fallback)
+        # jobpipe.shared.llm falls back to the Claude Agent SDK under
+        # Max-plan OAuth when ANTHROPIC_API_KEY is absent or benched by a
+        # billing/credit failure. The SDK spawns the bundled Claude Code
+        # CLI as a subprocess, so it must be on PATH. No-op for the API
+        # path — only invoked when the fallback fires.
+        run: npm install -g @anthropic-ai/claude-code
       - name: Install LaTeX (for resume PDF compile)
         # ubuntu-latest doesn't ship pdflatex; the tailor pipeline calls
         # it via jobpipe.tailor.tailor.latex_resume to render the
@@ -55,6 +65,11 @@ jobs:
         id: tailor
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Max-plan OAuth fallback (jobpipe.shared.llm). Used only when
+          # ANTHROPIC_API_KEY is unset or has been benched by a
+          # billing/credit/auth failure. Safe to leave empty if not
+          # configured — the API path stays primary.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           # Key contract (Session E): the pipeline tables have RLS with no
           # anon policies, so jobpipe runs service-role only. The

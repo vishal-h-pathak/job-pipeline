@@ -7,15 +7,13 @@ Generates a personalized cover letter for each job application.
 import logging
 from datetime import datetime
 
-import anthropic
-from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
+from jobpipe.config import TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
+from jobpipe.shared import llm
 from jobpipe.tailor.paths import CANDIDATE_PROFILE_PATH
 from prompts import cached_system_blocks, degree_gate_block, load_task_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 
 logger = logging.getLogger("tailor.cover_letter")
-
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
 def generate_cover_letter(job: dict, resume_tailoring: dict = None) -> dict:
@@ -84,14 +82,13 @@ RESUME TAILORING CONTEXT (maintain consistency with these choices):
 
     # Session I: static rules + profile + voice ride in the cached
     # system prefix; only the per-job prompt above goes uncached.
-    response = client.messages.create(
+    # Credits-first with subscription-OAuth fallback — see jobpipe.shared.llm.
+    cover_letter = llm.complete(
+        system=cached_system_blocks(),
+        prompt=prompt,
         model=CLAUDE_MODEL,
         max_tokens=1500,
-        system=cached_system_blocks(),
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    cover_letter = response.content[0].text.strip()
+    ).strip()
 
     logger.info(f"Cover letter generated for {company} — {job_title}")
     return {

@@ -19,6 +19,13 @@ dependencies = [
     #
     # Shared
     "anthropic>=0.40.0",
+    # Tailor LLM fallback (jobpipe.shared.llm): when ANTHROPIC_API_KEY is
+    # absent or benched by a billing/credit/auth failure, completions route
+    # through the Claude Agent SDK under Max-plan OAuth
+    # (CLAUDE_CODE_OAUTH_TOKEN). The SDK spawns the bundled Claude Code CLI
+    # as a subprocess, so the tailor workflows also `npm i -g
+    # @anthropic-ai/claude-code` — see jobpipe/tailor/README.md "Tailor auth".
+    "claude-agent-sdk>=0.1.0",
     "supabase>=2.0.0",
     "python-dotenv>=1.0.0",
     "httpx>=0.27.0",

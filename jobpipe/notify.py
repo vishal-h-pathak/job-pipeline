@@ -123,8 +123,17 @@ def _render_digest(entries: list[dict]) -> tuple[str, str]:
     by_tier: dict[int, list[dict]] = {}
     for e in entries:
         by_tier.setdefault(_tier_key(e["score"].get("tier")), []).append(e)
+    # Within a tier, sort direct-ATS rows above aggregator_unverified ones
+    # (light down-weight — the unverified rows still surface, just lower and
+    # ⚠-flagged), then by score desc. Tier order is untouched, so a high-score
+    # Tier 1 still leads regardless of link_status.
     for tier_entries in by_tier.values():
-        tier_entries.sort(key=lambda e: e["score"].get("score", 0), reverse=True)
+        tier_entries.sort(
+            key=lambda e: (
+                e["job"].get("link_status") == "aggregator_unverified",
+                -e["score"].get("score", 0),
+            )
+        )
 
     sections = []
     for tier in sorted(by_tier.keys()):

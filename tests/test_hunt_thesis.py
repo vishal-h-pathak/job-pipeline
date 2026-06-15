@@ -93,32 +93,11 @@ def test_scorer_prompt_accepts_tier_1_5_and_degree_gated() -> None:
 # ── score_job output normalization (no live API) ────────────────────────
 
 
-class _FakeBlock:
-    def __init__(self, text: str) -> None:
-        self.text = text
-
-
-class _FakeResponse:
-    def __init__(self, text: str) -> None:
-        self.content = [_FakeBlock(text)]
-
-
-class _FakeMessages:
-    def __init__(self, text: str) -> None:
-        self._text = text
-
-    def create(self, **kwargs):
-        return _FakeResponse(self._text)
-
-
-class _FakeClient:
-    def __init__(self, text: str) -> None:
-        self.messages = _FakeMessages(text)
-
-
 def _score_with_fake_response(monkeypatch, payload: dict) -> dict:
+    # The scorer now routes through jobpipe.shared.llm (credits-first →
+    # Max-OAuth fallback); patch that single seam so no live API call is made.
     monkeypatch.setattr(
-        scorer, "_client_lazy", lambda: _FakeClient(json.dumps(payload))
+        scorer.llm, "complete", lambda **kwargs: json.dumps(payload)
     )
     return scorer.score_job(
         title="Agent Engineer", company="X", description="d", location="Remote"

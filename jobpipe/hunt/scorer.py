@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-
-from anthropic import Anthropic
 
 # Canonical package path, not the hunt-local bare `prompts` import the
 # other hunt modules use: bare `prompts` collides in sys.modules with
@@ -14,16 +11,13 @@ from anthropic import Anthropic
 # anyway — it already imports jobpipe.profile_loader.
 from jobpipe.hunt.prompts import build_profile_prompt_string, load_prompt
 
+# Credits-first → Max-plan OAuth fallback (feat/hunt-resolver-aggregator).
+# Routing the scorer through the shared helper gives the hunt the same
+# auth resilience the tailor got: on a depleted/benched ANTHROPIC_API_KEY
+# it falls through to subscription OAuth instead of failing the run.
+from jobpipe.shared import llm
+
 MODEL = "claude-opus-4-7"
-
-_client = None
-
-
-def _client_lazy() -> Anthropic:
-    global _client
-    if _client is None:
-        _client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    return _client
 
 
 # System prompt is loaded lazily on first scoring call from
@@ -80,13 +74,12 @@ def score_job(title: str, company: str, description: str, location: str) -> dict
         f"Location: {location}\n"
         f"Description:\n{description}\n"
     )
-    resp = _client_lazy().messages.create(
+    text = llm.complete(
+        system=_system(),
+        prompt=user_msg,
         model=MODEL,
         max_tokens=600,
-        system=_system(),
-        messages=[{"role": "user", "content": user_msg}],
     )
-    text = "".join(block.text for block in resp.content if hasattr(block, "text"))
     result = _extract_json(text)
     # Normalize.
     result["score"] = int(result.get("score", 0))

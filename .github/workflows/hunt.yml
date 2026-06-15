@@ -37,6 +37,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Claude Code CLI (for OAuth fallback)
+        # The hunt scorer (jobpipe.hunt.scorer) routes through
+        # jobpipe.shared.llm, which falls back to the Claude Agent SDK
+        # under Max-plan OAuth when ANTHROPIC_API_KEY is absent or benched
+        # by a billing/credit failure. The SDK spawns the bundled Claude
+        # Code CLI as a subprocess, so it must be on PATH. No-op for the
+        # API path — only invoked when the fallback fires.
+        run: npm install -g @anthropic-ai/claude-code
       - name: Install package
         run: pip install -e .
       - name: Create run row (cron)
@@ -59,6 +70,11 @@ jobs:
         id: hunt
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Max-plan OAuth fallback (jobpipe.shared.llm). Used only when
+          # ANTHROPIC_API_KEY is unset or has been benched by a
+          # billing/credit/auth failure. Safe to leave empty if not
+          # configured — the API path stays primary.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           # Key contract (Session E): the pipeline tables have RLS with no
           # anon policies, so jobpipe runs service-role only. The
@@ -67,6 +83,12 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          # Paid discovery sources (hunt-only): SerpAPI (jobpipe.hunt.sources
+          # .serpapi + .linkedin) and JSearch/RapidAPI (jobpipe.hunt.sources
+          # .jsearch). No other workflow runs discovery, so this is the only
+          # step that needs them.
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+          JSEARCH_API_KEY: ${{ secrets.JSEARCH_API_KEY }}
         run: |
           jobpipe-hunt --once --mode "${{ inputs.mode || 'local_remote' }}" 2>&1 | tee hunt.log
           echo "EXITCODE=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"

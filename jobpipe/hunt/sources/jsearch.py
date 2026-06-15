@@ -52,6 +52,12 @@ QUERIES = [
     "sales engineer AI startup",
     "solutions engineer machine learning",
     "developer relations AI",
+    # Tier 1.5 — agentic / applied-AI discovery (added feat/hunt-agentic-discovery).
+    # Paid: each query × location × page is billable, so keep this set tight.
+    "AI agent engineer",
+    "applied AI engineer",
+    "forward deployed engineer",
+    "agentic AI engineer",
 ]
 
 # Hard cap so one run can't burn the monthly tier. Default sized for the

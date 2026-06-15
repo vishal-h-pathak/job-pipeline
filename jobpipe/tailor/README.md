@@ -142,6 +142,7 @@ python -m scripts.cv_sync_check            # CV / digest drift report (J-9)
 
 ```
 ANTHROPIC_API_KEY=
+CLAUDE_CODE_OAUTH_TOKEN=        # optional — Max-plan OAuth fallback (see "Tailor auth")
 SUPABASE_URL=
 SUPABASE_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
@@ -150,6 +151,53 @@ HUMAN_APPROVAL_REQUIRED=true
 AUTO_SUBMIT_ENABLED=false
 POLL_INTERVAL_MINUTES=120
 ```
+
+---
+
+## Tailor auth
+
+Every tailor Claude call (resume, LaTeX resume, cover letter,
+form-answers, archetype classifier) goes through `jobpipe.shared.llm`'s
+`complete()`, which resolves auth **per call** in a fixed chain — ported
+from the portfolio repo's `chat-auth.ts` / `chat-oauth.ts`:
+
+1. **API credits (preferred).** `ANTHROPIC_API_KEY` is set and not in
+   cool-off → the Anthropic Messages API, with prompt caching preserved
+   (the cached system blocks pass straight through).
+2. **Subscription OAuth (fallback).** The API key is absent, *or* was
+   just benched by a billing/credit/auth failure, **and**
+   `CLAUDE_CODE_OAUTH_TOKEN` is set → the Claude Agent SDK under
+   Max-plan OAuth. Prompt caching does not apply on this path (it's the
+   fallback). The OAuth subprocess inherits the environment but
+   **drops `ANTHROPIC_API_KEY`** so a billing-blocked key can't shadow
+   the subscription token.
+3. **Neither configured** → `RuntimeError`.
+
+**Cool-off.** When the Messages API returns an *unusable-key* error —
+`401` (invalid key) or a `400/402/403` whose message matches
+`billing|credit|balance|purchase|payment|plan` (e.g. *"Your credit
+balance is too low"*) — the key is benched **process-wide for 15
+minutes** and that call falls through to OAuth. Transient errors
+(`429`, `5xx`, network) are **not** benched: they re-raise so the
+caller's per-job failure handling catches them. The cool-off resets on
+process restart.
+
+**Two secrets.**
+
+- `ANTHROPIC_API_KEY` — pay-as-you-go credits, the primary path.
+- `CLAUDE_CODE_OAUTH_TOKEN` — from `claude setup-token` on a machine
+  logged into the Max plan; add it as a GitHub Actions secret to enable
+  the fallback in `tailor.yml` / `tailor-manual.yml`. Those workflows
+  `npm install -g @anthropic-ai/claude-code` because the Agent SDK
+  spawns the bundled Claude Code CLI as a subprocess.
+
+> **Intended-use caveat.** Subscription OAuth via the Agent SDK is
+> designed for interactive agentic coding. Running an unattended tailor
+> batch (~5 calls/job) against Max-plan rolling usage caps is a gray
+> area. The fallback is opt-in: leave `CLAUDE_CODE_OAUTH_TOKEN` unset to
+> keep the tailor API-only. A Max rate-limit/usage error on the OAuth
+> path surfaces as a clean per-job failure (that job is marked failed,
+> the batch continues) — it never crashes the whole run.
 
 ---
 

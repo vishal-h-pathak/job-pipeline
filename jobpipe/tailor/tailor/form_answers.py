@@ -25,16 +25,13 @@ import logging
 import re
 from typing import Any, Optional
 
-import anthropic
-
-from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
+from jobpipe.config import TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
 from jobpipe import profile_loader
+from jobpipe.shared import llm
 from prompts import cached_system_blocks, degree_gate_block, load_task_prompt
 from tailor.archetype import render_archetype_block
 
 logger = logging.getLogger("tailor.form_answers")
-
-_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 
 # ── Profile loading ────────────────────────────────────────────────────────
@@ -240,11 +237,6 @@ def generate_form_answers(
     failure or unrecoverable model-output failure so the caller can
     decide whether to fail the whole tailoring run or continue.
     """
-    if _client is None:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY not set; cannot generate form_answers"
-        )
-
     profile_yaml = _load_profile_yaml()
     identity = _build_identity_block(profile_yaml)
 
@@ -269,14 +261,13 @@ def generate_form_answers(
 
     # Session I: static rules + profile + voice ride in the cached
     # system prefix; only the per-job prompt above goes uncached.
-    response = _client.messages.create(
+    # Credits-first with subscription-OAuth fallback — see jobpipe.shared.llm.
+    raw = llm.complete(
+        system=cached_system_blocks(),
+        prompt=prompt,
         model=CLAUDE_MODEL,
         max_tokens=2000,
-        system=cached_system_blocks(),
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    raw = response.content[0].text.strip()
+    ).strip()
     try:
         narrative = _extract_json_object(raw)
     except (ValueError, json.JSONDecodeError) as exc:

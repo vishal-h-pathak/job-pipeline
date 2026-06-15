@@ -13,10 +13,23 @@ from __future__ import annotations
 import pytest
 
 from jobpipe.tailor import pipeline  # noqa: F401 — sys.path bootstrap
+from jobpipe.shared import llm
 
 import prompts as tailor_prompts
 from tailor import cover_letter as cl_mod
 from tailor import form_answers as fa_mod
+
+
+@pytest.fixture(autouse=True)
+def _api_path_active(monkeypatch):
+    """PR-15: tailor call sites route through jobpipe.shared.llm; give each
+    test an un-benched key so the API path (patched below) is taken."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setattr(llm, "_api_key_cool_off_until", 0.0)
+
+
+def _patch_api_client(monkeypatch, fake):
+    monkeypatch.setattr(llm, "_anthropic_client", lambda *a, **k: fake)
 
 GATE_MARKER = "DEGREE GATE"
 EQUIVALENCE_MARKER = "equivalent of the listed degree requirement"
@@ -99,7 +112,7 @@ def test_degree_gate_block_helper():
 @pytest.mark.parametrize("gated", [True, False])
 def test_cover_letter_context_gates_correctly(monkeypatch, gated):
     fake = _FakeClient("A cover letter body.")
-    monkeypatch.setattr(cl_mod, "client", fake)
+    _patch_api_client(monkeypatch, fake)
 
     cl_mod.generate_cover_letter(_job(degree_gated=gated))
 
@@ -114,7 +127,7 @@ def test_form_answers_context_gates_correctly(monkeypatch, gated):
         '{"why_this_role": "x", "why_this_company": "y", '
         '"additional_info": null, "additional_questions": []}'
     )
-    monkeypatch.setattr(fa_mod, "_client", fake)
+    _patch_api_client(monkeypatch, fake)
 
     fa_mod.generate_form_answers(
         _job(degree_gated=gated),
@@ -130,6 +143,6 @@ def test_form_answers_context_gates_correctly(monkeypatch, gated):
 def test_missing_flag_means_no_gate_framing(monkeypatch):
     """Rows written before migration 010 carry no degree_gated key at all."""
     fake = _FakeClient("A cover letter body.")
-    monkeypatch.setattr(cl_mod, "client", fake)
+    _patch_api_client(monkeypatch, fake)
     cl_mod.generate_cover_letter(_job())
     assert GATE_MARKER not in fake.all_text()

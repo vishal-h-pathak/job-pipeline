@@ -17,10 +17,19 @@ from pathlib import Path
 import pytest
 
 from jobpipe.tailor import pipeline  # noqa: F401 — sys.path bootstrap
+from jobpipe.shared import llm
 
 from tailor import archetype
 
 AGENTIC_KEY = "tier_1_5_agentic_builder"
+
+
+@pytest.fixture(autouse=True)
+def _api_path_active(monkeypatch):
+    """PR-15: classify_archetype routes through jobpipe.shared.llm; give the
+    LLM-path tests an un-benched key so the Messages API path is taken."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setattr(llm, "_api_key_cool_off_until", 0.0)
 PROMPTS_DIR = (
     Path(__file__).resolve().parent.parent / "jobpipe" / "tailor" / "prompts"
 )
@@ -49,10 +58,10 @@ def test_agentic_block_carries_flagship_and_differentiator():
 def test_tier_1_5_routes_deterministically(monkeypatch):
     """A tier-1.5 job must route to the agentic lane without an LLM call."""
 
-    def _boom():
+    def _boom(**kwargs):
         raise AssertionError("classifier must not call the LLM for tier 1.5")
 
-    monkeypatch.setattr(archetype, "_client_lazy", _boom)
+    monkeypatch.setattr(llm, "complete", _boom)
     for tier in ("1.5", 1.5):
         result = archetype.classify_archetype(
             {"title": "Agent Engineer", "company": "X", "description": "...",
@@ -79,7 +88,7 @@ def test_non_1_5_tiers_still_use_the_llm(monkeypatch):
     class _FakeClient:
         messages = _FakeMessages()
 
-    monkeypatch.setattr(archetype, "_client_lazy", lambda: _FakeClient())
+    monkeypatch.setattr(llm, "_anthropic_client", lambda *a, **k: _FakeClient())
     result = archetype.classify_archetype(
         {"title": "Neuro Engineer", "company": "X", "description": "brains",
          "tier": 1}

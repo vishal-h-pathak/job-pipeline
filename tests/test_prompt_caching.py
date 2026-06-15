@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from jobpipe.tailor import pipeline  # noqa: F401 — sys.path bootstrap
+from jobpipe.shared import llm
 
 import prompts as tailor_prompts
 from interview_prep import generator as stories_mod
@@ -21,6 +22,21 @@ from tailor import form_answers as fa_mod
 from tailor import resume as resume_mod
 
 _ARCHETYPE_STUB = {"archetype": "tier_1a_compneuro", "confidence": 0.9, "reasoning": "s"}
+
+
+@pytest.fixture(autouse=True)
+def _api_path_active(monkeypatch):
+    """PR-15: the tailor call sites now route through jobpipe.shared.llm,
+    which prefers the Messages API only when ANTHROPIC_API_KEY is set and
+    not benched. Give every test a usable, un-benched key so the API path
+    (the one these tests patch) is taken."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setattr(llm, "_api_key_cool_off_until", 0.0)
+
+
+def _patch_api_client(monkeypatch, fake):
+    """Route llm.complete()'s API path at the shared client seam."""
+    monkeypatch.setattr(llm, "_anthropic_client", lambda *a, **k: fake)
 
 
 def _job() -> dict:
@@ -87,23 +103,23 @@ def _assert_cached_call(kwargs: dict):
 
 def test_tailor_resume_uses_cached_prefix(monkeypatch):
     fake = _FakeClient('{"tailored_summary": "x", "emphasis_areas": []}')
-    monkeypatch.setattr(resume_mod, "client", fake)
+    _patch_api_client(monkeypatch, fake)
     resume_mod.tailor_resume(_job())
     _assert_cached_call(fake.sent[0])
 
 
 def test_cover_letter_uses_cached_prefix(monkeypatch):
     fake = _FakeClient("body")
-    monkeypatch.setattr(cl_mod, "client", fake)
+    _patch_api_client(monkeypatch, fake)
     cl_mod.generate_cover_letter(_job())
     _assert_cached_call(fake.sent[0])
 
 
 def test_latex_resume_uses_cached_prefix(monkeypatch):
-    from tailor import latex_resume as latex_mod
+    from tailor import latex_resume as latex_mod  # noqa: F401 — kept for parity
 
     fake = _FakeClient('{"skills": {}, "experience": []}')
-    monkeypatch.setattr(latex_mod, "client", fake)
+    _patch_api_client(monkeypatch, fake)
     result = latex_mod.generate_tailored_latex(_job(), {"_archetype": dict(_ARCHETYPE_STUB)})
     assert "latex_source" in result
     _assert_cached_call(fake.sent[0])
@@ -114,7 +130,7 @@ def test_form_answers_uses_cached_prefix(monkeypatch):
         '{"why_this_role": "x", "why_this_company": "y", '
         '"additional_info": null, "additional_questions": []}'
     )
-    monkeypatch.setattr(fa_mod, "_client", fake)
+    _patch_api_client(monkeypatch, fake)
     fa_mod.generate_form_answers(_job(), {}, archetype_meta=dict(_ARCHETYPE_STUB))
     _assert_cached_call(fake.sent[0])
 
@@ -130,7 +146,7 @@ def test_classifier_uses_cached_prefix(monkeypatch):
     fake = _FakeClient(
         '{"archetype": "tier_1a_compneuro", "confidence": 0.8, "reasoning": "x"}'
     )
-    monkeypatch.setattr(archetype_mod, "_client_lazy", lambda: fake)
+    _patch_api_client(monkeypatch, fake)
     job = _job()
     job.pop("_archetype")
     archetype_mod.classify_archetype(job)

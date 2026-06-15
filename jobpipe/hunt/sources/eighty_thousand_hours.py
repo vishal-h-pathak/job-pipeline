@@ -42,6 +42,11 @@ KEYWORDS = (
     "research engineer", "applied scientist",
     "platform engineer", "sdk", "tools",
     "engineer",
+    # Tier 1.5 — agentic / applied-AI (multi-word, low-false-positive only;
+    # no bare "agent"/"ai "/"ml "). feat/hunt-agentic-discovery.
+    "agentic", "ai agent", "llm", "applied ai", "forward deployed",
+    "member of technical staff", "developer experience",
+    "ai infrastructure", "prompt engineer",
 )
 
 def _matches(text: str) -> bool:

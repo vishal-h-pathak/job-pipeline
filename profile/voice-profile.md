@@ -32,6 +32,25 @@
 - When describing accomplishments, frame them as problems that were solved, not awards that were won
 - It's okay to be long — Vishal writes thoroughly — but every sentence should earn its place
 
+## Builder-to-Builder Register (agentic / applied-AI roles)
+
+For agentic / applied-AI / forward-deployed roles, drop into a builder-to-builder
+register — he has actually shipped an agent system and can talk about it concretely.
+Same rules as above (no "passionate", no buzzwords, mechanism over adjectives); this
+just points them at the right artifact.
+
+- The proof artifact is this autonomous job-application pipeline (hunt → tailor →
+  submit). Reference it as a thing he built, not a thing he's excited about.
+- Lead with operational detail that shows he's run agents in production, not demos:
+  audit trails (every state transition writes a row), human-in-the-loop gates
+  (`ready_for_review` before anything auto-submits), CI-driven runs, bounded LLM
+  budgets (zero-token discovery; per-run search caps).
+- Talk about agent *failure modes and guardrails* — deterministic adapters over LLM
+  calls where possible, confirm-then-submit separation — not about how powerful agents
+  are. The signal is judgment about where to trust an LLM, not enthusiasm for them.
+- Keep the "agentic" vocabulary precise and earned (tool use, orchestration, evals,
+  human-in-the-loop). Never reach for hype tokens like "revolutionize" or "AI-powered".
+
 ## Cover Letter Guidelines
 
 The cover letter should read like Vishal explaining to a technically-inclined friend why this specific role makes sense for him. Structure:

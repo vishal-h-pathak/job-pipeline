@@ -36,6 +36,12 @@ QUERIES = [
     "sales engineer AI startup",
     "solutions engineer machine learning",
     "developer relations AI",
+    # Tier 1.5 — agentic / applied-AI discovery (added feat/hunt-agentic-discovery).
+    # Paid: each query × location × page is billable, so keep this set tight.
+    "AI agent engineer",
+    "applied AI engineer",
+    "forward deployed engineer",
+    "agentic AI engineer",
 ]
 
 # Mode-aware locations. ``label`` is what we record on the row; ``location``

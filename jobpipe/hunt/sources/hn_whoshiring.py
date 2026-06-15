@@ -49,6 +49,10 @@ KEYWORDS = (
     "developer advocate", "developer experience",
     "applied scientist", "research engineer",
     "platform engineer", "sdk",
+    # Tier 1.5 — agentic / applied-AI (multi-word, low-false-positive only;
+    # no bare "agent"/"ai "/"ml "). feat/hunt-agentic-discovery.
+    "agentic", "ai agent", "llm", "applied ai", "forward deployed",
+    "member of technical staff", "ai infrastructure", "prompt engineer",
 )
 
 

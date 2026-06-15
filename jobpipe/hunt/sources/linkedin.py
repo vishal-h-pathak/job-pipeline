@@ -40,6 +40,12 @@ QUERIES = [
     "BCI engineer",
     "sales engineer AI startup",
     "solutions engineer machine learning",
+    # Tier 1.5 — agentic / applied-AI discovery (kept in sync with the active
+    # paid sources for if this disabled source is ever re-enabled).
+    "AI agent engineer",
+    "applied AI engineer",
+    "forward deployed engineer",
+    "agentic AI engineer",
 ]
 
 _LOCAL_REMOTE_LOCATIONS = (

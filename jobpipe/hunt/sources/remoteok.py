@@ -19,6 +19,18 @@ KEYWORDS = [
     "sales engineer",
     "developer relations",
     "solutions engineer",
+    # Tier 1.5 — agentic / applied-AI (multi-word, low-false-positive only;
+    # no bare "agent"/"ai "/"ml "). feat/hunt-agentic-discovery.
+    "agentic",
+    "ai agent",
+    "llm",
+    "applied ai",
+    "forward deployed",
+    "member of technical staff",
+    "ai engineer",
+    "developer experience",
+    "ai infrastructure",
+    "prompt engineer",
 ]
 
 

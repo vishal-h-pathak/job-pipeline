@@ -65,6 +65,16 @@ greenhouse:
       # Weights & Biases (thesis target) was acquired by CoreWeave; its
       # standalone `weightsandbiases` board 404s and W&B roles now post
       # through coreweave.com/careers → this board.
+    # ── Added 2026-06-15 (feat/hunt-agentic-discovery — applied-AI / agent infra, verified) ──
+    - slug: sourcegraph91       # bare `sourcegraph` 404s; this is the live slug
+      name: Sourcegraph         # …/boards/sourcegraph91/jobs → 8 jobs (Code Search/MCP, confirmed in desc)
+    - slug: vercel
+      name: Vercel              # …/boards/vercel/jobs → 73 jobs (Ashby `vercel` board is empty)
+    - slug: fireworksai
+      name: Fireworks AI        # …/boards/fireworksai/jobs → 31 jobs (LLM inference).
+      # An identical Ashby mirror (`fireworksai`, same 31 roles) also exists;
+      # we poll only Greenhouse — the two ATSs use different apply URLs so
+      # cross-source dedup (keyed on URL) would NOT collapse the duplicates.
 
 # ──────────────────────────────────────────────────────────────────────────
 # Lever — api.lever.co/v0/postings/<slug>
@@ -142,6 +152,20 @@ ashby:
     # Embodied AI / robotics foundation models (Tier 1-adjacent)
     - slug: physicalintelligence
       name: Physical Intelligence  # …/job-board/physicalintelligence → 24 jobs
+    # ── Added 2026-06-15 (feat/hunt-agentic-discovery — applied-AI / agent infra, verified) ──
+    - slug: perplexity
+      name: Perplexity          # …/job-board/perplexity → 70 jobs (answer-engine / agents)
+    - slug: replit
+      name: Replit              # …/job-board/replit → 98 jobs (Agent / dev platform)
+    - slug: baseten
+      name: Baseten             # …/job-board/baseten → 68 jobs (model inference/serving)
+    - slug: cohere
+      name: Cohere              # …/job-board/cohere → 126 jobs (frontier LLM lab)
+    - slug: harvey
+      name: Harvey              # …/job-board/harvey → 260 jobs (applied AI, legal)
+    - slug: dust
+      name: Dust                # …/job-board/dust → 26 jobs ("multiplayer AI platform for
+      # human-agent collaboration" — confirmed in desc; dust.tt, not a generic "dust")
 
 # ──────────────────────────────────────────────────────────────────────────
 # Workday — <tenant>.wd<N>.myworkdayjobs.com/<site>
@@ -182,6 +206,17 @@ workday:
 #   Groq                    — Gem (jobs.gem.com/groq); old Lever board 404
 #   Cortical Labs           — no careers page; old Lever board 404
 #   Replicate, Sakana AI    — old Ashby boards 404; no new board found
+#
+# Skipped 2026-06-15 (feat/hunt-agentic-discovery) — agentic / applied-AI
+# candidates that have no verifiable Greenhouse/Ashby board:
+#   Hugging Face            — no Greenhouse/Ashby board (both 404)
+#   Mistral AI              — no Greenhouse/Ashby board (both 404)
+#   Vellum                  — ashby `vellum` resolves to a different org (1 GTM
+#                             "Community Lead" role; pitch ≠ vellum.ai dev platform)
+#   Contextual AI           — ashby `contextual` is a different pre-seed design-AI
+#                             startup ("Founding" roles, $1.8M); greenhouse
+#                             `contextualai` board exists but 0 open → identity unverifiable
+#   Lindy                   — ashby `lindy` board exists but returns 0 jobs → org unverifiable
 # ──────────────────────────────────────────────────────────────────────────
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -239,6 +274,11 @@ title_filter:
     - "applied ai"
     - "forward deployed"
     - "member of technical staff"
+    # feat/hunt-agentic-discovery — more agentic title hints (log-only)
+    - "agentic"
+    - "ai agent"
+    - "llm engineer"
+    - "developer experience"
 
   # Soft seniority hint — boosts logging only. Both individual contributors
   # and senior IC titles are welcome; what we filter against is leadership

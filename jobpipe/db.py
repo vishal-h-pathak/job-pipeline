@@ -130,29 +130,50 @@ def _utcnow() -> str:
 #  HUNT — discovery / scoring writes (was jobpipe/hunt/db.py)
 # ══════════════════════════════════════════════════════════════════════════
 
-def upsert_job(job: dict, result: dict) -> None:
+def upsert_job(job: dict, result: dict | None = None, *, status: str | None = None) -> None:
     """Insert a freshly-discovered job or update score / tier / reasoning.
 
     Hunt's score+legitimacy fields land on the row; status defaults to
     ``"new"`` on insert.  ``created_at`` is stamped explicitly so rows
     are well-formed even if a DB default is missing.
+
+    The hunt discovery gate also persists link-resolution fields off the
+    ``job`` dict when present: ``application_url`` (resolved ATS URL),
+    ``ats_kind`` (detect_ats output), and ``link_status`` (``direct`` /
+    ``aggregator_unverified`` / ``expired``).
+
+    ``result`` may be ``None`` for rows recorded before scoring (e.g. a
+    posting dropped as ``expired`` by the liveness gate). ``status``
+    overrides the default ``"new"`` so the gate can record ``expired`` /
+    ``skipped`` rows that the cross-source dedup won't re-surface.
     """
+    result = result or {}
     client = _get_client()
+
+    # Link-resolution fields, written only when the discovery gate set them.
+    link_fields = {
+        k: job[k]
+        for k in ("application_url", "ats_kind", "link_status")
+        if job.get(k) is not None
+    }
+
     existing = (
         client.table("jobs").select("id").eq("id", job["id"]).execute().data or []
     )
     if existing:
-        client.table("jobs").update(
-            {
-                "score": result.get("score"),
-                "tier": result.get("tier"),
-                "degree_gated": bool(result.get("degree_gated", False)),
-                "reasoning": result.get("reasoning"),
-                "action": result.get("recommended_action"),
-                "legitimacy": result.get("legitimacy"),
-                "legitimacy_reasoning": result.get("legitimacy_reasoning"),
-            }
-        ).eq("id", job["id"]).execute()
+        update_payload = {
+            "score": result.get("score"),
+            "tier": result.get("tier"),
+            "degree_gated": bool(result.get("degree_gated", False)),
+            "reasoning": result.get("reasoning"),
+            "action": result.get("recommended_action"),
+            "legitimacy": result.get("legitimacy"),
+            "legitimacy_reasoning": result.get("legitimacy_reasoning"),
+            **link_fields,
+        }
+        if status is not None:
+            update_payload["status"] = status
+        client.table("jobs").update(update_payload).eq("id", job["id"]).execute()
     else:
         client.table("jobs").upsert(
             {
@@ -170,8 +191,9 @@ def upsert_job(job: dict, result: dict) -> None:
                 "action": result.get("recommended_action"),
                 "legitimacy": result.get("legitimacy"),
                 "legitimacy_reasoning": result.get("legitimacy_reasoning"),
-                "status": "new",
+                "status": status or "new",
                 "created_at": _utcnow(),
+                **link_fields,
             },
             on_conflict="id",
         ).execute()

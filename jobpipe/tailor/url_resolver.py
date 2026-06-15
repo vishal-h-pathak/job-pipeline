@@ -74,6 +74,15 @@ def _is_ats(host: str) -> bool:
     return any(ats in host for ats in KNOWN_ATS_HOSTS)
 
 
+def is_ats_url(url: str) -> bool:
+    """True when ``url``'s host is already a known direct-ATS host.
+
+    The hunt discovery gate calls this to short-circuit clean direct-ATS
+    sources (greenhouse / lever / ashby / workday) — they need no resolver
+    fetch, so surfacing them costs zero extra HTTP."""
+    return _is_ats(_host_of(url))
+
+
 def _is_aggregator(host: str) -> bool:
     return host in AGGREGATOR_HOSTS or any(host.endswith("." + a) for a in AGGREGATOR_HOSTS)
 
@@ -112,8 +121,16 @@ def resolve_application_url(url: str, timeout: float = 15.0) -> dict:
       "resolved": "...",         # best guess at the real ATS URL
       "is_ats": True/False,      # whether resolved is a known ATS
       "trail": [url1, url2, ...]
-      "notes": "..."
+      "notes": "...",
+      "status_code": 200/None,   # HTTP status of the fetched page
+      "html": "...",             # body of the fetched page (None on error)
     }
+
+    ``status_code`` + ``html`` are carried so a caller can run a liveness
+    check on the page WITHOUT re-fetching it (the hunt discovery gate shares
+    this one fetch across resolve → liveness → enrich). They reflect the
+    aggregator page when an ATS link was extracted from it, and the final
+    redirect target otherwise.
     """
     trail = [url]
     notes = []
@@ -139,6 +156,8 @@ def resolve_application_url(url: str, timeout: float = 15.0) -> dict:
                     "is_ats": True,
                     "trail": trail,
                     "notes": "direct redirect to ATS",
+                    "status_code": r.status_code,
+                    "html": r.text,
                 }
 
             if _is_aggregator(final_host):
@@ -151,6 +170,8 @@ def resolve_application_url(url: str, timeout: float = 15.0) -> dict:
                         "is_ats": _is_ats(_host_of(ats_url)),
                         "trail": trail + [ats_url],
                         "notes": f"extracted from aggregator ({final_host})",
+                        "status_code": r.status_code,
+                        "html": r.text,
                     }
                 notes.append(f"aggregator {final_host}: no ATS link found on page")
 
@@ -161,6 +182,8 @@ def resolve_application_url(url: str, timeout: float = 15.0) -> dict:
                 "is_ats": _is_ats(final_host),
                 "trail": trail,
                 "notes": "; ".join(notes) or f"final host={final_host}",
+                "status_code": r.status_code,
+                "html": r.text,
             }
     except Exception as e:
         logger.warning(f"resolver error on {url}: {e}")
@@ -170,4 +193,6 @@ def resolve_application_url(url: str, timeout: float = 15.0) -> dict:
             "is_ats": False,
             "trail": trail,
             "notes": f"error: {e}",
+            "status_code": None,
+            "html": None,
         }

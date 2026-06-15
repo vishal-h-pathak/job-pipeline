@@ -103,11 +103,16 @@ def _extract_description(html: str) -> str | None:
     return None
 
 
-def enrich_description(job: dict) -> dict:
+def enrich_description(job: dict, prefetched_html: str | None = None) -> dict:
     """Enrich a job's description if it's too short.
 
     Returns a new dict with the description replaced if enrichment
     succeeded, or the original dict unchanged.
+
+    ``prefetched_html`` lets the caller hand in a page body already fetched
+    upstream (e.g. the hunt discovery gate's resolve/liveness fetch) so the
+    same URL isn't pulled twice. When given and non-empty, no HTTP request
+    is made.
     """
     description = job.get("description", "")
     url = job.get("url", "")
@@ -116,18 +121,20 @@ def enrich_description(job: dict) -> dict:
     if len(description) >= MIN_DESCRIPTION_LEN:
         return job
 
-    # No URL to fetch — can't enrich
-    if not url:
-        return job
-
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=FETCH_TIMEOUT,
-                            allow_redirects=True)
-        if resp.status_code != 200:
+    if prefetched_html:
+        html = prefetched_html
+    else:
+        # No URL to fetch — can't enrich
+        if not url:
             return job
-        html = resp.text
-    except requests.RequestException:
-        return job
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=FETCH_TIMEOUT,
+                                allow_redirects=True)
+            if resp.status_code != 200:
+                return job
+            html = resp.text
+        except requests.RequestException:
+            return job
 
     enriched = _extract_description(html)
     if enriched and len(enriched) > len(description):

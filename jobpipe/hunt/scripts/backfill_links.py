@@ -84,15 +84,15 @@ def _is_candidate(row: dict) -> bool:
     return not is_ats_url(url)
 
 
-def fetch_candidates(client) -> list[dict]:
-    """Rows eligible for backfill: status new/approved, aggregator url,
+def fetch_candidates(client, statuses=BACKFILL_STATUSES) -> list[dict]:
+    """Rows eligible for backfill: status in ``statuses``, aggregator url,
     application_url NULL. The NULL/direct-ATS filtering happens in Python so
     the query stays a simple status ``IN`` (and re-runs stay idempotent —
     once a row has an application_url it no longer matches)."""
     rows = (
         client.table("jobs")
         .select("id, company, url, status, application_url")
-        .in_("status", list(BACKFILL_STATUSES))
+        .in_("status", list(statuses))
         .execute()
         .data
         or []
@@ -154,56 +154,61 @@ def _polite_sleep() -> None:
     time.sleep(random.uniform(*PER_ROW_DELAY_RANGE_S))
 
 
-def _print_plan(changes: list[Change]) -> None:
-    if not changes:
-        print("no candidate rows (status new/approved, aggregator url, "
-              "application_url NULL)")
-        return
-    print(f"{len(changes)} candidate row(s):\n")
-    for c in changes:
-        company = (c.company or "?")[:24]
-        if c.action == "expire":
-            print(f"  [EXPIRE]  {c.id}  {company:24}  {c.status:9}  {c.url}")
-            print(f"            → dead signal: {c.reason}")
-        else:
-            print(f"  [{c.link_status or '?':21}]  {c.id}  {company:24}  {c.status:9}")
-            print(f"            {c.url}")
-            print(f"            → {c.application_url}  (ats={c.ats_kind})")
+def _print_row(c: Change, n: int, total: int, written: bool) -> None:
+    """Print one resolved row as it's processed (id, company, old url →
+    resolved application_url, link_status)."""
+    company = (c.company or "?")[:24]
+    tag = "wrote" if written else "plan "
+    if c.action == "expire":
+        print(f"[{n}/{total}] {tag} [EXPIRE]  {c.id}  {company:24}  {c.status:9}")
+        print(f"          {c.url}")
+        print(f"          → dead signal: {c.reason}")
+    else:
+        print(f"[{n}/{total}] {tag} [{c.link_status or '?':21}]  {c.id}  "
+              f"{company:24}  {c.status:9}")
+        print(f"          {c.url}")
+        print(f"          → {c.application_url}  (ats={c.ats_kind})")
 
 
-def run(commit: bool, client=None) -> dict:
-    """Plan (always) and optionally apply the backfill. Returns counts."""
+def run(commit: bool, client=None, statuses=BACKFILL_STATUSES) -> dict:
+    """Resolve each candidate, printing it as it goes; write per row when
+    ``commit``. Returns counts."""
     client = client or _get_client()
-    rows = fetch_candidates(client)
+    rows = fetch_candidates(client, statuses)
 
-    changes: list[Change] = []
-    for i, row in enumerate(rows):
-        changes.append(plan_change(row))
-        if i < len(rows) - 1:
-            _polite_sleep()  # one HTTP GET per row — space them out
-
-    _print_plan(changes)
-
-    counts = {
-        "candidates": len(changes),
-        "resolved": sum(1 for c in changes if c.action == "resolve"),
-        "expired": sum(1 for c in changes if c.action == "expire"),
-        "written": 0,
-    }
-
-    if not commit:
-        print("\nDRY RUN — no rows written. Re-run with --commit to apply.")
+    counts = {"candidates": len(rows), "resolved": 0, "expired": 0, "written": 0}
+    if not rows:
+        print(f"no candidate rows (status {'/'.join(statuses)}, aggregator "
+              "url, application_url NULL)")
         return counts
 
-    for c in changes:
-        try:
-            apply_change(client, c)
-            counts["written"] += 1
-        except Exception as e:  # noqa: BLE001 — one bad row shouldn't abort the rest
-            logger.error("write failed for %s: %s", c.id, e)
+    print(f"{len(rows)} candidate row(s) [{', '.join(statuses)}]"
+          f"{'' if commit else ' — DRY RUN, no writes'}:\n")
 
-    print(f"\nwrote {counts['written']} row(s): "
-          f"resolved={counts['resolved']} expired={counts['expired']}")
+    total = len(rows)
+    for i, row in enumerate(rows):
+        change = plan_change(row)
+        counts["resolved" if change.action == "resolve" else "expired"] += 1
+
+        written = False
+        if commit:
+            try:
+                apply_change(client, change)
+                counts["written"] += 1
+                written = True
+            except Exception as e:  # noqa: BLE001 — one bad row shouldn't abort the rest
+                logger.error("write failed for %s: %s", change.id, e)
+
+        _print_row(change, i + 1, total, written)
+        if i < total - 1:
+            _polite_sleep()  # one HTTP GET per row — space them out
+
+    if commit:
+        print(f"\nwrote {counts['written']}/{total} row(s): "
+              f"resolved={counts['resolved']} expired={counts['expired']}")
+    else:
+        print(f"\nDRY RUN — no rows written ({counts['resolved']} resolve, "
+              f"{counts['expired']} expire). Re-run with --commit to apply.")
     return counts
 
 
@@ -220,14 +225,24 @@ def main() -> None:
         help="Write the changes. Without this flag the script only prints "
              "what would change (it touches live rows).",
     )
+    parser.add_argument(
+        "--status",
+        choices=("new", "approved", "both"),
+        default="both",
+        help="Which status bucket to backfill (default: both). "
+             "'approved' is the small, high-value slice; 'new' is the large "
+             "discovery backlog.",
+    )
     args = parser.parse_args()
+
+    statuses = BACKFILL_STATUSES if args.status == "both" else (args.status,)
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    run(commit=args.commit)
+    run(commit=args.commit, statuses=statuses)
 
 
 if __name__ == "__main__":

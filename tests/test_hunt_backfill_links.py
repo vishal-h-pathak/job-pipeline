@@ -195,6 +195,26 @@ def test_commit_writes_status_preserving_link_update(monkeypatch):
     assert "status" not in payload
 
 
+def test_run_prints_per_row_and_accepts_statuses(monkeypatch, capsys):
+    """Per-row output (id, url → application_url) prints as each row
+    resolves, and run() honors a narrowed status slice."""
+    monkeypatch.setattr(agent, "resolve_application_url", _resolve_stub(**{
+        AGG_OK: {"resolved": GH, "is_ats": True, "status_code": 200, "html": "x"},
+    }))
+    client = _FakeClient([
+        {"id": "r1", "company": "Acme", "url": AGG_OK,
+         "application_url": None, "status": "approved"},
+    ])
+    counts = bf.run(commit=True, client=client, statuses=("approved",))
+    assert counts["written"] == 1
+
+    out = capsys.readouterr().out
+    assert "[1/1]" in out          # per-row progress marker
+    assert "r1" in out
+    assert AGG_OK in out and GH in out   # old url → resolved application_url
+    assert "[approved]" in out      # the status slice header
+
+
 def test_commit_expires_dead_row(monkeypatch):
     monkeypatch.setattr(agent, "resolve_application_url", _resolve_stub(**{
         AGG_DEAD: {"resolved": AGG_DEAD, "is_ats": False, "status_code": 410,

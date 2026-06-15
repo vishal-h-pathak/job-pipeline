@@ -81,6 +81,14 @@ from jobpipe.notify import send_digest  # noqa: E402
 from jobpipe.shared.validator import validate_url  # noqa: E402
 from enricher import enrich_description  # noqa: E402  (PR-3 flatten of utils/enricher.py)
 from jobpipe.db import get_seen_ids, upsert_job  # noqa: E402
+# Direct-listing discovery gate: resolve aggregator links to the real ATS
+# and check posting openness at discovery time (one shared HTTP fetch).
+from jobpipe.tailor.url_resolver import (  # noqa: E402
+    resolve_application_url,
+    is_ats_url,
+)
+from jobpipe.shared.liveness import classify_posting  # noqa: E402
+from jobpipe.shared.ats_detect import detect_ats  # noqa: E402
 
 # ── Logging — stream to stdout so run_agent.sh's redirect captures it ─────
 logging.basicConfig(
@@ -131,6 +139,66 @@ def iter_all_jobs():
             traceback.print_exc()
 
 
+def _resolve_link_and_liveness(job: dict) -> tuple[str, str | None]:
+    """Resolve a job's link to its real ATS URL and check openness with a
+    SINGLE HTTP fetch, then stamp link-resolution fields on ``job``.
+
+    Returns ``(decision, fetched_html)`` where ``decision`` is:
+      - ``"dead"`` — a positive dead/closed signal (HTTP 404/410 or a
+        closed-phrase match). ``job["link_status"]`` is set to ``"expired"``;
+        the caller drops it before scoring.
+      - ``"ok"``  — surface it. ``job`` gets ``application_url`` (resolved),
+        ``ats_kind`` (detect_ats), and a provisional ``link_status`` of
+        ``"direct"`` (resolved to an ATS) or ``"aggregator_unverified"``.
+
+    ``fetched_html`` is the page the resolver already pulled (or ``None``),
+    threaded back so the caller can reuse it for ``enrich_description``
+    instead of fetching the same URL twice.
+
+    Direct-ATS hosts short-circuit with NO fetch — ``validate_url`` already
+    covered their liveness, and the clean ATS sources (greenhouse / lever /
+    ashby / workday) shouldn't pay an extra round-trip.
+    """
+    url = job["url"]
+
+    # Already a direct ATS link → no resolve fetch.
+    if is_ats_url(url):
+        job["application_url"] = url
+        job["ats_kind"] = detect_ats(url)
+        job["link_status"] = "direct"
+        return "ok", None
+
+    result = resolve_application_url(url)
+    resolved = result.get("resolved") or url
+    fetched_html = result.get("html")
+
+    state, reason = classify_posting(
+        status_code=result.get("status_code"),
+        html=fetched_html,
+        final_url=resolved,
+    )
+    if state == "dead":
+        # Positive dead signal — record as expired, drop before scoring.
+        job["link_status"] = "expired"
+        job["_liveness_reason"] = reason
+        return "dead", fetched_html
+
+    job["application_url"] = resolved
+    job["ats_kind"] = detect_ats(resolved)
+    job["link_status"] = "direct" if result.get("is_ats") else "aggregator_unverified"
+    return "ok", fetched_html
+
+
+def _drop_as_suspicious(job: dict, result: dict) -> bool:
+    """Post-score gate: drop an aggregator link we couldn't verify AND the
+    scorer rated ``suspicious``. Everything else (including unverified +
+    not-suspicious) is kept — the digest just flags it."""
+    return (
+        job.get("link_status") == "aggregator_unverified"
+        and (result.get("legitimacy") or "").strip().lower() == "suspicious"
+    )
+
+
 def _execute() -> None:
     """Run the fetch → validate → enrich → score → upsert pipeline once."""
     mode = config.get_mode()
@@ -139,6 +207,8 @@ def _execute() -> None:
     seen = get_seen_ids()
     new_count = 0
     skipped_dead = 0
+    skipped_closed = 0
+    skipped_suspicious = 0
     enriched_count = 0
     to_notify: list[dict] = []
     by_source: dict[str, int] = {}
@@ -157,9 +227,31 @@ def _execute() -> None:
             skipped_dead += 1
             continue
 
-        # ── Enrich sparse descriptions ───────────────────────────────
+        # ── Resolve link + liveness (single shared fetch; drops dead) ──
+        # Runs before scoring so a closed/dead posting never costs scorer
+        # budget and never reaches the digest. Direct-ATS hosts incur no
+        # extra fetch. The fetched page is reused by enrich_description.
+        try:
+            decision, fetched_html = _resolve_link_and_liveness(job)
+        except Exception as e:
+            # Never let a resolver bug bury a job — treat as unverified.
+            logger.error("[resolve] error on %s: %s", job["url"], e)
+            decision, fetched_html = "ok", None
+            job.setdefault("link_status", "aggregator_unverified")
+        if decision == "dead":
+            logger.info("[liveness] closed/dead at discovery (%s), dropping: %s",
+                        job.get("_liveness_reason", "?"), job["url"])
+            skipped_closed += 1
+            try:
+                upsert_job(job, status="expired")
+                seen.add(job["id"])
+            except Exception as e:
+                logger.error("[db] expired upsert error for %s: %s", job["id"], e)
+            continue
+
+        # ── Enrich sparse descriptions (reuse the fetched page) ──────
         original_len = len(job.get("description", ""))
-        job = enrich_description(job)
+        job = enrich_description(job, prefetched_html=fetched_html)
         if len(job.get("description", "")) > original_len:
             enriched_count += 1
 
@@ -175,6 +267,18 @@ def _execute() -> None:
             logger.error("[scorer] error on %r: %s", job["title"], e)
             continue
 
+        # ── Post-score gate: drop unverifiable + suspicious aggregators ──
+        if _drop_as_suspicious(job, result):
+            logger.info("[gate] suspicious + unverified aggregator, recording "
+                        "skipped (not notified): %s", job["url"])
+            skipped_suspicious += 1
+            try:
+                upsert_job(job, result, status="skipped")
+                seen.add(job["id"])
+            except Exception as e:
+                logger.error("[db] skipped upsert error for %s: %s", job["id"], e)
+            continue
+
         if should_notify(result):
             to_notify.append({"job": job, "score": result})
 
@@ -188,11 +292,14 @@ def _execute() -> None:
         send_digest(to_notify)
 
     logger.info(
-        "done. mode=%s new=%d enriched=%d dead_skipped=%d notified=%d by_source=%s",
-        mode, new_count, enriched_count, skipped_dead, len(to_notify), by_source,
+        "done. mode=%s new=%d enriched=%d dead_skipped=%d closed_skipped=%d "
+        "suspicious_skipped=%d notified=%d by_source=%s",
+        mode, new_count, enriched_count, skipped_dead, skipped_closed,
+        skipped_suspicious, len(to_notify), by_source,
     )
     print(f"done. mode={mode} new jobs: {new_count}, enriched: {enriched_count}, "
-          f"dead links skipped: {skipped_dead}, notified: {len(to_notify)}")
+          f"dead links skipped: {skipped_dead}, closed dropped: {skipped_closed}, "
+          f"suspicious dropped: {skipped_suspicious}, notified: {len(to_notify)}")
 
 
 def run() -> None:

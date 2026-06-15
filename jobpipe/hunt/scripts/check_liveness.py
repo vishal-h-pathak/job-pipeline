@@ -47,6 +47,14 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv()
 
 from jobpipe.db import _client as get_client  # noqa: E402
+# Single source of truth for dead-detection — shared with the hunt-time
+# discovery gate so the cron and the live hunt can't drift. The phrase /
+# URL-substring lists live in jobpipe.shared.liveness.
+from jobpipe.shared.liveness import (  # noqa: E402
+    DEAD_BODY_PHRASES,  # re-exported for back-compat
+    DEAD_URL_SUBSTRINGS,  # re-exported for back-compat
+    classify_posting,
+)
 
 logger = logging.getLogger("liveness")
 
@@ -54,28 +62,6 @@ USER_AGENT = "job-hunter-liveness/1.0 (+https://vishal.pa.thak.io)"
 STALE_DAYS = 7
 TIMEOUT_S = 12
 PER_HOST_DELAY_RANGE_S = (1.0, 3.0)
-
-# Phrases that, when present in a 200-OK page body, positively indicate
-# the posting is closed. Conservative — we'd rather leave a row alive
-# than misclassify a still-open role as expired.
-DEAD_BODY_PHRASES = (
-    "no longer accepting applications",
-    "this position is no longer available",
-    "this position is closed",
-    "this job has expired",
-    "we are no longer accepting applications",
-    "position has been filled",
-    "this opportunity has closed",
-    "this role is no longer open",
-    "this listing has ended",
-    "job is no longer available",
-)
-
-DEAD_URL_SUBSTRINGS = (
-    "job-not-found",
-    "no-longer-available",
-    "/expired",
-)
 
 
 def _eligible_jobs() -> list[dict]:
@@ -95,21 +81,17 @@ def _eligible_jobs() -> list[dict]:
 
 
 def _is_dead(resp: requests.Response | None) -> tuple[bool, str]:
-    """Return (is_dead, reason). Network errors map to (False, '...')."""
+    """Return (is_dead, reason). Delegates to the shared classifier so the
+    cron and the hunt-time gate share one definition of "dead". Network
+    errors / unknown states map to (False, reason) — never expire a row on
+    anything but a positive dead signal."""
     if resp is None:
-        return False, "network-error"
-    if resp.status_code == 404:
-        return True, "404"
-    if resp.status_code == 410:
-        return True, "410-gone"
-    final_url = (resp.url or "").lower()
-    if any(s in final_url for s in DEAD_URL_SUBSTRINGS):
-        return True, f"redirected-to:{final_url}"
-    body = (resp.text or "").lower()
-    for phrase in DEAD_BODY_PHRASES:
-        if phrase in body:
-            return True, f"phrase:{phrase!r}"
-    return False, "alive"
+        state, reason = classify_posting(status_code=None, html=None)
+    else:
+        state, reason = classify_posting(
+            status_code=resp.status_code, html=resp.text, final_url=resp.url,
+        )
+    return state == "dead", reason
 
 
 def _check_url(url: str) -> tuple[bool, str]:

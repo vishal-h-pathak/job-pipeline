@@ -72,11 +72,32 @@ def _tier_key(tier):
     return int(f) if f.is_integer() else f
 
 
+def _apply_link(job: dict) -> str:
+    """Prefer the resolved ATS URL over the raw (often aggregator) URL so
+    the digest links straight to the real application page when the hunt
+    gate resolved one."""
+    return job.get("application_url") or job.get("url") or ""
+
+
+def _unverified_flag(job: dict) -> str:
+    """A visible ⚠ tag for rows the hunt gate couldn't resolve to a direct
+    ATS (link_status='aggregator_unverified'), so direct vs aggregated is
+    legible at a glance. Empty for direct / unclassified rows."""
+    if job.get("link_status") != "aggregator_unverified":
+        return ""
+    return (
+        '<span style="display:inline-block; border:1px solid #d9a300; '
+        'background:#fff8e1; color:#8a6d00; border-radius:10px; '
+        'padding:1px 8px; font-size:12px; margin-left:8px;">'
+        "⚠ unverified link</span>"
+    )
+
+
 def _render_job(job: dict, score: dict) -> str:
     return f"""
     <div style="border: 1px solid #e5e5e5; border-radius: 8px; padding: 16px;
                 margin-bottom: 14px;">
-      <h3 style="margin: 0 0 4px 0;">{html.escape(job['title'])}</h3>
+      <h3 style="margin: 0 0 4px 0;">{html.escape(job['title'])}{_unverified_flag(job)}</h3>
       <div style="color: #555; margin-bottom: 8px;">
         {html.escape(job['company'])} · {html.escape(job['location'])}
         &nbsp;·&nbsp; <strong>{score.get('score')}/10</strong>
@@ -85,7 +106,7 @@ def _render_job(job: dict, score: dict) -> str:
         {html.escape(score.get('reasoning', ''))}
       </p>
       <p style="margin: 8px 0 0 0;">
-        <a href="{html.escape(job['url'])}"
+        <a href="{html.escape(_apply_link(job))}"
            style="display: inline-block; padding: 8px 14px; background: #111;
                   color: #fff; text-decoration: none; border-radius: 6px;">
           View &amp; Apply →
@@ -199,7 +220,7 @@ def _render_morning_digest(top: list[dict]) -> tuple[str, str]:
         cards.append(
             '<div style="margin: 0 0 18px 0;">'
             f'<div><strong>{html.escape(job.get("title") or "?")}</strong>'
-            f' — {html.escape(job.get("company") or "?")}</div>'
+            f' — {html.escape(job.get("company") or "?")}{_unverified_flag(job)}</div>'
             f'<div style="color:#555; margin:2px 0;">{_tier_pill(job.get("tier"))}'
             f' &nbsp;<strong>{job.get("score")}/10</strong></div>'
             f'<p style="line-height:1.5; margin:6px 0;">'

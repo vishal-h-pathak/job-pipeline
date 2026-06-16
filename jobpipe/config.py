@@ -157,6 +157,21 @@ HEADLESS: Final[bool]                  = _bool("HEADLESS", "true")
 REVIEW_DASHBOARD_URL: Final[str]       = os.environ.get(
     "REVIEW_DASHBOARD_URL", "https://vishal.pa.thak.io/review"
 )
+
+# ── Local visible-browser prepare flow (jobpipe-submit on the user's box) ──
+# The real submit runtime is local + visible: a persistent Chrome profile so
+# the user's ATS logins persist across runs, with a documented CDP opt-in for
+# users who want to attach to their everyday Chrome. These are env *names* and
+# default *strings* (not resolved Finals) on purpose — the browser helper and
+# the assisted-manual hand-off read os.environ live at call time so a process
+# (or a test) can set them after import. ``config.HEADLESS`` above governs the
+# retired Browserbase path and defaults true; the local prepare flow decides
+# headless from the ``HEADLESS`` env var live, defaulting to VISIBLE.
+BROWSER_PROFILE_ENV: Final[str]     = "JOBPIPE_BROWSER_PROFILE"
+BROWSER_PROFILE_DEFAULT: Final[str] = "~/.jobpipe/chrome-profile"
+BROWSER_CDP_ENV: Final[str]         = "JOBPIPE_BROWSER_CDP"
+HANDOFF_DIR_ENV: Final[str]         = "JOBPIPE_HANDOFF_DIR"
+HANDOFF_DIR_DEFAULT: Final[str]     = "~/Downloads/jobpipe"
 # Per-adapter minimum confidence for auto-submit. Jobs below this route
 # to needs_review regardless of AUTO_SUBMIT_THRESHOLD.
 ATS_CONFIDENCE_MIN: Final[dict[str, float]] = {

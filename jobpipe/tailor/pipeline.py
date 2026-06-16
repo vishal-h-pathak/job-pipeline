@@ -78,7 +78,6 @@ from jobpipe.db import (  # noqa: E402
     next_attempt_n,
     open_attempt,
     close_attempt,
-    update_job_status,
 )
 from tailor.resume import tailor_resume  # noqa: E402
 from tailor.cover_letter import generate_cover_letter  # noqa: E402
@@ -94,6 +93,7 @@ from jobpipe.notify import (  # noqa: E402  PR-8: canonical send_* names
     send_failed,
 )
 from jobpipe.shared.storage import download_to_tmp  # noqa: E402
+from jobpipe.submit.handoff import assisted_manual_handoff  # noqa: E402
 from storage import (  # noqa: E402
     upload_pdf,
     upload_prefill_screenshot,
@@ -392,25 +392,41 @@ def process_approved_jobs():
 
 def process_prefill_requested_jobs():
     """
-    Phase 2 (M-5): Pick up jobs the user clicked "Pre-fill Form" on,
-    open a visible browser, dispatch to the per-ATS handler (Ashby /
-    Greenhouse / Lever) or the prepare-only vision agent, capture the
-    post-fill screenshot, mark the row `awaiting_human_submit`, and
-    BLOCK on terminal input() so the user has time to review what was
-    typed, fix anything wrong, and click Submit themselves before the
-    browser closes.
+    Phase 2 (M-5 / local-browser rewrite): Pick up jobs the user clicked
+    "Pre-fill Form" on, open ONE visible, logged-in browser for the whole
+    run, and process the queue by opening a new tab (page) per job in that
+    same window. Each job dispatches to the per-ATS handler (Ashby /
+    Greenhouse / Lever) or the prepare-only vision agent, captures the
+    post-fill screenshot, marks the row `awaiting_human_submit`, and BLOCKS
+    on terminal input() so the user can review what was typed, fix anything
+    wrong, and click Submit themselves.
 
-    Strictly serial — one job per cycle, no parallelism. The human can
-    only review one form at a time.
+    Strictly serial — one form at a time. The human can only review one
+    form at a time.
 
-    M-7 wires this into run_cycle and removes process_confirmed_jobs /
-    submit_one_visible / --submit-visible.
+    Two behaviours added by the local-browser rewrite:
+
+      - **Persistent, logged-in browser.** The browser is created once via
+        ``open_browser_context`` — a persistent Chrome profile by default
+        (``JOBPIPE_BROWSER_PROFILE``) so ATS logins persist across runs, a
+        CDP attach when ``JOBPIPE_BROWSER_CDP`` is set, or a cookieless
+        headless launch under ``HEADLESS`` / no display (tests + CI).
+      - **Always-assisted-manual fallback.** EVERY non-success prepare exit
+        (agent ``queue_for_review``, an adapter exception, a non-success
+        result, a page that fails to load) degrades to
+        :func:`assisted_manual_handoff` — tab left open, materials staged
+        locally, a checklist written to the row, status
+        ``awaiting_human_submit`` — instead of a bare failure. Only
+        *pre-browser* preconditions (max attempts, no resume PDF, resume
+        download failure) still hard-fail, because there is no open tab to
+        hand off.
     """
     # Lazy imports so the module stays importable without Playwright
     # installed (e.g. for --status / --test-tailor).
     from playwright.sync_api import sync_playwright
     from jobpipe.shared.ats_detect import detect_ats, get_applicant
     from jobpipe.submit.adapters.prepare_dom.universal import UniversalApplicant
+    from jobpipe.submit.browser.local import open_browser_context, is_headless
     from url_resolver import resolve_application_url
     import json
 
@@ -420,266 +436,254 @@ def process_prefill_requested_jobs():
 
     logger.info(f"Found {len(jobs)} prefill-requested job(s)")
 
-    for job in jobs:
-        job_id = job["id"]
-        company = job.get("company", "Unknown")
-        title = job.get("title", "Unknown")
-        url = (
-            job.get("submission_url")
-            or job.get("application_url")
-            or job.get("url", "")
-        )
-
-        logger.info(f"Pre-filling: {company} — {title}  ({url})")
-
-        # Max-attempts ceiling — mirrors the runner.py:105-109 check so the
-        # local-Playwright path enforces the same per-job retry budget the
-        # legacy Browserbase runner did. Pre-attempt-row exit (no audit
-        # row yet) — same shape as runner.py's pre-attempt-row failures.
-        attempt_n = next_attempt_n(job_id)
-        if attempt_n > MAX_ATTEMPTS_PER_JOB:
-            mark_tailor_failed(
-                job_id,
-                f"exceeded max attempts ({MAX_ATTEMPTS_PER_JOB})",
-                clear_materials=False,
-            )
-            send_failed(job, f"max attempts ({MAX_ATTEMPTS_PER_JOB}) exceeded")
-            continue
-
-        # Resolve aggregator → real ATS once up front (no LLM call).
+    # One browser window for the whole run; a new tab per job (Part 1). The
+    # context owns the window — close it once, after the last job. Individual
+    # tabs are intentionally NOT closed per job here: closing on
+    # success→next belongs to the later verification-loop work.
+    with sync_playwright() as pw:
+        context, close_browser = open_browser_context(pw, headless=is_headless())
         try:
-            resolved = resolve_application_url(url)
-            real_url = resolved.get("resolved") or url
-        except Exception as exc:
-            logger.warning(f"URL resolve failed for {company}: {exc}")
-            real_url = url
+            for job in jobs:
+                _prefill_one_job(
+                    job,
+                    context,
+                    detect_ats=detect_ats,
+                    get_applicant=get_applicant,
+                    UniversalApplicant=UniversalApplicant,
+                    resolve_application_url=resolve_application_url,
+                    json=json,
+                )
+        finally:
+            close_browser()
 
-        applicant = get_applicant(real_url)
-        ats = detect_ats(real_url)
 
-        # Pull resume PDF to a tmp file (ATS uploads need a real path).
-        tmp_resume_pdf = None
-        storage_path = job.get("resume_pdf_path")
-        if not storage_path:
-            raw_resume = job.get("resume_path") or ""
+def _prefill_one_job(job, context, *, detect_ats, get_applicant,
+                     UniversalApplicant, resolve_application_url, json):
+    """Pre-fill one job in a new tab of the shared, logged-in browser.
+
+    Pre-browser preconditions hard-fail (no tab to hand off). Once the tab
+    is open, every non-success exit degrades to an assisted-manual hand-off.
+    """
+    job_id = job["id"]
+    company = job.get("company", "Unknown")
+    title = job.get("title", "Unknown")
+    url = (
+        job.get("submission_url")
+        or job.get("application_url")
+        or job.get("url", "")
+    )
+
+    logger.info(f"Pre-filling: {company} — {title}  ({url})")
+
+    # ── Pre-browser preconditions (hard-fail: no open tab to hand off) ──
+    # Max-attempts ceiling — mirrors the runner.py check so the local path
+    # enforces the same per-job retry budget. Pre-attempt-row exit.
+    attempt_n = next_attempt_n(job_id)
+    if attempt_n > MAX_ATTEMPTS_PER_JOB:
+        mark_tailor_failed(
+            job_id,
+            f"exceeded max attempts ({MAX_ATTEMPTS_PER_JOB})",
+            clear_materials=False,
+        )
+        send_failed(job, f"max attempts ({MAX_ATTEMPTS_PER_JOB}) exceeded")
+        return
+
+    # Resolve aggregator → real ATS once up front (no LLM call).
+    try:
+        resolved = resolve_application_url(url)
+        real_url = resolved.get("resolved") or url
+    except Exception as exc:
+        logger.warning(f"URL resolve failed for {company}: {exc}")
+        real_url = url
+
+    applicant = get_applicant(real_url)
+    ats = detect_ats(real_url)
+
+    # Pull resume PDF to a tmp file (ATS uploads need a real path).
+    tmp_resume_pdf = None
+    storage_path = job.get("resume_pdf_path")
+    if not storage_path:
+        raw_resume = job.get("resume_path") or ""
+        try:
+            meta = json.loads(raw_resume) if raw_resume else {}
+            storage_path = meta.get("storage_path") or meta.get("pdf_path")
+        except Exception:
+            pass
+
+    if not storage_path:
+        mark_tailor_failed(
+            job_id,
+            "Pre-fill: no resume PDF in storage; re-tailor first.",
+            clear_materials=False,
+        )
+        send_failed(job, "Pre-fill blocked: no resume PDF.")
+        return
+
+    try:
+        tmp_resume_pdf = download_to_tmp(storage_path)
+    except Exception as exc:
+        mark_tailor_failed(
+            job_id,
+            f"Pre-fill: resume download failed: {exc}",
+            clear_materials=False,
+        )
+        send_failed(job, f"Pre-fill blocked: {exc}")
+        return
+
+    cover_letter_text = job.get("cover_letter_path") or ""
+
+    # Open the audit row AFTER materials hydration but BEFORE the tab opens —
+    # matches runner.py's ordering so the two paths write equivalent
+    # application_attempts trails. ``adapter`` is the picked applicant's
+    # ``name`` attribute (e.g. ``"greenhouse"``).
+    attempt_id = open_attempt(job_id, attempt_n, adapter=applicant.name)
+    attempt_closed = False
+
+    # New tab in the shared window. Left open across the input() block and
+    # NOT closed on the way out (success or hand-off) — the window is torn
+    # down once at end-of-run.
+    page = context.new_page()
+
+    def _handoff(reason, unfilled=None, screenshot_key=None):
+        """Degrade to assisted-manual: tab open, files staged, checklist."""
+        nonlocal attempt_closed
+        ho = assisted_manual_handoff(page, job, reason, unfilled=unfilled or [])
+        if not attempt_closed:
+            close_attempt(
+                attempt_id,
+                outcome="needs_review",
+                notes={
+                    "assisted_manual": True,
+                    "reason": reason,
+                    "materials_dir": ho.get("materials_dir"),
+                    "prefill_screenshot_path": screenshot_key,
+                },
+            )
+            attempt_closed = True
+        # awaiting_human_submit notification — "human, take over in the tab".
+        send_awaiting_submit(job, screenshot_key)
+        return ho
+
+    try:
+        # ── Navigate ────────────────────────────────────────────────────
+        try:
+            page.goto(real_url, wait_until="domcontentloaded", timeout=45000)
             try:
-                meta = json.loads(raw_resume) if raw_resume else {}
-                storage_path = meta.get("storage_path") or meta.get("pdf_path")
+                page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:
                 pass
-
-        if not storage_path:
-            mark_tailor_failed(
-                job_id,
-                "Pre-fill: no resume PDF in storage; re-tailor first.",
-                clear_materials=False,
-            )
-            send_failed(job, "Pre-fill blocked: no resume PDF.")
-            continue
-
-        try:
-            tmp_resume_pdf = download_to_tmp(storage_path)
         except Exception as exc:
-            mark_tailor_failed(
-                job_id,
-                f"Pre-fill: resume download failed: {exc}",
-                clear_materials=False,
+            # Tab is open on the (failed) URL — hand off rather than fail.
+            _handoff(f"page failed to load: {exc}")
+            _block_for_human()
+            return
+
+        # Per-ATS handlers expose fill_form(page, job, ...).
+        # UniversalApplicant exposes apply_with_page (M-5 helper).
+        if isinstance(applicant, UniversalApplicant):
+            result = applicant.apply_with_page(
+                page, job,
+                resume_path=str(tmp_resume_pdf),
+                cover_letter_path=cover_letter_text,
             )
-            send_failed(job, f"Pre-fill blocked: {exc}")
-            continue
+        else:
+            result = applicant.fill_form(
+                page, job,
+                resume_path=str(tmp_resume_pdf),
+                cover_letter_path=cover_letter_text,
+            )
 
-        cover_letter_text = job.get("cover_letter_path") or ""
-
-        # Open the audit row AFTER materials hydration but BEFORE the
-        # browser launches — matches runner.py's ordering so the two paths
-        # write equivalent application_attempts trails. ``adapter`` is the
-        # picked applicant's ``name`` attribute (e.g. ``"greenhouse"``).
-        attempt_id = open_attempt(job_id, attempt_n, adapter=applicant.name)
-        attempt_closed = False
-
+        # Final post-fill screenshot for the cockpit.
+        screenshot_storage_key = None
         try:
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=False)
-                context = browser.new_context(
-                    viewport={"width": 1280, "height": 900},
-                    user_agent=(
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/121.0 Safari/537.36"
-                    ),
-                )
-                page = context.new_page()
-                try:
-                    page.goto(
-                        real_url, wait_until="domcontentloaded", timeout=45000
-                    )
-                    try:
-                        page.wait_for_load_state("networkidle", timeout=10000)
-                    except Exception:
-                        pass
-                except Exception as exc:
-                    browser.close()
-                    mark_tailor_failed(
-                        job_id,
-                        f"Pre-fill: page load failed: {exc}",
-                        clear_materials=False,
-                    )
-                    close_attempt(
-                        attempt_id,
-                        outcome="failed",
-                        notes={"error": f"page load failed: {exc}"},
-                    )
-                    attempt_closed = True
-                    send_failed(job, f"Pre-fill page load failed: {exc}")
-                    continue
-
-                # Per-ATS handlers expose fill_form(page, job, ...).
-                # UniversalApplicant exposes apply_with_page (M-5 helper).
-                if isinstance(applicant, UniversalApplicant):
-                    result = applicant.apply_with_page(
-                        page,
-                        job,
-                        resume_path=str(tmp_resume_pdf),
-                        cover_letter_path=cover_letter_text,
-                    )
-                else:
-                    result = applicant.fill_form(
-                        page,
-                        job,
-                        resume_path=str(tmp_resume_pdf),
-                        cover_letter_path=cover_letter_text,
-                    )
-
-                # Final post-fill screenshot for the cockpit. Persist via
-                # Storage so the dashboard can render it via signed URL.
-                screenshot_storage_key = None
-                try:
-                    png_bytes = page.screenshot(full_page=False)
-                    screenshot_storage_key = upload_prefill_screenshot(
-                        job_id, png_bytes
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        f"Could not upload prefill screenshot: {exc}"
-                    )
-
-                bar = "=" * 60
-                if result.get("success"):
-                    mark_awaiting_submit(
-                        job_id, screenshot_path=screenshot_storage_key
-                    )
-                    # Close the audit row BEFORE the input() block so the
-                    # dashboard sees ``outcome`` immediately — even if the
-                    # human takes minutes to come back and press Enter.
-                    # ``outcome="submitted"`` here means "the adapter
-                    # completed pre-fill cleanly," NOT that the application
-                    # was submitted to the company; the runner uses the
-                    # same convention. ``applied`` only flips when the
-                    # human clicks Mark Applied in the cockpit (M-2).
-                    close_attempt(
-                        attempt_id,
-                        outcome="submitted",
-                        notes={
-                            "prefill_screenshot_path": screenshot_storage_key,
-                            "filled_fields": result.get("fields_filled"),
-                            "notes": result.get("notes"),
-                        },
-                    )
-                    attempt_closed = True
-                    send_awaiting_submit(job, screenshot_storage_key)
-                    print(
-                        f"\n{bar}\n"
-                        f"  Form pre-filled for {company} - {title}\n"
-                        f"  ATS: {ats}  ({type(applicant).__name__})\n"
-                        f"  Browser is open. Review what was typed, click "
-                        f"Submit yourself,\n"
-                        f"  then come back to the dashboard and click "
-                        f"'Mark Applied'.\n"
-                        f"  Press Enter in this terminal to close the browser "
-                        f"when done.\n"
-                        f"{bar}"
-                    )
-                else:
-                    fail_notes = result.get("notes") or result.get(
-                        "review_reason"
-                    ) or "pre-fill did not complete cleanly"
-                    mark_tailor_failed(
-                        job_id,
-                        f"Pre-fill: {fail_notes}",
-                        clear_materials=False,
-                    )
-                    # Parity with the success branch: persist the
-                    # post-fill screenshot key on the jobs row even on
-                    # failure, so the cockpit's failure banner can
-                    # render the same diagnostic surface as the
-                    # success banner. Done as a separate update_job_status
-                    # call rather than threaded through mark_tailor_failed
-                    # because that helper's existing screenshot_path
-                    # kwarg writes to the legacy ``review_screenshot``
-                    # column, not ``prefill_screenshot_path`` (preserved
-                    # for back-compat with M-2 callers).
-                    if screenshot_storage_key:
-                        update_job_status(
-                            job_id, "failed",
-                            prefill_screenshot_path=screenshot_storage_key,
-                        )
-                    close_attempt(
-                        attempt_id,
-                        outcome="failed",
-                        notes={
-                            "error": fail_notes,
-                            "prefill_screenshot_path": screenshot_storage_key,
-                        },
-                    )
-                    attempt_closed = True
-                    send_failed(job, fail_notes)
-                    print(
-                        f"\n{bar}\n"
-                        f"  Pre-fill failed for {company} - {title}: "
-                        f"{fail_notes}\n"
-                        f"  Browser is still open — manually fix the form "
-                        f"and click Submit yourself if you want.\n"
-                        f"  Press Enter in this terminal to close the browser "
-                        f"when done.\n"
-                        f"{bar}"
-                    )
-
-                # ── BLOCK on terminal input() so the browser stays open ─
-                # The human reviews the visible browser, fixes anything
-                # wrong, clicks Submit themselves (or copy-pastes from
-                # the cockpit's form-answer drafts), then comes back here
-                # and presses Enter. The cockpit's "Mark Applied" click
-                # is what flips status to applied — never this code.
-                try:
-                    input()
-                except (EOFError, KeyboardInterrupt):
-                    pass
-
-                browser.close()
-
+            png_bytes = page.screenshot(full_page=False)
+            screenshot_storage_key = upload_prefill_screenshot(job_id, png_bytes)
         except Exception as exc:
-            logger.exception(f"Pre-fill failed for {company}: {exc}")
-            mark_tailor_failed(
-                job_id,
-                f"Pre-fill exception: {exc}",
-                clear_materials=False,
+            logger.warning(f"Could not upload prefill screenshot: {exc}")
+
+        bar = "=" * 60
+        if result.get("success"):
+            mark_awaiting_submit(job_id, screenshot_path=screenshot_storage_key)
+            # Close the audit row BEFORE the input() block so the dashboard
+            # sees ``outcome`` immediately. ``outcome="submitted"`` means the
+            # adapter pre-filled cleanly — NOT that the app was submitted;
+            # ``applied`` only flips when the human clicks Mark Applied.
+            close_attempt(
+                attempt_id,
+                outcome="submitted",
+                notes={
+                    "prefill_screenshot_path": screenshot_storage_key,
+                    "filled_fields": result.get("fields_filled"),
+                    "notes": result.get("notes"),
+                },
             )
+            attempt_closed = True
+            send_awaiting_submit(job, screenshot_storage_key)
+            print(
+                f"\n{bar}\n"
+                f"  Form pre-filled for {company} - {title}\n"
+                f"  ATS: {ats}  ({type(applicant).__name__})\n"
+                f"  Browser is open. Review what was typed, click "
+                f"Submit yourself,\n"
+                f"  then come back to the dashboard and click "
+                f"'Mark Applied'.\n"
+                f"  Press Enter in this terminal to continue.\n"
+                f"{bar}"
+            )
+        else:
+            # Non-success result (e.g. agent queue_for_review, or a fill that
+            # left required fields empty) → assisted-manual hand-off.
+            reason = (
+                result.get("review_reason")
+                or result.get("notes")
+                or "pre-fill did not complete cleanly"
+            )
+            _handoff(
+                reason,
+                unfilled=result.get("uncertain_fields"),
+                screenshot_key=screenshot_storage_key,
+            )
+
+        _block_for_human()
+
+    except Exception as exc:
+        # Adapter / dispatch exception — the tab is open, so hand off rather
+        # than emit a bare failure.
+        logger.exception(f"Pre-fill exception for {company}: {exc}")
+        try:
+            _handoff(f"adapter exception: {exc}")
+        except Exception:
+            logger.exception("assisted_manual_handoff failed for %s", job_id)
             if not attempt_closed:
                 try:
                     close_attempt(
-                        attempt_id,
-                        outcome="failed",
+                        attempt_id, outcome="failed",
                         notes={"error": str(exc)},
                     )
                 except Exception:
                     logger.exception("close_attempt failed for %s", job_id)
-            send_failed(job, str(exc))
-        finally:
-            if tmp_resume_pdf is not None:
-                try:
-                    Path(tmp_resume_pdf).unlink(missing_ok=True)
-                except Exception:
-                    pass
+        _block_for_human()
+    finally:
+        if tmp_resume_pdf is not None:
+            try:
+                Path(tmp_resume_pdf).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def _block_for_human():
+    """BLOCK on terminal input() so the open tab stays visible for review.
+
+    The human reviews the visible tab, fixes anything wrong, clicks Submit
+    themselves (or pastes from the cockpit's form-answer drafts / the staged
+    hand-off files), then presses Enter to move to the next job. The
+    cockpit's "Mark Applied" click is what flips status to applied — never
+    this code.
+    """
+    try:
+        input()
+    except (EOFError, KeyboardInterrupt):
+        pass
 
 
 def run_cycle():

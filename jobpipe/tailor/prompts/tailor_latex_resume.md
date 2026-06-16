@@ -62,13 +62,24 @@ YOUR TASK — respond with a JSON object containing:
 4. "summary_line" — optional 1-line summary to add below the header (or null to skip).
    If included, write it in Vishal's voice: direct, technical, no fluff.
 
+ONE PAGE IS MANDATORY. The resume MUST fit on a single page. Budget the
+content so it does — a downstream trim loop will mechanically drop bullets
+if you overflow, but it can only cut, so anything past these caps just gets
+deleted (losing content you chose). Target one page directly:
+- Show at most 3 experience entries (projects) total across all employers,
+  ordered most-relevant first.
+- At most 4 bullets per entry.
+- Each bullet ≤ 2 printed lines (roughly ≤ 200 characters).
+- The optional "summary_line" is ≤ 2 lines, or null (omit it when in doubt).
+- Keep skills compact: 4-5 categories, comma-separated.
+
 RULES:
 - GTRI projects you can include or exclude based on relevance. Always include at least
   SPARSE and one other. Drop projects that add no value for this specific role.
 - Rain Neuromorphics should always be included.
 - Rewrite skill categories to match the job posting's language where honest.
 - Bullets should be specific and technical. No vague claims.
-- Keep the resume to 1 page worth of content (roughly 15-20 bullets total max).
+- Keep the resume to 1 page worth of content — see the mandatory caps above.
 - Do NOT add projects, employers, or skills that don't exist in the base data.
 
 Respond with valid JSON only, no markdown.

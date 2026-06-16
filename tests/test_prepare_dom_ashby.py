@@ -166,3 +166,93 @@ def test_preserves_query_string(monkeypatch, stub_job):
         target
         == "https://jobs.ashbyhq.com/far.ai/abc123/application?embed=js"
     )
+
+
+# ── Part A: data-driven field-fill parity ──────────────────────────────────
+
+class _FillLocator:
+    def __init__(self, selector, page, *, visible=False, count=0):
+        self.selector, self.page = selector, page
+        self.visible, self._count = visible, count
+
+    @property
+    def first(self):
+        return self
+
+    def is_visible(self, timeout: int = 1000) -> bool:
+        return self.visible
+
+    def count(self) -> int:
+        return self._count
+
+    def click(self) -> None:
+        pass
+
+    def fill(self, value: str) -> None:
+        self.page.fills.append((self.selector, value))
+
+    def set_input_files(self, file_path: str) -> None:
+        self.page.uploads.append((self.selector, file_path))
+
+
+class _FillPage:
+    def __init__(self, behaviors,
+                 url="https://jobs.ashbyhq.com/acme/123/application"):
+        self.behaviors, self.url = behaviors, url
+        self.fills: list = []
+        self.uploads: list = []
+        self.goto_calls: list = []
+
+    def goto(self, target, **kw):
+        self.goto_calls.append((target, kw))
+        self.url = target
+
+    def wait_for_load_state(self, *a, **k):
+        return None
+
+    def locator(self, selector):
+        return _FillLocator(selector, self, **self.behaviors.get(selector, {}))
+
+
+def test_ashby_fills_via_label_and_fuzzy_fallbacks(monkeypatch, tmp_path):
+    """Ashby has no name map — text fields resolve via label selectors or the
+    fuzzy ``input[name*=...]`` fallback. Here the fuzzy first-name selector is
+    visible, proving the data-driven chain still reaches it."""
+    _patch_screenshot(monkeypatch)
+    resume = tmp_path / "r.pdf"
+    resume.write_bytes(b"%PDF fake")
+    page = _FillPage({
+        'input[name*="first_name"]': {"visible": True},
+        'input[aria-label="Email"]': {"visible": True},
+        'input[type="tel"]:visible': {"visible": True},
+        'input[type="file"]': {"count": 1},
+        'textarea[name*="cover" i]': {"visible": True},
+    })
+    job = {"id": "ash-1", "form_answers": {
+        "first_name": "Test", "last_name": "Applicant",
+        "email": "t@e.invalid", "phone": "+1-555-0100",
+    }}
+
+    result = AshbyApplicant().fill_form(
+        page, job, resume_path=str(resume), cover_letter_path="x" * 250,
+    )
+
+    assert result["success"] is True
+    assert ('input[name*="first_name"]', "Test") in page.fills
+    assert "First Name" in result["fields_filled"]
+    assert "Email" in result["fields_filled"]
+    assert "Uploaded resume" in result["notes"]
+    assert "Pasted cover letter" in result["notes"]
+
+
+def test_ashby_required_empty_surfaced(monkeypatch):
+    _patch_screenshot(monkeypatch)
+    page = _FillPage({})  # nothing visible
+    job = {"id": "ash-2", "form_answers": {
+        "first_name": "Test", "email": "t@e.invalid",
+    }}
+
+    result = AshbyApplicant().fill_form(page, job)
+
+    for label in ("First Name", "Email", "Phone", "Resume"):
+        assert label in result["required_empty"]

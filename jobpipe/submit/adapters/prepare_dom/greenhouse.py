@@ -31,83 +31,22 @@ cockpit copy buttons. The PR-7 helper
 note.
 
 PR-7 history: shared sync Playwright helpers moved to
-``prepare_dom/_common.py``. This file keeps Greenhouse-specific knowledge:
-the ``_GREENHOUSE_NAME_MAP`` (canonical input ``name`` per label) plus the
-Greenhouse-specific resume/cover-letter selector lists. The
-``BaseApplicant`` import is now the explicit
+``prepare_dom/_common.py``. Part A (#3) then moved the Greenhouse field
+*definitions* — the canonical input ``name`` per label, the phone selector
+chain, the resume/cover-letter selector lists — out of this file and into
+``field_maps.yml`` under the ``greenhouse`` key. This adapter is now thin:
+load the spec list, build the value map, call ``apply_field_map``. The
+``BaseApplicant`` import is the explicit
 ``jobpipe.submit.adapters.applicant_base`` path.
 """
 
 import logging
 import time
-from pathlib import Path
 
 from jobpipe.submit.adapters.applicant_base import BaseApplicant
-from ._common import (
-    build_field_map,
-    fill_text,
-    label_selectors,
-    load_cover_letter,
-    name_attr_selectors,
-    note_unfilled_custom_questions,
-    paste_textarea,
-    upload_file,
-)
+from .field_maps import run_field_map_fill
 
 logger = logging.getLogger("prepare_dom.greenhouse")
-
-
-# Greenhouse form fields are prefixed ``job_application[...]`` so the
-# selector strategy is name-attr-first, label-second.
-_GREENHOUSE_NAME_MAP = {
-    "First Name": "job_application[first_name]",
-    "Last Name": "job_application[last_name]",
-    "Email": "job_application[email]",
-    "Phone": "job_application[phone]",
-    "LinkedIn URL": "job_application[urls][LinkedIn]",
-    "LinkedIn": "job_application[urls][LinkedIn]",
-    "GitHub URL": "job_application[urls][GitHub]",
-    "GitHub": "job_application[urls][GitHub]",
-    "Portfolio": "job_application[urls][Portfolio]",
-    "Website": "job_application[urls][Website]",
-    "Current Company": "job_application[company]",
-    "Current Title": "job_application[title]",
-    "Location": "job_application[location]",
-    "Current Location": "job_application[location]",
-    "City": "job_application[location]",
-}
-
-# Phone selector chain for Greenhouse. Leads with
-# ``input[type="tel"]:visible`` because intl-tel-input (used on the
-# Anthropic Fellows form, among others) wraps the real <input type="tel">
-# in a parent that also contains a hidden country-search input. The
-# generic label_selectors chain can match that hidden input first via
-# DOM order, leaving the real tel field empty. The :visible suffix
-# avoids the hidden iti-search match and ``type="tel"`` is
-# semantically the right anchor — name= / id= / aria-label= follow as
-# per-form fallbacks (the canonical Greenhouse name first, then a
-# generic ``id="phone"`` for forms that don't follow that scheme).
-_GREENHOUSE_PHONE_SELECTORS = [
-    'input[type="tel"]:visible',
-    'input[name="job_application[phone]"]',
-    'input[id="phone"]',
-    'input[aria-label="Phone"]',
-]
-
-_GREENHOUSE_RESUME_SELECTORS = [
-    'input[type="file"][name="job_application[resume]"]',
-    'input[type="file"][name*="resume" i]',
-    'input[type="file"][accept*=".pdf"]',
-    'input[type="file"]',
-]
-
-_GREENHOUSE_COVER_LETTER_SELECTORS = [
-    'textarea[name="job_application[cover_letter]"]',
-    'textarea[name*="cover" i]',
-    'textarea[aria-label*="cover" i]',
-    'textarea[placeholder*="cover" i]',
-    "textarea",
-]
 
 
 class GreenhouseApplicant(BaseApplicant):
@@ -137,79 +76,34 @@ class GreenhouseApplicant(BaseApplicant):
         resume_path: str = None,
         cover_letter_path: str = None,
     ) -> dict:
-        """Fill a Greenhouse application form from ``job["form_answers"]``."""
-        filled = []
-        notes_parts = []
+        """Fill a Greenhouse application form from ``job["form_answers"]``.
 
+        Greenhouse loads the form directly on the canonical job URL — no
+        overview-to-form hop — so this adapter just waits for the page then
+        runs the data-driven fill. Field definitions live in
+        ``field_maps.yml`` under ``greenhouse``. Custom questions are NOT
+        auto-filled (``note_custom_questions=True`` surfaces the operator
+        note); they live in ``form_answers.additional_questions`` and the
+        human pastes them from the cockpit.
+        """
         try:
             page.wait_for_load_state("networkidle", timeout=15000)
             time.sleep(1)
 
-            field_map = build_field_map(job)
-            for label_text, value in field_map.items():
-                if not value:
-                    continue
-                if label_text == "Phone":
-                    selectors = (
-                        _GREENHOUSE_PHONE_SELECTORS
-                        + label_selectors(label_text)
-                    )
-                else:
-                    selectors = (
-                        name_attr_selectors(_GREENHOUSE_NAME_MAP, label_text)
-                        + label_selectors(label_text)
-                    )
-                if fill_text(page, selectors, value, log=logger):
-                    filled.append(label_text)
-
-            notes_parts.append(
-                f"Filled fields: {', '.join(filled) if filled else 'none'}"
+            return run_field_map_fill(
+                self, page, job, "greenhouse",
+                screenshot_label=f"greenhouse_{job.get('id', 'unknown')}",
+                resume_path=resume_path,
+                cover_letter_path=cover_letter_path,
+                note_custom_questions=True,
+                log=logger,
             )
-
-            # Resume upload
-            if resume_path and Path(resume_path).exists():
-                if upload_file(page, _GREENHOUSE_RESUME_SELECTORS, resume_path, log=logger):
-                    notes_parts.append(
-                        f"Uploaded resume: {Path(resume_path).name}"
-                    )
-                else:
-                    notes_parts.append("Resume upload: no file input found")
-            elif resume_path:
-                notes_parts.append(f"Resume path not found: {resume_path}")
-
-            # Cover letter
-            if cover_letter_path:
-                cover_text = load_cover_letter(cover_letter_path)
-                if cover_text and paste_textarea(
-                    page, _GREENHOUSE_COVER_LETTER_SELECTORS, cover_text, log=logger
-                ):
-                    notes_parts.append("Pasted cover letter")
-                elif cover_text:
-                    notes_parts.append("Cover letter: no textarea found")
-
-            # Custom questions are intentionally NOT auto-filled here.
-            # They live in form_answers.additional_questions; the human
-            # pastes them from the cockpit via copy buttons.
-            note_unfilled_custom_questions(job, notes_parts)
-
-            screenshot_path = self.take_screenshot(
-                page, label=f"greenhouse_{job.get('id', 'unknown')}"
-            )
-            notes_parts.append(f"Screenshot: {screenshot_path}")
-
-            return {
-                "success": len(filled) > 0,
-                "screenshot_path": screenshot_path,
-                "notes": "\n".join(notes_parts),
-                "fields_filled": filled,
-            }
 
         except Exception as e:
             logger.error(f"Greenhouse form fill error: {e}")
             return {
                 "success": False,
-                "notes": (
-                    f"Error during form fill: {e}\n"
-                    f"Partial: {', '.join(notes_parts)}"
-                ),
+                "notes": f"Error during form fill: {e}",
+                "fields_filled": [],
+                "required_empty": [],
             }

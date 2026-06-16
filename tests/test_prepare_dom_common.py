@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-import pytest
-
 from jobpipe.submit.adapters.prepare_dom._common import (
     build_field_map,
     fill_text,
@@ -21,6 +19,7 @@ from jobpipe.submit.adapters.prepare_dom._common import (
     name_attr_selectors,
     note_unfilled_custom_questions,
     paste_textarea,
+    select_option,
     upload_file,
 )
 
@@ -69,6 +68,10 @@ class _StubLocator:
         self.uploaded = file_path
         self.page.uploads.append((self.selector, file_path))
 
+    def select_option(self, value: str) -> None:
+        self.selected = value
+        self.page.selects.append((self.selector, value))
+
 
 class _StubPage:
     """A page where each selector resolves to a pre-configured locator.
@@ -81,6 +84,7 @@ class _StubPage:
         self.behaviors = behaviors
         self.fills: list[tuple[str, str]] = []
         self.uploads: list[tuple[str, str]] = []
+        self.selects: list[tuple[str, str]] = []
         self.locator_calls: list[str] = []
 
     def locator(self, selector: str) -> _StubLocator:
@@ -168,8 +172,9 @@ def test_phone_selectors_pick_visible_tel_before_label_chain():
     have won. The assertion is that only the tel selector got filled
     and the label fallback was never reached.
     """
-    from jobpipe.submit.adapters.prepare_dom.greenhouse import (
-        _GREENHOUSE_PHONE_SELECTORS,
+    from jobpipe.submit.adapters.prepare_dom.field_maps import (
+        _selectors_for,
+        load_field_map,
     )
 
     page = _StubPage({
@@ -183,7 +188,12 @@ def test_phone_selectors_pick_visible_tel_before_label_chain():
         'label:has-text("Phone") input': {"visible": True},
     })
 
-    full_chain = _GREENHOUSE_PHONE_SELECTORS + label_selectors("Phone")
+    # The phone chain now comes from the greenhouse field map, not a module
+    # constant — build it exactly as apply_field_map would.
+    phone_spec = next(
+        s for s in load_field_map("greenhouse") if s["key"] == "Phone"
+    )
+    full_chain = _selectors_for(phone_spec, "Phone", "text")
     ok = fill_text(page, full_chain, "+1-555-0100")
 
     assert ok is True
@@ -194,28 +204,21 @@ def test_phone_selectors_pick_visible_tel_before_label_chain():
 
 
 def test_phone_selectors_canonical_order_per_ats():
-    """The three per-ATS phone selector chains all lead with
+    """The three per-ATS phone specs all lead with
     ``input[type="tel"]:visible`` (the intl-tel-input anchor) so the
     fix has uniform shape across Greenhouse, Lever, and Ashby. Per-ATS
     fallbacks differ (Greenhouse pins ``name="job_application[phone]"``,
     Lever pins ``name="phone"``, Ashby has no canonical name and skips
-    that step) — verify the leading selector is identical.
+    that step) — verify the leading selector is identical. The chains now
+    live in ``field_maps.yml`` rather than per-module constants.
     """
-    from jobpipe.submit.adapters.prepare_dom.greenhouse import (
-        _GREENHOUSE_PHONE_SELECTORS,
-    )
-    from jobpipe.submit.adapters.prepare_dom.lever import (
-        _LEVER_PHONE_SELECTORS,
-    )
-    from jobpipe.submit.adapters.prepare_dom.ashby import (
-        _ASHBY_PHONE_SELECTORS,
-    )
+    from jobpipe.submit.adapters.prepare_dom.field_maps import load_field_map
 
-    for selectors in (
-        _GREENHOUSE_PHONE_SELECTORS,
-        _LEVER_PHONE_SELECTORS,
-        _ASHBY_PHONE_SELECTORS,
-    ):
+    for ats in ("greenhouse", "lever", "ashby"):
+        phone_spec = next(
+            s for s in load_field_map(ats) if s["key"] == "Phone"
+        )
+        selectors = phone_spec["selectors"]
         assert selectors[0] == 'input[type="tel"]:visible'
         assert 'input[id="phone"]' in selectors
         assert 'input[aria-label="Phone"]' in selectors
@@ -267,6 +270,36 @@ def test_paste_textarea_returns_false_when_no_visible_textarea():
     page = _StubPage({"textarea": {"visible": False}})
     ok = paste_textarea(page, ["textarea"], "ignored")
     assert ok is False
+
+
+# ── select_option ──────────────────────────────────────────────────────────
+
+def test_select_option_selects_first_visible_match():
+    page = _StubPage({
+        "select-a": {"visible": False},
+        "select-b": {"visible": True},
+    })
+    ok = select_option(page, ["select-a", "select-b"], "LinkedIn")
+    assert ok is True
+    assert page.selects == [("select-b", "LinkedIn")]
+    assert page.locator_calls == ["select-a", "select-b"]
+
+
+def test_select_option_returns_false_when_no_visible_select():
+    page = _StubPage({"select-a": {"visible": False}})
+    ok = select_option(page, ["select-a"], "ignored")
+    assert ok is False
+    assert page.selects == []
+
+
+def test_select_option_swallows_per_selector_exceptions():
+    page = _StubPage({
+        "select-a": {"raise_on_visible": True},
+        "select-b": {"visible": True},
+    })
+    ok = select_option(page, ["select-a", "select-b"], "X")
+    assert ok is True
+    assert page.selects == [("select-b", "X")]
 
 
 # ── load_cover_letter ──────────────────────────────────────────────────────

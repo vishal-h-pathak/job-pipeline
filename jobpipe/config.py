@@ -147,6 +147,14 @@ BROWSERBASE_PROJECT_ID: Final[str] = os.environ.get("BROWSERBASE_PROJECT_ID", ""
 POLL_INTERVAL_SECONDS: Final[int] = int(os.environ.get("POLL_INTERVAL_SECONDS", "60"))
 POLL_INTERVAL_MINUTES: Final[int] = int(os.environ.get("POLL_INTERVAL_MINUTES", "120"))
 
+# Stop-and-wait advance (Part B): how often the local submit loop re-reads the
+# jobs row to see whether the human flipped it to a terminal decision
+# (applied / skipped) in the dashboard. The tab stays open and nothing
+# auto-advances until then.
+SUBMIT_POLL_INTERVAL_SECONDS: Final[int] = int(
+    os.environ.get("SUBMIT_POLL_INTERVAL_SECONDS", "5")
+)
+
 
 # ── Submitter policy knobs ────────────────────────────────────────────────
 MAX_CONCURRENT_SUBMISSIONS: Final[int] = int(os.environ.get("MAX_CONCURRENT_SUBMISSIONS", "1"))

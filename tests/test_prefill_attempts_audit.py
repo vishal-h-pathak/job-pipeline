@@ -24,7 +24,6 @@ imports inside the function body (Playwright via ``sys.modules``,
 
 from __future__ import annotations
 
-import builtins
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -67,6 +66,7 @@ class _FakePage:
 
     def __init__(self):
         self._goto_called = False
+        self.closed = False
 
     def goto(self, url, wait_until=None, timeout=None):
         self._goto_called = True
@@ -76,6 +76,9 @@ class _FakePage:
 
     def screenshot(self, full_page=False):
         return b"\x89PNG_FAKE"
+
+    def close(self):
+        self.closed = True
 
 
 class _FakeBrowser:
@@ -221,7 +224,7 @@ def _stub_pipeline_surface(monkeypatch, *, applicant, call_log: list,
     # covered by tests/test_prefill_assisted_handoff.py). This test only cares
     # that a non-success exit routes through the hand-off and the attempt row
     # still closes (as needs_review) before the input() block.
-    def _handoff_stub(page, job, reason, unfilled=None):
+    def _handoff_stub(page, job, reason, unfilled=None, summary=None):
         call_log.append(("handoff", reason))
         return {
             "handoff": True,
@@ -233,6 +236,12 @@ def _stub_pipeline_surface(monkeypatch, *, applicant, call_log: list,
         }
 
     monkeypatch.setattr(p, "assisted_manual_handoff", _handoff_stub)
+
+    # Part B verification write — record-only (no DB).
+    monkeypatch.setattr(
+        p, "record_prefill_verification",
+        lambda jid, v: call_log.append(("record_verification", jid)),
+    )
 
     # Storage.
     monkeypatch.setattr(p, "download_to_tmp", lambda key: tmp_resume_path)
@@ -253,10 +262,13 @@ def _stub_pipeline_surface(monkeypatch, *, applicant, call_log: list,
                      "notes": "ok"},
     )
 
-    # input() block — must fire AFTER close_attempt.
+    # Stop-and-wait advance (Part B): the loop now polls the row instead of
+    # blocking on input(). Returning a terminal status resolves the wait on
+    # the first poll; record the poll so tests can assert it fires AFTER
+    # close_attempt (replacing the old input() ordering marker).
     monkeypatch.setattr(
-        builtins, "input",
-        lambda *a, **kw: call_log.append(("input",)),
+        p, "get_job",
+        lambda jid: call_log.append(("wait_poll", jid)) or {"id": jid, "status": "applied"},
     )
 
     return p
@@ -307,11 +319,14 @@ def test_success_branch_closes_attempt_with_submitted_before_input(
 
     ops = [entry[0] for entry in call_log]
 
-    # Order invariant: next_attempt_n → open_attempt → close_attempt → input.
+    # Order invariant: next_attempt_n → open_attempt → close_attempt →
+    # wait_poll (the stop-and-wait advance, replacing the old input() block).
     assert ops.index("next_attempt_n") < ops.index("open_attempt") \
-        < ops.index("close_attempt") < ops.index("input"), (
+        < ops.index("close_attempt") < ops.index("wait_poll"), (
         f"audit-row sequence wrong; ops={ops}"
     )
+    # Advance closed the tab once the human flipped the row to applied.
+    assert fake_page.closed is True
 
     # open_attempt invoked with the applicant's name attribute.
     open_call = next(c for c in call_log if c[0] == "open_attempt")
@@ -358,12 +373,13 @@ def test_failure_branch_degrades_to_assisted_manual_handoff(
     ops = [entry[0] for entry in call_log]
 
     # Ordering invariant: next_attempt_n → open_attempt → handoff →
-    # close_attempt → input.
+    # close_attempt → wait_poll (stop-and-wait advance).
     assert ops.index("next_attempt_n") < ops.index("open_attempt") \
         < ops.index("handoff") < ops.index("close_attempt") \
-        < ops.index("input"), (
+        < ops.index("wait_poll"), (
         f"assisted-manual sequence wrong; ops={ops}"
     )
+    assert fake_page.closed is True
 
     # Hand-off ran with the adapter's reason.
     handoff_call = next(c for c in call_log if c[0] == "handoff")

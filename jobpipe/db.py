@@ -353,7 +353,8 @@ def mark_prefilling(job_id: str) -> dict:
     return update_job_status(job_id, "prefilling")
 
 
-def mark_awaiting_submit(job_id: str, screenshot_path: str = None) -> dict:
+def mark_awaiting_submit(job_id: str, screenshot_path: str = None,
+                         application_notes: str = None) -> dict:
     """Per-ATS handler finished filling the form. Browser stays open in
     the user's view; they review, click Submit themselves, then come
     back to the cockpit and click "Mark Applied".
@@ -362,13 +363,36 @@ def mark_awaiting_submit(job_id: str, screenshot_path: str = None) -> dict:
         screenshot_path: Supabase Storage key for the post-prefill
             screenshot the cockpit renders. Persisted to
             ``prefill_screenshot_path`` (M-3 column).
+        application_notes: Part B verification summary ("filled X of Y;
+            still needs: ...") for the cockpit to render next to the
+            "Submitted ✓ → Next" button.
     """
     extras: dict[str, Any] = {
         "prefill_completed_at": _utcnow(),
     }
     if screenshot_path:
         extras["prefill_screenshot_path"] = screenshot_path
+    if application_notes:
+        extras["application_notes"] = application_notes
     return update_job_status(job_id, "awaiting_human_submit", **extras)
+
+
+def record_prefill_verification(job_id: str, verification: dict) -> None:
+    """Persist the Part B post-fill verification count to ``jobs.submission_log``
+    (existing jsonb column) so the cockpit can render "filled X of Y" as a
+    structured value, not just the free-text ``application_notes`` summary.
+
+    Deliberately does NOT touch status or application_notes — those are written
+    by ``mark_awaiting_submit`` (success) / ``assisted_manual_handoff``
+    (degraded). Best-effort: a write hiccup must not derail the pre-fill, which
+    has already left a reviewable tab open.
+    """
+    try:
+        _get_client().table("jobs").update(
+            {"submission_log": {"verification": verification}}
+        ).eq("id", job_id).execute()
+    except Exception as exc:  # noqa: BLE001 — never raise out of the prefill path
+        logger.warning("record_prefill_verification failed for %s: %s", job_id, exc)
 
 
 def mark_skipped(job_id: str, reason: str = None) -> dict:

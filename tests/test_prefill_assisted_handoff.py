@@ -171,6 +171,12 @@ def _wire(monkeypatch, *, applicant, tmp_path):
         h, "update_job_status",
         lambda jid, status, **extra: status_calls.append((jid, status, extra)),
     )
+
+    # Part B: the loop polls the row to advance instead of blocking on input().
+    # Return a terminal decision so the wait resolves on the first poll and
+    # closes the tab. record_prefill_verification is a no-op DB write here.
+    monkeypatch.setattr(p, "get_job", lambda jid: {"id": jid, "status": "applied"})
+    monkeypatch.setattr(p, "record_prefill_verification", lambda jid, v: None)
     return p, status_calls, closes
 
 
@@ -210,8 +216,10 @@ def test_non_success_result_degrades_to_handoff(monkeypatch, tmp_path):
     assert "ASSISTED-MANUAL" in extra["application_notes"].upper()
     assert "work_authorization" in extra["application_notes"]
 
-    # Tab left OPEN.
-    assert page.closed is False
+    # The hand-off itself leaves the tab OPEN; the stop-and-wait advance then
+    # closes it once the human flips the row to a terminal decision (the fake
+    # get_job returns "applied" immediately here).
+    assert page.closed is True
 
     # Materials staged locally for drag-in.
     folder = tmp_path / "handoff" / "Acme_ho-1"
@@ -239,7 +247,8 @@ def test_adapter_exception_degrades_to_handoff(monkeypatch, tmp_path):
     assert status == "awaiting_human_submit"
     assert "selector blew up" in extra["application_notes"]
 
-    # Tab left OPEN even though the adapter threw.
-    assert page.closed is False
+    # Tab handed off open even though the adapter threw; the stop-and-wait
+    # advance closes it after the human decision (fake get_job -> applied).
+    assert page.closed is True
     # Attempt row closed, not a bare failure.
     assert closes and closes[-1][0] == "needs_review"

@@ -56,6 +56,7 @@ del _sys, _Path, _TAILOR_DIR
 import argparse  # noqa: E402
 import logging  # noqa: E402
 import sys  # noqa: E402
+import time  # noqa: E402
 from datetime import datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -63,6 +64,7 @@ from jobpipe.config import (  # noqa: E402
     POLL_INTERVAL_MINUTES,
     HUMAN_APPROVAL_REQUIRED,
     MAX_ATTEMPTS_PER_JOB,
+    SUBMIT_POLL_INTERVAL_SECONDS,
 )
 from jobpipe.db import (  # noqa: E402
     get_approved_jobs,
@@ -78,6 +80,7 @@ from jobpipe.db import (  # noqa: E402
     next_attempt_n,
     open_attempt,
     close_attempt,
+    record_prefill_verification,
 )
 from tailor.resume import tailor_resume  # noqa: E402
 from tailor.cover_letter import generate_cover_letter  # noqa: E402
@@ -94,6 +97,7 @@ from jobpipe.notify import (  # noqa: E402  PR-8: canonical send_* names
 )
 from jobpipe.shared.storage import download_to_tmp  # noqa: E402
 from jobpipe.submit.handoff import assisted_manual_handoff  # noqa: E402
+from jobpipe.submit.verify import build_prefill_verification  # noqa: E402
 from storage import (  # noqa: E402
     upload_pdf,
     upload_prefill_screenshot,
@@ -544,10 +548,12 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
     # down once at end-of-run.
     page = context.new_page()
 
-    def _handoff(reason, unfilled=None, screenshot_key=None):
+    def _handoff(reason, unfilled=None, screenshot_key=None, summary=None):
         """Degrade to assisted-manual: tab open, files staged, checklist."""
         nonlocal attempt_closed
-        ho = assisted_manual_handoff(page, job, reason, unfilled=unfilled or [])
+        ho = assisted_manual_handoff(
+            page, job, reason, unfilled=unfilled or [], summary=summary,
+        )
         if not attempt_closed:
             close_attempt(
                 attempt_id,
@@ -557,6 +563,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                     "reason": reason,
                     "materials_dir": ho.get("materials_dir"),
                     "prefill_screenshot_path": screenshot_key,
+                    "verification": summary,
                 },
             )
             attempt_closed = True
@@ -575,7 +582,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
         except Exception as exc:
             # Tab is open on the (failed) URL — hand off rather than fail.
             _handoff(f"page failed to load: {exc}")
-            _block_for_human()
+            _wait_for_human_decision(page=page, job_id=job_id)
             return
 
         # Per-ATS handlers expose fill_form(page, job, ...).
@@ -601,11 +608,27 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
         except Exception as exc:
             logger.warning(f"Could not upload prefill screenshot: {exc}")
 
+        # ── Verification pass (Part B) ───────────────────────────────────
+        # Runs for BOTH the clean-success and the assisted-manual paths so
+        # the cockpit always shows "filled X of Y; still needs: ...". The
+        # already-captured post-fill screenshot doubles as the review image
+        # (no second capture). Structured count -> jobs.submission_log;
+        # human summary -> application_notes (success) or the hand-off notes.
+        verification = build_prefill_verification(result, ats)
+        record_prefill_verification(
+            job_id, {**verification, "screenshot": screenshot_storage_key},
+        )
+        logger.info("Verification for %s: %s", company, verification["summary"])
+
         bar = "=" * 60
         if result.get("success"):
-            mark_awaiting_submit(job_id, screenshot_path=screenshot_storage_key)
-            # Close the audit row BEFORE the input() block so the dashboard
-            # sees ``outcome`` immediately. ``outcome="submitted"`` means the
+            mark_awaiting_submit(
+                job_id,
+                screenshot_path=screenshot_storage_key,
+                application_notes=verification["summary"],
+            )
+            # Close the audit row BEFORE the wait so the dashboard sees
+            # ``outcome`` immediately. ``outcome="submitted"`` means the
             # adapter pre-filled cleanly — NOT that the app was submitted;
             # ``applied`` only flips when the human clicks Mark Applied.
             close_attempt(
@@ -615,6 +638,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                     "prefill_screenshot_path": screenshot_storage_key,
                     "filled_fields": result.get("fields_filled"),
                     "notes": result.get("notes"),
+                    "verification": verification["summary"],
                 },
             )
             attempt_closed = True
@@ -623,11 +647,12 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                 f"\n{bar}\n"
                 f"  Form pre-filled for {company} - {title}\n"
                 f"  ATS: {ats}  ({type(applicant).__name__})\n"
+                f"  {verification['summary']}\n"
                 f"  Browser is open. Review what was typed, click "
                 f"Submit yourself,\n"
-                f"  then come back to the dashboard and click "
-                f"'Mark Applied'.\n"
-                f"  Press Enter in this terminal to continue.\n"
+                f"  then click 'Submitted ✓ → Next' (or 'Skip') in the "
+                f"dashboard.\n"
+                f"  This loop advances automatically when you do.\n"
                 f"{bar}"
             )
         else:
@@ -640,11 +665,12 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
             )
             _handoff(
                 reason,
-                unfilled=result.get("uncertain_fields"),
+                unfilled=verification["still_needs"],
                 screenshot_key=screenshot_storage_key,
+                summary=verification["summary"],
             )
 
-        _block_for_human()
+        _wait_for_human_decision(page=page, job_id=job_id)
 
     except Exception as exc:
         # Adapter / dispatch exception — the tab is open, so hand off rather
@@ -662,7 +688,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                     )
                 except Exception:
                     logger.exception("close_attempt failed for %s", job_id)
-        _block_for_human()
+        _wait_for_human_decision(page=page, job_id=job_id)
     finally:
         if tmp_resume_pdf is not None:
             try:
@@ -671,19 +697,54 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                 pass
 
 
-def _block_for_human():
-    """BLOCK on terminal input() so the open tab stays visible for review.
+# Terminal decisions the human can reach from the dashboard while the tab is
+# open. ``applied`` is the cockpit's "Submitted ✓ → Next" (reusing the
+# existing mark-applied route); ``skipped`` is the "Skip" button. ``failed`` /
+# ``expired`` are defensive so an out-of-band flip never strands the loop.
+_DECISION_STATUSES = frozenset({"applied", "skipped", "failed", "expired"})
 
-    The human reviews the visible tab, fixes anything wrong, clicks Submit
-    themselves (or pastes from the cockpit's form-answer drafts / the staged
-    hand-off files), then presses Enter to move to the next job. The
-    cockpit's "Mark Applied" click is what flips status to applied — never
-    this code.
+
+def _wait_for_human_decision(page, job_id: str, *,
+                             poll_interval: int = None, sleep=None) -> str | None:
+    """Stop-and-wait advance (Part B): keep the pre-filled tab OPEN and poll
+    the jobs row until the human flips it to a terminal decision in the
+    dashboard, then close the tab so the loop moves to the next job.
+
+    Replaces the old ``input()``-gated advance, which forced the human to come
+    back to the terminal and guessed nothing about whether they'd actually
+    submitted. Now the dashboard button ("Submitted ✓ → Next" → ``applied``,
+    or "Skip" → ``skipped``) is the single advance signal.
+
+    Returns the terminal status, or ``None`` if interrupted (Ctrl-C / EOF).
+    The tab is closed in all cases so the shared window doesn't accumulate
+    orphaned tabs. ``poll_interval`` / ``sleep`` are injectable for tests.
     """
+    interval = (
+        poll_interval if poll_interval is not None
+        else SUBMIT_POLL_INTERVAL_SECONDS
+    )
+    _sleep = sleep or time.sleep
+    decision = None
     try:
-        input()
+        while True:
+            job = get_job(job_id) or {}
+            status = job.get("status")
+            if status in _DECISION_STATUSES:
+                decision = status
+                break
+            _sleep(interval)
     except (EOFError, KeyboardInterrupt):
-        pass
+        decision = None
+    finally:
+        try:
+            page.close()
+        except Exception:
+            pass
+    if decision:
+        logger.info("Job %s human decision: %s — advancing", job_id, decision)
+    else:
+        logger.info("Job %s wait interrupted — advancing", job_id)
+    return decision
 
 
 def run_cycle():

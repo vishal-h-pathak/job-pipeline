@@ -43,16 +43,19 @@ jobs:
         # it via jobpipe.tailor.tailor.latex_resume to render the
         # resume to PDF. --no-install-recommends keeps install at
         # ~400-600 MB instead of 4+ GB. Verified \usepackage list
-        # against the inline LATEX_TEMPLATE in latex_resume.py — these
-        # four packages cover article + fontenc + geometry + enumitem
+        # against the STYLES templates in latex_resume.py — these
+        # packages cover article + fontenc + geometry + enumitem
         # + titlesec + hyperref + xcolor + textcomp + Computer Modern.
+        # lmodern is pinned explicitly: the "modern" style uses it as the
+        # sans family, and --no-install-recommends would otherwise skip it.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             texlive-latex-base \
             texlive-latex-recommended \
             texlive-latex-extra \
-            texlive-fonts-recommended
+            texlive-fonts-recommended \
+            lmodern
       - name: Install package
         run: pip install -e .
       - name: Mark run as running

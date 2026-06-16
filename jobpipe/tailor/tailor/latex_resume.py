@@ -7,9 +7,11 @@ Vishal's existing resume style (Comp Neuroscience variant), then compiles to PDF
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime
@@ -145,17 +147,28 @@ BASE_RESUME = {
 }
 
 
-LATEX_TEMPLATE = r"""
-\documentclass[11pt, letterpaper]{article}
+# ── Resume styles (PR: one-page guarantee + a few ATS-safe styles) ─────────
+#
+# Every style MUST stay ATS-parseable: single-column body, standard fonts,
+# selectable text, NO images/icons/graphics, NO multi-column body, NO color
+# blocks behind text. "Style" = typography / section-heading / spacing /
+# subtle-rule variation only. The shared base below carries the structure
+# (header → education/skills → experience) and the defensive special-char
+# macros; per-style tokens (%%FONT%%, %%SECTION%%, %%TITLESPACE%%, %%LIST%%,
+# %%PTSIZE%%, %%MARGIN%%) get filled by _apply_style so the rendered string
+# for each style still uses the identical <<...>> body placeholders.
+
+_BASE_TEMPLATE = r"""
+\documentclass[%%PTSIZE%%, letterpaper]{article}
 
 \usepackage[T1]{fontenc}
-\usepackage[margin=0.5in]{geometry}
+\usepackage[margin=%%MARGIN%%]{geometry}
 \usepackage{enumitem}
 \usepackage{titlesec}
 \usepackage{hyperref}
 \usepackage{xcolor}
 \usepackage{textcomp}
-
+%%FONT%%
 % Defensive macros for special-character commands the LLM occasionally
 % emits instead of the unicode literals it sees in BASE_RESUME (e.g.
 % rewriting "360°" as "360\degree"). _escape_latex_safe deliberately
@@ -179,10 +192,10 @@ LATEX_TEMPLATE = r"""
     linkcolor=linkblue,
 }
 
-\titleformat{\section}{\large\bfseries\color{linkblue}}{}{0em}{}[\titlerule]
-\titlespacing*{\section}{0pt}{12pt}{6pt}
+%%SECTION%%
+%%TITLESPACE%%
 
-\setlist[itemize]{leftmargin=1.2em, itemsep=2pt, parsep=0pt, topsep=2pt}
+%%LIST%%
 
 \begin{document}
 
@@ -206,7 +219,81 @@ LATEX_TEMPLATE = r"""
 """
 
 
-import re as _re
+def _apply_style(
+    *, ptsize: str, margin: str, font: str,
+    section: str, titlespace: str, listspace: str,
+) -> str:
+    """Fill the per-style tokens in _BASE_TEMPLATE, leaving the <<...>> body
+    placeholders for _render_latex."""
+    out = _BASE_TEMPLATE
+    out = out.replace("%%PTSIZE%%", ptsize)
+    out = out.replace("%%MARGIN%%", margin)
+    out = out.replace("%%FONT%%", font)
+    out = out.replace("%%SECTION%%", section)
+    out = out.replace("%%TITLESPACE%%", titlespace)
+    out = out.replace("%%LIST%%", listspace)
+    return out
+
+
+# Section heading format shared by the serif styles (classic + compact):
+# bold, link-blue, hairline rule under the title.
+_SERIF_SECTION = (
+    r"\titleformat{\section}{\large\bfseries\color{linkblue}}{}{0em}{}[\titlerule]"
+)
+
+STYLES: dict[str, str] = {
+    # classic — serif headings, hairline rule, link-blue titles (the
+    # original look). Default for the tier-1 neuro lanes + mission ML.
+    "classic": _apply_style(
+        ptsize="11pt", margin="0.5in", font="",
+        section=_SERIF_SECTION,
+        titlespace=r"\titlespacing*{\section}{0pt}{12pt}{6pt}",
+        listspace=r"\setlist[itemize]{leftmargin=1.2em, itemsep=2pt, parsep=0pt, topsep=2pt}",
+    ),
+    # modern — clean sans, bold section titles, a touch more whitespace.
+    # Used for the agentic-builder + AI-SE lanes. We use Latin Modern Sans
+    # (lmodern, in texlive-latex-recommended) rather than helvet/Helvetica:
+    # the URW Helvetica TFMs aren't in every texlive set (e.g. the basic
+    # local install), and a missing-font compile failure would flip the row
+    # to needs_review. lmodern ships with full T1 coverage, is ATS-safe
+    # (standard selectable text), and renders a clean professional sans.
+    "modern": _apply_style(
+        ptsize="11pt", margin="0.5in",
+        font="\\usepackage{lmodern}\n\\renewcommand\\familydefault{\\sfdefault}",
+        section=_SERIF_SECTION,
+        titlespace=r"\titlespacing*{\section}{0pt}{14pt}{8pt}",
+        listspace=r"\setlist[itemize]{leftmargin=1.2em, itemsep=3pt, parsep=0pt, topsep=3pt}",
+    ),
+    # compact — serif, tighter spacing + smaller section gaps for
+    # content-dense roles. Same single-column, selectable-text body.
+    "compact": _apply_style(
+        ptsize="11pt", margin="0.45in", font="",
+        section=_SERIF_SECTION,
+        titlespace=r"\titlespacing*{\section}{0pt}{8pt}{3pt}",
+        listspace=r"\setlist[itemize]{leftmargin=1.1em, itemsep=1pt, parsep=0pt, topsep=1pt}",
+    ),
+}
+
+# Backwards-compat alias for the retired single template.
+LATEX_TEMPLATE = STYLES["classic"]
+
+
+# Deterministic archetype → style map. A role always gets a fitting style.
+# (For per-run variety instead, round-robin on a hash of the job id is a
+# one-line swap — e.g. ``list(STYLES)[hash(job_id) % len(STYLES)]``.)
+_STYLE_BY_ARCHETYPE: dict[str, str] = {
+    "tier_1a_compneuro": "classic",
+    "tier_1b_neuromorphic": "classic",
+    "tier_1c_bci": "classic",
+    "tier_3_mission_ml": "classic",
+    "tier_1_5_agentic_builder": "modern",
+    "tier_2_ai_se": "modern",
+}
+
+
+def _select_style(archetype_key: str) -> str:
+    """Pick an ATS-safe style for a job's archetype; classic is the fallback."""
+    return _STYLE_BY_ARCHETYPE.get((archetype_key or "").strip(), "classic")
 
 
 # Characters that pdflatex treats as macro/special. Each must be escaped when
@@ -429,6 +516,226 @@ def _build_experience_block(exp: dict) -> str:
     return "\n".join(lines)
 
 
+def _render_latex(tailored: dict, style: str = "classic") -> str:
+    """Build the full LaTeX source for ``tailored`` in the chosen style.
+
+    Pure string assembly — no compile. The trim loop calls this repeatedly
+    as it drops content, so it must be cheap and side-effect-free. Unknown
+    styles fall back to ``classic``.
+    """
+    latex = STYLES.get(style) or STYLES["classic"]
+    latex = latex.replace("<<NAME>>", BASE_RESUME["name"])
+    latex = latex.replace("<<EMAIL>>", BASE_RESUME["email"])
+    latex = latex.replace("<<LOCATION>>", BASE_RESUME["location"])
+    latex = latex.replace("<<LINKEDIN>>", BASE_RESUME["linkedin"])
+    latex = latex.replace("<<WEBSITE>>", BASE_RESUME["website"])
+
+    # Education + Skills, with a column width that adapts to the labels the
+    # LLM picked (see _decide_skills_layout). ``skills_layout`` is optional.
+    skills_dict = tailored.get("skills") or BASE_RESUME["skills"]
+    layout_hint = (tailored.get("skills_layout") or "auto").lower()
+    edu_skills_block = _build_edu_and_skills(
+        skills=skills_dict,
+        school=BASE_RESUME["education"]["school"],
+        degree=BASE_RESUME["education"]["degree"],
+        edu_period=BASE_RESUME["education"]["period"],
+        layout_hint=layout_hint,
+    )
+    latex = latex.replace("<<EDU_AND_SKILLS>>", edu_skills_block)
+
+    exp_blocks = [
+        _build_experience_block(exp)
+        for exp in tailored.get("experience", BASE_RESUME["experience"])
+    ]
+    latex = latex.replace(
+        "<<EXPERIENCE_BLOCKS>>", "\n\n\\vspace{6pt}\n\n".join(exp_blocks)
+    )
+    return latex
+
+
+# ── One-page guarantee ─────────────────────────────────────────────────────
+#
+# pdflatex prints e.g. ``Output written on resume_X.pdf (1 page, 1234 bytes).``
+# We parse N from there; if the marker is absent we fall back to counting
+# ``/Type /Page`` objects in the PDF bytes.
+
+_MAX_TRIM_ITERS = 12
+# pdflatex's "Output written on <path> (N page[s], M bytes)." summary. The
+# "<path>" can be long enough that pdflatex wraps it onto its own line, so
+# anchor on the distinctive "(N page[s], M bytes)" tail instead of the path.
+_PAGES_RE = re.compile(r"\((\d+)\s+pages?,\s*\d+\s*bytes?\)", re.IGNORECASE)
+
+
+def _pdf_page_count(stdout: str, pdf_path) -> int | None:
+    """Return the page count of a compiled PDF, or None if undetermined."""
+    if stdout:
+        m = _PAGES_RE.search(stdout)
+        if m:
+            return int(m.group(1))
+    try:
+        data = Path(pdf_path).read_bytes()
+    except (OSError, TypeError, ValueError):
+        return None
+    # ``/Type /Page`` (not ``/Pages``) marks each page object.
+    count = len(re.findall(rb"/Type\s*/Page[^s]", data))
+    return count or None
+
+
+def _experience_projects(tailored: dict) -> list[tuple[dict, dict]]:
+    """Flatten to (employer, project) pairs in the LLM's order."""
+    pairs: list[tuple[dict, dict]] = []
+    for emp in tailored.get("experience", []) or []:
+        for proj in emp.get("projects", []) or []:
+            pairs.append((emp, proj))
+    return pairs
+
+
+def _trim_one_unit(tailored: dict) -> bool:
+    """Drop exactly one unit of content from ``tailored`` in place.
+
+    Order (the deterministic one-page guarantee):
+      1. Drop the last bullet of the longest-remaining project (the one with
+         the most bullets, while any project still has >1 bullet).
+      2. Once every project is at its floor (≤1 bullet), drop the
+         lowest-priority whole project — the last one in the LLM's order —
+         removing its employer if that empties it.
+
+    Returns True if something was trimmed, False if nothing remains to trim
+    (≤1 project left at the bullet floor).
+    """
+    pairs = _experience_projects(tailored)
+    if not pairs:
+        return False
+
+    trimmable = [(e, p) for e, p in pairs if len(p.get("bullets") or []) > 1]
+    if trimmable:
+        _emp, proj = max(trimmable, key=lambda ep: len(ep[1]["bullets"]))
+        proj["bullets"].pop()
+        return True
+
+    # All projects at the floor — drop a whole entry, lowest priority last.
+    if len(pairs) <= 1:
+        return False
+    emp, proj = pairs[-1]
+    emp["projects"].remove(proj)
+    if not emp.get("projects"):
+        tailored["experience"].remove(emp)
+    return True
+
+
+def _compile_once(tex_path: Path, pdf_path: Path, td_path: Path) -> tuple[bool, str, str]:
+    """Run pdflatex once (second pass only if the first fails).
+
+    Returns (success, stdout, error_log). On the success path error_log is
+    "". Missing pdflatex / timeouts are reported via success=False rather
+    than raising, so the trim loop degrades gracefully.
+    """
+    cmd = [
+        "pdflatex", "-interaction=nonstopmode",
+        "-output-directory", str(td_path), str(tex_path),
+    ]
+
+    def _out(result) -> str:
+        # pdflatex can emit non-UTF-8 bytes (e.g. font encoding notes), so
+        # capture bytes and decode defensively rather than text=True (which
+        # raises UnicodeDecodeError mid-run).
+        return (result.stdout or b"").decode("utf-8", "replace")
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+        success = result.returncode == 0 and pdf_path.exists()
+        if success:
+            return (True, _out(result), "")
+        logger.warning(f"LaTeX first pass issue: {_out(result)[-500:]}")
+        result2 = subprocess.run(cmd, capture_output=True, timeout=30)
+        success = result2.returncode == 0 and pdf_path.exists()
+        if success:
+            return (True, _out(result2), "")
+        return (False, _out(result2), _out(result2)[-2000:])
+    except subprocess.TimeoutExpired:
+        msg = "pdflatex timed out after 30 seconds"
+        logger.error(msg)
+        return (False, "", msg)
+    except FileNotFoundError:
+        msg = "pdflatex not found — LaTeX not installed"
+        logger.error(msg)
+        return (False, "", msg)
+
+
+def _compile_and_count_factory(td_path: Path, safe_company: str):
+    """Build the compile+count callback the trim loop drives.
+
+    The callback writes the .tex, compiles it, and returns
+    (success, pages, pdf_bytes, error_log) so _fit_to_one_page stays pure
+    logic and is trivially mockable in tests.
+    """
+    tex_path = td_path / f"resume_{safe_company}.tex"
+    pdf_path = td_path / f"resume_{safe_company}.pdf"
+
+    def _run(latex: str) -> tuple[bool, int | None, bytes | None, str]:
+        tex_path.write_text(latex, encoding="utf-8")
+        success, stdout, log = _compile_once(tex_path, pdf_path, td_path)
+        if not success:
+            return (False, None, None, log)
+        pages = _pdf_page_count(stdout, pdf_path)
+        return (True, pages, pdf_path.read_bytes(), "")
+
+    return _run
+
+
+def _trim_budget(tailored: dict) -> int:
+    """Max trims needed to fully reduce ``tailored`` to its floor.
+
+    Each iteration drops exactly one bullet or one project, so the number
+    of trims to exhaust all content is (total bullets) + (total projects).
+    Sizing the cap to this guarantees the loop can always reach a single
+    page rather than bailing early on an unusually long input; the cap is
+    still a finite backstop because _trim_one_unit makes monotonic progress.
+    """
+    pairs = _experience_projects(tailored)
+    bullets = sum(len(p.get("bullets") or []) for _e, p in pairs)
+    return bullets + len(pairs) + 2
+
+
+def _fit_to_one_page(
+    tailored: dict, style: str, compile_and_count, max_iters: int | None = None,
+) -> dict:
+    """Build → compile → count, trimming one unit per iteration until the
+    PDF is a single page (or nothing remains to trim / the cap is hit).
+
+    ``max_iters`` defaults to a content-sized budget (see _trim_budget) so
+    the one-page guarantee holds even for an over-long input; pass an
+    explicit value to bound it. Works on a deepcopy so the caller's
+    ``tailored`` is never mutated; the trimmed copy that actually compiled
+    is returned as ``tailored_data``. If the very first compile fails (e.g.
+    pdflatex missing) it returns immediately without trimming — the loop is
+    the production guarantee but must never crash when LaTeX is unavailable.
+    """
+    if max_iters is None:
+        max_iters = max(_MAX_TRIM_ITERS, _trim_budget(tailored))
+    work = copy.deepcopy(tailored)
+    latex = _render_latex(work, style)
+    success, pages, pdf_bytes, log = compile_and_count(latex)
+
+    iterations = 0
+    while success and pages is not None and pages > 1 and iterations < max_iters:
+        if not _trim_one_unit(work):
+            break
+        iterations += 1
+        latex = _render_latex(work, style)
+        success, pages, pdf_bytes, log = compile_and_count(latex)
+
+    return {
+        "latex_source": latex,
+        "pdf_bytes": pdf_bytes if success else None,
+        "compile_success": success,
+        "compile_log": log if not success else "",
+        "pages": pages,
+        "trim_iterations": iterations,
+        "tailored_data": work,
+    }
+
+
 def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
     """
     Use Claude to select and reorder resume content for a specific job,
@@ -497,87 +804,45 @@ def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
 
     tailored = json.loads(response_text.strip())
 
-    # ── Build LaTeX source ──────────────────────────────────────────────
-    latex = LATEX_TEMPLATE
-    latex = latex.replace("<<NAME>>", BASE_RESUME["name"])
-    latex = latex.replace("<<EMAIL>>", BASE_RESUME["email"])
-    latex = latex.replace("<<LOCATION>>", BASE_RESUME["location"])
-    latex = latex.replace("<<LINKEDIN>>", BASE_RESUME["linkedin"])
-    latex = latex.replace("<<WEBSITE>>", BASE_RESUME["website"])
+    # ── Style selection (deterministic per archetype) ───────────────────
+    style = _select_style(archetype_meta.get("archetype", ""))
 
-    # Education + Skills, with a column width that adapts to the labels the
-    # LLM picked. The ``skills_layout`` hint is optional — the LLM may pass
-    # "auto" (default), "compact", "wide", or "stacked" to override the
-    # auto-fit; anything else is treated as auto.
     skills_dict = tailored.get("skills") or BASE_RESUME["skills"]
     layout_hint = (tailored.get("skills_layout") or "auto").lower()
-    edu_skills_block = _build_edu_and_skills(
-        skills=skills_dict,
-        school=BASE_RESUME["education"]["school"],
-        degree=BASE_RESUME["education"]["degree"],
-        edu_period=BASE_RESUME["education"]["period"],
-        layout_hint=layout_hint,
-    )
-    latex = latex.replace("<<EDU_AND_SKILLS>>", edu_skills_block)
     chosen_layout, _, _ = _decide_skills_layout(skills_dict, layout_hint)
     logger.info(
-        f"Education/Skills layout: hint={layout_hint!r} → {chosen_layout!r} "
-        f"(longest label = {max([len('Education')] + [len(k) for k in skills_dict.keys()])} chars)"
+        f"Resume style={style!r}; Education/Skills layout: hint={layout_hint!r} "
+        f"→ {chosen_layout!r} (longest label = "
+        f"{max([len('Education')] + [len(k) for k in skills_dict.keys()])} chars)"
     )
 
-    # Experience
-    exp_blocks = []
-    for exp in tailored.get("experience", BASE_RESUME["experience"]):
-        exp_blocks.append(_build_experience_block(exp))
-    latex = latex.replace("<<EXPERIENCE_BLOCKS>>", "\n\n\\vspace{6pt}\n\n".join(exp_blocks))
-
-    # ── Compile to PDF in a tempdir (nothing persists locally) ─────────
+    # ── Build → compile → count → trim, until one page (the guarantee) ──
+    # The trim loop rebuilds the LaTeX from the (possibly trimmed) tailored
+    # dict each iteration. If pdflatex is unavailable the loop returns after
+    # the first failed compile without crashing.
     safe_company = "".join(c if c.isalnum() else "_" for c in company)
-    pdf_bytes: bytes | None = None
-    compile_success = False
-    compile_log = ""
 
     with tempfile.TemporaryDirectory(prefix="latex_resume_") as td:
-        td_path = Path(td)
-        tex_path = td_path / f"resume_{safe_company}.tex"
-        pdf_path = td_path / f"resume_{safe_company}.pdf"
-        tex_path.write_text(latex, encoding="utf-8")
+        fit = _fit_to_one_page(
+            tailored, style, _compile_and_count_factory(Path(td), safe_company)
+        )
 
-        try:
-            result = subprocess.run(
-                ["pdflatex", "-interaction=nonstopmode",
-                 "-output-directory", str(td_path), str(tex_path)],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            compile_success = result.returncode == 0 and pdf_path.exists()
-            if not compile_success:
-                compile_log = (result.stdout or result.stderr)[-2000:]
-                logger.warning(f"LaTeX first pass issue: {compile_log[-500:]}")
-                # Second pass (e.g. for references)
-                result2 = subprocess.run(
-                    ["pdflatex", "-interaction=nonstopmode",
-                     "-output-directory", str(td_path), str(tex_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                compile_success = result2.returncode == 0 and pdf_path.exists()
-                if not compile_success:
-                    compile_log = (result2.stdout or result2.stderr)[-2000:]
-        except subprocess.TimeoutExpired:
-            compile_log = "pdflatex timed out after 30 seconds"
-            logger.error(compile_log)
-        except FileNotFoundError:
-            compile_log = "pdflatex not found — LaTeX not installed"
-            logger.error(compile_log)
+    latex = fit["latex_source"]
+    pdf_bytes = fit["pdf_bytes"]
+    compile_success = fit["compile_success"]
+    compile_log = fit["compile_log"]
+    final_tailored = fit["tailored_data"]
 
-        if compile_success:
-            pdf_bytes = pdf_path.read_bytes()
+    if not compile_success and "pdflatex not found" in compile_log:
+        logger.warning(
+            "pdflatex unavailable — skipped the one-page trim loop. "
+            "Resume PDF will not be produced."
+        )
 
     logger.info(
-        f"LaTeX resume for {company}: compile={'OK' if compile_success else 'FAILED'}, "
+        f"LaTeX resume for {company}: style={style}, "
+        f"compile={'OK' if compile_success else 'FAILED'}, "
+        f"pages={fit['pages']}, trims={fit['trim_iterations']}, "
         f"bytes={len(pdf_bytes) if pdf_bytes else 0}"
     )
 
@@ -586,5 +851,7 @@ def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
         "pdf_bytes": pdf_bytes,
         "compile_success": compile_success,
         "compile_log": compile_log if not compile_success else "",
-        "tailored_data": tailored,
+        "tailored_data": final_tailored,
+        "style": style,
+        "pages": fit["pages"],
     }

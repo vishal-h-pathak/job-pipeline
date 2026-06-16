@@ -15,6 +15,9 @@ patched out), no real Anthropic client.
 
 from __future__ import annotations
 
+import sys
+import types
+
 import pytest
 
 from jobpipe.shared import llm
@@ -256,3 +259,126 @@ def test_flatten_system_joins_cached_blocks():
         {"type": "text", "text": "profile", "cache_control": {"type": "ephemeral"}},
     ]
     assert llm.flatten_system(blocks) == "rules\n\nprofile"
+
+
+# ── OAuth result handling (real _oauth_complete against a fake SDK) ──────────
+#
+# `_oauth_complete` lazy-imports `claude_agent_sdk`, so we inject a fake
+# module into sys.modules and exercise the REAL _oauth_complete + _run_sync.
+# No SDK install, no network — the fake `query` is an async generator that
+# yields fake AssistantMessage / ResultMessage instances built from the same
+# classes the module exposes (so the production isinstance checks hold).
+
+def _install_fake_sdk(monkeypatch):
+    mod = types.ModuleType("claude_agent_sdk")
+    state: dict = {"messages": [], "options": None}
+
+    class TextBlock:
+        def __init__(self, text):
+            self.text = text
+
+    class AssistantMessage:
+        def __init__(self, content):
+            self.content = content
+
+    class ResultMessage:
+        def __init__(self, subtype, is_error=False, result=None):
+            self.subtype = subtype
+            self.is_error = is_error
+            self.result = result
+
+    class ClaudeAgentOptions:
+        def __init__(self, **kwargs):
+            state["options"] = kwargs
+
+    async def query(*, prompt, options):  # noqa: ARG001 — signature match
+        for msg in state["messages"]:
+            yield msg
+
+    mod.TextBlock = TextBlock
+    mod.AssistantMessage = AssistantMessage
+    mod.ResultMessage = ResultMessage
+    mod.ClaudeAgentOptions = ClaudeAgentOptions
+    mod.query = query
+    mod._state = state
+
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", mod)
+    return mod
+
+
+def _call_oauth():
+    return llm._oauth_complete(
+        system_text="SYS", prompt="hi",
+        model="claude-opus-4-20250514", token="oauth-tok",
+    )
+
+
+def test_oauth_success_returns_accumulated_text(monkeypatch):
+    """Regression for the 'success' misread: a stream ending in a
+    ResultMessage(subtype='success') with assistant text returns that
+    text — success is the happy path, not an error."""
+    mod = _install_fake_sdk(monkeypatch)
+    mod._state["messages"] = [
+        mod.AssistantMessage([mod.TextBlock("tailored "), mod.TextBlock("resume")]),
+        mod.ResultMessage(subtype="success", is_error=False, result="unused"),
+    ]
+    assert _call_oauth() == "tailored resume"
+
+
+def test_oauth_success_falls_back_to_result_field(monkeypatch):
+    """When the final text lands in ResultMessage.result rather than a
+    TextBlock, success still returns it."""
+    mod = _install_fake_sdk(monkeypatch)
+    mod._state["messages"] = [
+        mod.ResultMessage(subtype="success", is_error=False, result="final answer"),
+    ]
+    assert _call_oauth() == "final answer"
+
+
+def test_oauth_max_turns_raises_clear_error(monkeypatch):
+    """A stream ending in error_max_turns raises a clear, distinct error
+    that mentions max turns — never silently swallowed or returned."""
+    mod = _install_fake_sdk(monkeypatch)
+    mod._state["messages"] = [
+        mod.ResultMessage(
+            subtype="error_max_turns", is_error=True,
+            result="Reached maximum number of turns (4)",
+        ),
+    ]
+    with pytest.raises(llm.OAuthCompletionError) as ei:
+        _call_oauth()
+    msg = str(ei.value).lower()
+    assert "max" in msg and "turn" in msg
+    assert ei.value.subtype == "error_max_turns"
+
+
+def test_oauth_error_subtype_includes_partial_text(monkeypatch):
+    """On a genuine error subtype, any partial assistant text is carried
+    on the raised error for debuggability."""
+    mod = _install_fake_sdk(monkeypatch)
+    mod._state["messages"] = [
+        mod.AssistantMessage([mod.TextBlock("half a resume")]),
+        mod.ResultMessage(subtype="error_during_execution", is_error=True),
+    ]
+    with pytest.raises(llm.OAuthCompletionError) as ei:
+        _call_oauth()
+    assert ei.value.partial_text == "half a resume"
+    assert "half a resume" in str(ei.value)
+
+
+def test_oauth_uses_max_turns_headroom(monkeypatch):
+    """The turns cap is bumped above 1 so a legitimate single-answer
+    completion the harness accounts as >1 turn doesn't trip the cap."""
+    mod = _install_fake_sdk(monkeypatch)
+    mod._state["messages"] = [
+        mod.ResultMessage(subtype="success", is_error=False, result="ok"),
+    ]
+    _call_oauth()
+    opts = mod._state["options"]
+    assert opts["max_turns"] == llm._OAUTH_MAX_TURNS
+    assert opts["max_turns"] > 1
+    # Fallback invariants left unchanged.
+    assert opts["allowed_tools"] == []
+    assert opts["setting_sources"] == []
+    assert opts["env"]["ANTHROPIC_API_KEY"] == ""
+    assert opts["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-tok"

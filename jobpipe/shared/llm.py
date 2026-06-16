@@ -113,6 +113,42 @@ def _join_text(resp: Any) -> str:
 
 # ── OAuth path (fallback) ───────────────────────────────────────────────────
 
+# Headroom for the OAuth one-shot. The Agent SDK accounts a single
+# self-contained answer as >1 harness turn in some completions, so a
+# max_turns of 1 trips ``error_max_turns`` on a legitimately finished
+# generation. A small value (still no tools, no sessions) leaves room for
+# that bookkeeping without inviting multi-step agent behavior.
+_OAUTH_MAX_TURNS = 4
+
+# ResultMessage.subtype values. "success" is the happy path; anything that
+# starts with "error" (e.g. these two) is a genuine failure.
+_OAUTH_SUCCESS_SUBTYPE = "success"
+_OAUTH_ERROR_SUBTYPES = ("error_max_turns", "error_during_execution")
+
+
+class OAuthCompletionError(RuntimeError):
+    """The Claude Agent SDK OAuth path produced a genuine error result.
+
+    Carries the ResultMessage ``subtype`` and any partial assistant text
+    so a failure_reason is debuggable (and so error_max_turns is plainly
+    distinguishable from other failures). A RuntimeError subclass so the
+    caller's broad per-job handling still catches it."""
+
+    def __init__(self, subtype: Any, partial_text: str = ""):
+        self.subtype = subtype
+        self.partial_text = partial_text
+        hint = (
+            " — reached maximum number of turns"
+            if subtype == "error_max_turns"
+            else ""
+        )
+        tail = f"; partial text: {partial_text!r}" if partial_text else "; no text produced"
+        super().__init__(
+            f"Claude Agent SDK OAuth completion returned an error result "
+            f"(subtype={subtype!r}{hint}){tail}"
+        )
+
+
 # The Agent SDK takes model aliases or full IDs; the dated Messages-API
 # string (e.g. "claude-sonnet-4-20250514") can be rejected, so map the
 # known families to their alias for the OAuth path only.
@@ -148,15 +184,21 @@ def _subprocess_env(token: str) -> dict:
 def _run_sync(coro):
     """Drive an async coroutine to completion from sync code. The tailor
     batch runs synchronously (no ambient loop); fall back to a private
-    loop if one is already running."""
+    loop only if one is already running.
+
+    The branch is chosen by probing for a running loop up front rather than
+    by catching ``asyncio.run``'s RuntimeError — the coroutine may itself
+    raise a RuntimeError (e.g. OAuthCompletionError), and re-awaiting an
+    already-awaited coroutine in a catch-all would explode."""
     try:
-        return asyncio.run(coro)
+        asyncio.get_running_loop()
     except RuntimeError:
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
+        return asyncio.run(coro)  # no ambient loop — the common case
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 def _oauth_complete(*, system_text: str, prompt: str, model: str, token: str) -> str:
@@ -174,23 +216,52 @@ def _oauth_complete(*, system_text: str, prompt: str, model: str, token: str) ->
     options = ClaudeAgentOptions(
         system_prompt=system_text,
         model=_oauth_model(model),
-        max_turns=1,
+        max_turns=_OAUTH_MAX_TURNS,
         allowed_tools=[],
         setting_sources=[],
         env=_subprocess_env(token),
     )
 
     async def _run() -> str:
+        # Accumulate assistant text from the stream (complete TextBlocks;
+        # partial-message deltas aren't enabled, so blocks arrive whole) and
+        # keep the final ResultMessage to decide success vs. failure.
         parts: list[str] = []
-        result_text = ""
+        result_msg = None
         async for msg in query(prompt=prompt, options=options):
             if isinstance(msg, AssistantMessage):
                 for block in msg.content:
                     if isinstance(block, TextBlock):
                         parts.append(block.text)
             elif isinstance(msg, ResultMessage):
-                result_text = getattr(msg, "result", "") or ""
-        return "".join(parts) or result_text
+                result_msg = msg
+
+        text = "".join(parts)
+
+        if result_msg is None:
+            # No result envelope at all: return whatever text we saw, else
+            # treat the empty completion as a failure.
+            if text:
+                return text
+            raise OAuthCompletionError(subtype=None, partial_text="")
+
+        subtype = getattr(result_msg, "subtype", None)
+        is_error = bool(getattr(result_msg, "is_error", False))
+        # The final text sometimes lands only in ResultMessage.result.
+        result_text = getattr(result_msg, "result", None) or ""
+
+        # subtype == "success" is the happy path — do NOT treat it as an error.
+        if subtype == _OAUTH_SUCCESS_SUBTYPE and not is_error:
+            return text or result_text
+
+        # Genuine error result (error_max_turns, error_during_execution, …).
+        if is_error or (isinstance(subtype, str) and subtype.startswith("error")):
+            raise OAuthCompletionError(
+                subtype=subtype, partial_text=text or result_text,
+            )
+
+        # Unknown, non-error subtype: best-effort return.
+        return text or result_text
 
     return _run_sync(_run())
 

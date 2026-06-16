@@ -38,6 +38,7 @@ from playwright.sync_api import sync_playwright
 
 from jobpipe.submit.adapters.applicant_base import BaseApplicant
 from jobpipe.submit.adapters.browser_tools import BrowserSession
+from jobpipe.submit.browser.local import open_browser_context, is_headless
 from ..prepare_loop import run_submission_agent
 from jobpipe.tailor.url_resolver import resolve_application_url
 
@@ -113,18 +114,15 @@ class UniversalApplicant(BaseApplicant):
             c if c.isalnum() else "_" for c in (job.get("company") or "company")
         )[:40]
 
+        # Visible + persistent by default so the user's ATS logins persist and
+        # it feels like their own tab; HEADLESS / no-display fall back to the
+        # old cookieless launch (keeps tests + any headless runner working).
+        effective_headless = headless or is_headless()
+
         try:
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(
-                    headless=headless,
-                    slow_mo=self.slow_mo_ms,
-                )
-                context = browser.new_context(
-                    viewport={"width": 1280, "height": 900},
-                    user_agent=(
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/121.0 Safari/537.36"
-                    ),
+                context, close_browser = open_browser_context(
+                    pw, headless=effective_headless
                 )
                 page = context.new_page()
                 try:
@@ -134,7 +132,7 @@ class UniversalApplicant(BaseApplicant):
                     except Exception:
                         pass
                 except Exception as e:
-                    browser.close()
+                    close_browser()
                     return {
                         "success": False,
                         "needs_review": True,
@@ -157,7 +155,7 @@ class UniversalApplicant(BaseApplicant):
                     max_turns=45,
                 )
 
-                browser.close()
+                close_browser()
                 result["resolved_url"] = real_url
                 result["url_trail"] = resolved["trail"]
                 return result

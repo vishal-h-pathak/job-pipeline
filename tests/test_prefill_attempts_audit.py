@@ -50,8 +50,13 @@ def _required_env(monkeypatch):
         "BROWSERBASE_API_KEY": "bb-test",
         "BROWSERBASE_PROJECT_ID": "bb-proj-test",
         "ANTHROPIC_API_KEY": "sk-test",
+        # Force the cookieless headless launch so the simple fake chromium
+        # (which only implements ``launch``) is exercised — this test is
+        # about the attempts-row lifecycle, not the persistent-profile path.
+        "HEADLESS": "1",
     }.items():
         monkeypatch.setenv(k, v)
+    monkeypatch.delenv("JOBPIPE_BROWSER_CDP", raising=False)
 
 
 # ── Fake Playwright surface ────────────────────────────────────────────────
@@ -203,13 +208,6 @@ def _stub_pipeline_surface(monkeypatch, *, applicant, call_log: list,
         p, "mark_tailor_failed",
         lambda *a, **kw: call_log.append(("mark_tailor_failed", a, kw)),
     )
-    # The failure branch persists ``prefill_screenshot_path`` on the
-    # jobs row via a follow-up ``update_job_status`` call (parity with
-    # the success path). Stub records the call shape; doesn't hit DB.
-    monkeypatch.setattr(
-        p, "update_job_status",
-        lambda *a, **kw: call_log.append(("update_job_status", a, kw)),
-    )
     monkeypatch.setattr(
         p, "send_awaiting_submit",
         lambda *a, **kw: call_log.append(("send_awaiting_submit",)),
@@ -218,6 +216,23 @@ def _stub_pipeline_surface(monkeypatch, *, applicant, call_log: list,
         p, "send_failed",
         lambda *a, **kw: call_log.append(("send_failed",)),
     )
+
+    # Assisted-manual hand-off — stubbed here (its own end-to-end behaviour is
+    # covered by tests/test_prefill_assisted_handoff.py). This test only cares
+    # that a non-success exit routes through the hand-off and the attempt row
+    # still closes (as needs_review) before the input() block.
+    def _handoff_stub(page, job, reason, unfilled=None):
+        call_log.append(("handoff", reason))
+        return {
+            "handoff": True,
+            "materials_dir": "/tmp/handoff/x",
+            "checklist": [],
+            "application_notes": "ASSISTED-MANUAL",
+            "reason": reason,
+            "problems": [],
+        }
+
+    monkeypatch.setattr(p, "assisted_manual_handoff", _handoff_stub)
 
     # Storage.
     monkeypatch.setattr(p, "download_to_tmp", lambda key: tmp_resume_path)
@@ -319,9 +334,12 @@ def test_success_branch_closes_attempt_with_submitted_before_input(
     assert not any(o == "mark_tailor_failed" for o in ops)
 
 
-def test_failure_branch_closes_attempt_with_failed_and_error_key(
+def test_failure_branch_degrades_to_assisted_manual_handoff(
     monkeypatch, tmp_resume_pdf,
 ):
+    """A non-success adapter result is no longer a bare failure: it routes
+    through ``assisted_manual_handoff`` and the attempt row closes as
+    ``needs_review`` (carrying the diagnostic screenshot) before input()."""
     call_log: list = []
     job = _make_job("audit-fail")
     fake_page = _FakePage()
@@ -339,49 +357,32 @@ def test_failure_branch_closes_attempt_with_failed_and_error_key(
 
     ops = [entry[0] for entry in call_log]
 
-    # Same ordering invariant on the failure branch.
+    # Ordering invariant: next_attempt_n → open_attempt → handoff →
+    # close_attempt → input.
     assert ops.index("next_attempt_n") < ops.index("open_attempt") \
-        < ops.index("close_attempt") < ops.index("input"), (
-        f"audit-row sequence wrong on failure branch; ops={ops}"
+        < ops.index("handoff") < ops.index("close_attempt") \
+        < ops.index("input"), (
+        f"assisted-manual sequence wrong; ops={ops}"
     )
 
-    # close_attempt: outcome="failed", notes carries error AND screenshot
-    # path (parity fix — failure branch must surface the same diagnostic
-    # screenshot the success branch persists).
+    # Hand-off ran with the adapter's reason.
+    handoff_call = next(c for c in call_log if c[0] == "handoff")
+    assert handoff_call[1] == "no fields matched"
+
+    # close_attempt: outcome="needs_review" (NOT "failed"), notes flag the
+    # assisted-manual hand-off and carry the diagnostic screenshot.
     close_call = next(c for c in call_log if c[0] == "close_attempt")
     _, attempt_id, outcome, kwargs = close_call
     assert attempt_id == 4242
-    assert outcome == "failed"
+    assert outcome == "needs_review"
     notes = kwargs.get("notes") or {}
-    assert notes.get("error") == "no fields matched"
+    assert notes.get("assisted_manual") is True
     assert notes.get("prefill_screenshot_path") == "audit-fail/prefill.png"
+    assert notes.get("materials_dir") == "/tmp/handoff/x"
 
-    # Failure branch must ALSO persist prefill_screenshot_path on the
-    # jobs row via a follow-up update_job_status call (parity with the
-    # success path's mark_awaiting_submit). Catch a regression where
-    # someone reverts the row-side update and leaves only the
-    # close_attempt notes update.
-    update_call = next(
-        (c for c in call_log if c[0] == "update_job_status"),
-        None,
-    )
-    assert update_call is not None, (
-        "failure branch must persist prefill_screenshot_path on the jobs row"
-    )
-    _, args, kwargs = update_call
-    assert args[0] == "audit-fail"
-    assert args[1] == "failed"
-    assert kwargs.get("prefill_screenshot_path") == "audit-fail/prefill.png"
-
-    # Ordering: mark_tailor_failed → update_job_status → close_attempt → input.
-    assert ops.index("mark_tailor_failed") < ops.index("update_job_status") \
-        < ops.index("close_attempt") < ops.index("input"), (
-        f"failure-branch ordering wrong; ops={ops}"
-    )
-
-    # Status transition: mark_tailor_failed fired; mark_awaiting_submit did not.
-    assert any(o == "mark_tailor_failed" for o in ops)
-    assert not any(o == "mark_awaiting_submit" for o in ops)
+    # No bare failure: mark_tailor_failed must NOT fire for a non-success
+    # adapter result once the tab is open.
+    assert not any(o == "mark_tailor_failed" for o in ops)
 
 
 def test_open_attempt_uses_correct_adapter_name_for_each_ats(

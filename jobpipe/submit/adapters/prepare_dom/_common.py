@@ -124,6 +124,30 @@ def paste_textarea(page: Any, selectors: list[str], text: str,
     return False
 
 
+def select_option(page: Any, selectors: list[str], value: str,
+                  *, log: logging.Logger | None = None) -> bool:
+    """Choose ``value`` in the first matching visible ``<select>``.
+
+    Same iteration / exception-swallowing semantics as ``fill_text``. Used by
+    the declarative field-map layer for ``type: select`` specs (none of the
+    current per-ATS maps use one, but the format and primitive support it so
+    adding a dropdown field is a config edit, not a code change). The value is
+    passed straight to Playwright's ``select_option`` — pass the option's
+    ``value`` attribute text.
+    """
+    log = log or logger
+    for selector in selectors:
+        try:
+            el = page.locator(selector).first
+            if el.is_visible(timeout=1000):
+                el.select_option(value)
+                log.info(f"Selected via {selector}")
+                return True
+        except Exception:
+            continue
+    return False
+
+
 # ── Cover-letter source resolution ─────────────────────────────────────────
 
 def load_cover_letter(cover_letter_path_or_text: str) -> str:

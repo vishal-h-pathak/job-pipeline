@@ -1,0 +1,159 @@
+# field_maps.yml — declarative per-ATS field maps (Part A / #3).
+#
+# One ordered list of field specs per ATS. Fill order is list order, and the
+# order here is a verbatim transcription of the pre-rewrite adapters: every
+# label from `_common.build_field_map` (in its dict order) followed by the
+# resume upload then the cover-letter paste. Keeping all the alias labels
+# (Full Name / Name, LinkedIn URL / LinkedIn, ...) preserves the old behaviour
+# of attempting each one — harmless idempotent re-fills on real forms.
+#
+# See field_maps.py for the spec schema and selector-chain rules. Selector
+# strings are single-quoted so their inner double-quotes pass through.
+
+greenhouse:
+  fields:
+    - {key: "First Name", name: "job_application[first_name]", required: true}
+    - {key: "Last Name", name: "job_application[last_name]", required: true}
+    - {key: "Full Name"}          # not in the GH name map -> label fallback only
+    - {key: "Name"}
+    - {key: "Email", name: "job_application[email]", required: true}
+    - key: "Phone"
+      required: true
+      selectors:                  # intl-tel-input anchor first; see _common phone notes
+        - 'input[type="tel"]:visible'
+        - 'input[name="job_application[phone]"]'
+        - 'input[id="phone"]'
+        - 'input[aria-label="Phone"]'
+    - {key: "LinkedIn URL", name: "job_application[urls][LinkedIn]"}
+    - {key: "LinkedIn", name: "job_application[urls][LinkedIn]"}
+    - {key: "GitHub URL", name: "job_application[urls][GitHub]"}
+    - {key: "GitHub", name: "job_application[urls][GitHub]"}
+    - {key: "Portfolio", name: "job_application[urls][Portfolio]"}
+    - {key: "Website", name: "job_application[urls][Website]"}
+    - {key: "Location", name: "job_application[location]"}
+    - {key: "Current Location", name: "job_application[location]"}
+    - {key: "City", name: "job_application[location]"}
+    - {key: "Current Company", name: "job_application[company]"}
+    - {key: "Company"}            # not in the GH name map -> label fallback only
+    - {key: "Current Title", name: "job_application[title]"}
+    - {key: "Title"}
+    - key: "__resume__"
+      label: "Resume"
+      type: file
+      required: true
+      selectors:
+        - 'input[type="file"][name="job_application[resume]"]'
+        - 'input[type="file"][name*="resume" i]'
+        - 'input[type="file"][accept*=".pdf"]'
+        - 'input[type="file"]'
+    - key: "__cover_letter__"
+      label: "Cover Letter"
+      type: textarea
+      selectors:
+        - 'textarea[name="job_application[cover_letter]"]'
+        - 'textarea[name*="cover" i]'
+        - 'textarea[aria-label*="cover" i]'
+        - 'textarea[placeholder*="cover" i]'
+        - 'textarea'
+
+lever:
+  # Lever puts the full name in a single field (name="name"). The adapter
+  # overrides the Name / Full Name *values* to the computed full name before
+  # calling apply_field_map; First Name still maps to name="name" too and is
+  # overwritten by the later Full Name / Name specs — net result: full name.
+  fields:
+    - {key: "First Name", name: "name"}
+    - {key: "Last Name"}          # not in the Lever name map -> label fallback only
+    - {key: "Full Name", name: "name"}
+    - {key: "Name", name: "name", required: true}
+    - {key: "Email", name: "email", required: true}
+    - key: "Phone"
+      required: true
+      selectors:
+        - 'input[type="tel"]:visible'
+        - 'input[name="phone"]'
+        - 'input[id="phone"]'
+        - 'input[aria-label="Phone"]'
+    - {key: "LinkedIn URL", name: "urls[LinkedIn]"}
+    - {key: "LinkedIn", name: "urls[LinkedIn]"}
+    - {key: "GitHub URL", name: "urls[GitHub]"}
+    - {key: "GitHub", name: "urls[GitHub]"}
+    - {key: "Portfolio", name: "urls[Portfolio]"}
+    - {key: "Website", name: "urls[Other]"}
+    - {key: "Location", name: "location"}
+    - {key: "Current Location", name: "location"}
+    - {key: "City", name: "location"}
+    - {key: "Current Company", name: "org"}
+    - {key: "Company", name: "org"}
+    - {key: "Current Title", name: "title"}
+    - {key: "Title", name: "title"}
+    - key: "__resume__"
+      label: "Resume"
+      type: file
+      required: true
+      selectors:
+        - 'input[type="file"][name="resume"]'
+        - 'input[type="file"][name*="resume" i]'
+        - 'input[type="file"][accept*=".pdf"]'
+        - 'input[type="file"]'
+    - key: "__cover_letter__"
+      label: "Cover Letter"
+      type: textarea
+      selectors:
+        - 'textarea[name="comments"]'
+        - 'textarea[name*="cover" i]'
+        - 'textarea[aria-label*="cover" i]'
+        - 'textarea[placeholder*="cover" i]'
+        - 'textarea[placeholder*="why" i]'
+        - 'textarea'
+
+ashby:
+  # Ashby renders a React app with no canonical name map, so every text field
+  # falls back to label selectors + the two input[name*=...] fuzzy matches.
+  # Set the fuzzy flag once here; the loader merges it into every spec (it is
+  # ignored for the file / textarea specs).
+  defaults: {fuzzy_name_fallback: true}
+  fields:
+    - {key: "First Name", required: true}
+    - {key: "Last Name", required: true}
+    - {key: "Full Name"}
+    - {key: "Name"}
+    - {key: "Email", required: true}
+    - key: "Phone"
+      required: true
+      selectors:
+        - 'input[type="tel"]:visible'
+        - 'input[id="phone"]'
+        - 'input[aria-label="Phone"]'
+    - {key: "LinkedIn URL"}
+    - {key: "LinkedIn"}
+    - {key: "GitHub URL"}
+    - {key: "GitHub"}
+    - {key: "Portfolio"}
+    - {key: "Website"}
+    - {key: "Location"}
+    - {key: "Current Location"}
+    - {key: "City"}
+    - {key: "Current Company"}
+    - {key: "Company"}
+    - {key: "Current Title"}
+    - {key: "Title"}
+    - key: "__resume__"
+      label: "Resume"
+      type: file
+      required: true
+      selectors:
+        - 'input[type="file"]'
+        - 'input[accept*=".pdf"]'
+        - 'input[accept*="application/pdf"]'
+    - key: "__cover_letter__"
+      label: "Cover Letter"
+      type: textarea
+      selectors:
+        - 'textarea[name*="cover" i]'
+        - 'textarea[aria-label*="cover" i]'
+        - 'textarea[placeholder*="cover" i]'
+        - 'textarea[name*="additional" i]'
+        - 'textarea[aria-label*="additional" i]'
+        - 'textarea'
+        - 'div[contenteditable="true"]'

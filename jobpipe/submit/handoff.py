@@ -97,7 +97,8 @@ def _build_checklist(job: dict, unfilled: Optional[list],
 
 
 def assisted_manual_handoff(page, job: dict, reason: str,
-                            unfilled: Optional[list] = None) -> dict:
+                            unfilled: Optional[list] = None,
+                            summary: Optional[str] = None) -> dict:
     """Degrade a non-success prepare exit to an assisted-manual hand-off.
 
     Leaves ``page`` OPEN, downloads materials locally, writes a checklist to
@@ -105,6 +106,10 @@ def assisted_manual_handoff(page, job: dict, reason: str,
     dict describing the hand-off. Best-effort throughout — a storage or DB
     hiccup is recorded in the notes rather than re-raised, so the user always
     gets "tab open + files ready + checklist".
+
+    ``summary`` is the Part B verification line ("filled X of Y; still
+    needs: ...") — included in the written notes so the degraded path carries
+    the same at-a-glance count as a clean pre-fill.
     """
     job_id = job.get("id")
     company = job.get("company") or "Unknown"
@@ -131,7 +136,8 @@ def assisted_manual_handoff(page, job: dict, reason: str,
     notes = (
         f"{_MARKER}\n"
         f"Reason: {reason}\n"
-        f"Materials downloaded to: {folder}\n"
+        + (f"Verification: {summary}\n" if summary else "")
+        + f"Materials downloaded to: {folder}\n"
         f"Application page left open for manual completion.\n"
         f"Checklist:\n{checklist_text}"
     )

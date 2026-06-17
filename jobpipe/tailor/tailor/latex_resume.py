@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from jobpipe.config import TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
+from jobpipe.profile_loader import load_resume_source
 from jobpipe.shared import llm
 from jobpipe.tailor.paths import CANDIDATE_PROFILE_PATH
 from prompts import cached_system_blocks, load_task_prompt
@@ -27,123 +28,37 @@ from tailor.normalize import normalize_for_ats
 logger = logging.getLogger("tailor.latex_resume")
 
 # ── Base resume data (source of truth — never fabricate beyond this) ──────
+#
+# The professional experience (the resume's spine) now lives in the canonical
+# source ``profile/resume_source.yml`` (transcribed from
+# RESUME_CANONICAL_SOURCE.md), loaded via ``load_resume_source()`` and merged
+# with the identity/education/skills constants below into ``BASE_RESUME``.
+# Personal projects are NOT part of BASE_RESUME — they are surfaced
+# conditionally by archetype (see ``projects_for_archetype``), so the resume is
+# professional-first and the old generic "Personal Projects" block is gone.
+#
+# Identity / education / skills are not part of the canonical content doc, so
+# they stay here as constants.
 
-BASE_RESUME = {
+_IDENTITY = {
     "name": "Vishal Pathak",
     "email": "vishalp@thak.io",
     "location": "Atlanta, GA",
     "linkedin": "linkedin.com/in/vishalhpathak",
     "website": "vishal.pa.thak.io",
-    "education": {
-        "school": "Florida Institute of Technology",
-        "degree": "B.S. Electrical Engineering, cum laude",
-        "period": "2019--2021",
-    },
-    "skills": {
-        "Neuromorphic & Simulation": "Intel LavaSDK, NxSDK, Brian2, MuJoCo, Gymnasium API, FlyGym, VHDL, RTL design, AFSIM surrogate modeling",
-        "Programming & ML": "Python, C/C++, PyTorch, TensorFlow, NumPy, Matplotlib, scikit-learn, PyQt6",
-        "Systems & Hardware": "FPGA development, embedded systems (STM32), PCB design (EAGLE/Altium), serial protocols (RS-232/RS-485), ruggedized sensor deployment, HPC clusters",
-        "Tools & Platforms": "Git, CI/CD (Jacamar-CI), pytest, Docker, Linux, MATLAB, LabVIEW",
-    },
-    "experience": [
-        {
-            "org": "Georgia Tech Research Institute",
-            "title": "Algorithms \\& Analysis Engineer",
-            "location": "Atlanta, GA",
-            "period": "August 2021 -- Present",
-            "projects": [
-                {
-                    "name": "SPARSE: Spiking Processing for Autonomous RF \\& Sensor Engineering",
-                    "period": "Aug 2021 -- Jul 2024",
-                    "bullets": [
-                        "Developed VHDL models of CUBA and LIF neurons matching Intel's LavaSDK behavior, enabling seamless deployment of spiking neural networks from simulation to FPGA hardware",
-                        "Deployed and benchmarked custom spiking networks on Intel's Kapoho Bay neuromorphic platform, evaluating power consumption and inference performance for edge applications",
-                        "Contributed to DNN$\\to$SNN conversion pipeline using backpropagation in the spiking regime for overhead imagery and radar signal processing applications",
-                        "Trained deep learning models on GTRI's ICEHAMMER HPC cluster using PyTorch and TensorFlow frameworks",
-                    ],
-                },
-                {
-                    # NOTE: Spynel band below is assumed MWIR based on HGH's Spynel-S/X
-                    # line (the flagship MWIR panoramic thermal cameras); Vishal recalls
-                    # the unit as "Spynel M" but wasn't sure of the band. Confirm and
-                    # flip to LWIR if it was actually built around the Spynel-U.
-                    "name": "360-SA: 360° Situational Awareness",
-                    "period": "2023 -- Present",
-                    "bullets": [
-                        "Established comprehensive pytest-based unit test suite on HPC cluster, covering KITTI data ingestion, object detection, and tracking pipeline validation",
-                        "Designed and deployed Jacamar-CI pipeline to automate build, test, and deployment workflows for vehicle-mounted 360° camera systems",
-                        "Engineered hardware solution using TI's SD384EVK board to resolve impedance mismatch between cameras and Wolf Orin computing platform",
-                        "Built a custom frame grabber for HGH's Spynel MWIR panoramic thermal camera, bridging its native output into the 360-SA vision pipeline so detection and tracking modules could consume the feed alongside the existing visible-band cameras",
-                        "Modernized the 360-SA operator GUI by migrating the legacy tkinter application to PyQt6, adding collapsible and movable sub-windows, individually selectable UI elements, and a layout that matched the requested operator workflow",
-                    ],
-                },
-                {
-                    "name": "HACS: Hardware \\& Control System",
-                    "period": "2024",
-                    "bullets": [
-                        "Managed complete lifecycle of custom thermal control PCB: hand-populated 0402 components on milled EagleCAD boards and delivered integrated system for vehicle demo",
-                        "Developed C++ firmware for STM32 microcontroller to control thermal switches and stream status data over raw UDP/TCP protocols",
-                    ],
-                },
-                {
-                    "name": "GREMLIN: MWIR Video Processing",
-                    "period": "2023",
-                    "bullets": [
-                        "Performed literature review to select optimal model architectures for post-processing of MWIR video datasets",
-                        "Designed annotation-repair algorithm that re-labels mis-detections by running data through trained models, extracting metadata, and performing similarity comparison between detections",
-                    ],
-                },
-                {
-                    "name": "ENFIRE: Environmental Imaging",
-                    "period": "2024 -- Present",
-                    "bullets": [
-                        "Assembled rugged, portable sensor enclosure housing Jetson Orin, Ouster LiDAR, DAGR receiver, power pack, and network switch/router",
-                        "Conducted campus-scale SLAM and point-cloud mapping tests to validate environmental-imaging performance with and without enclosure",
-                    ],
-                },
-                {
-                    "name": "DRAGON: Drone Swarm Synchronization",
-                    "period": "2024",
-                    "bullets": [
-                        "Implemented Chrony time synchronization across multi-drone swarm and profiled system resilience under simulated network disruptions",
-                    ],
-                },
-                {
-                    "name": "PAAM: AFSIM Simulation Surrogate Modeling",
-                    "period": "2024",
-                    "bullets": [
-                        "Built visualizations and surrogate models for high-dimensional AFSIM simulation data, enabling exploratory analysis of sim outputs and faster iteration than re-running the full simulation for each parameter sweep",
-                    ],
-                },
-                {
-                    "name": "SHELAC: Rooftop Meteorological Sensor Deployment",
-                    "period": "Nov 2025 -- Present",
-                    "bullets": [
-                        "Deployed two weather stations and three anemometers along the northern edge of the building roof, running communication cabling from the rooftop through an access hatch into the LIDAR lab machine downstairs",
-                        "Sourced all cable stock, connectors, and converters for the install; fabricated and bench-tested the ruggedized Ethernet runs for the weather stations and the serial runs for the anemometers alongside a coworker before on-roof install",
-                        "Converted the Young sonic anemometer from RS-232 to RS-485 with an in-line converter to preserve signal integrity over the long cable run, which would otherwise have degraded the serial signal past a usable threshold",
-                    ],
-                },
-            ],
-        },
-        {
-            "org": "Rain Neuromorphics",
-            "title": "Electrical Engineering Intern",
-            "location": "Gainesville, FL",
-            "period": "May 2017 -- May 2018",
-            "projects": [
-                {
-                    "name": None,
-                    "period": None,
-                    "bullets": [
-                        "Designed and tested FPGA-based measurement system with Altera FPGA communicating with Arduino interface for characterizing in-house memristive devices",
-                        "Developed and manufactured PCB in EAGLE to house 40 leaky integrate-and-fire neurons, integrating measurement system circuitry",
-                        "Analyzed spiking behavior data output from measurement system to benchmark MNIST dataset performance on neuromorphic hardware",
-                    ],
-                },
-            ],
-        },
-    ],
+}
+
+_EDUCATION = {
+    "school": "Florida Institute of Technology",
+    "degree": "B.S. Electrical Engineering, cum laude",
+    "period": "2019--2021",
+}
+
+_SKILLS = {
+    "Neuromorphic & Simulation": "Intel LavaSDK, NxSDK, Brian2, MuJoCo, Gymnasium API, FlyGym, VHDL, RTL design, AFSIM surrogate modeling",
+    "Programming & ML": "Python, C/C++, PyTorch, TensorFlow, NumPy, Matplotlib, scikit-learn, PyQt6",
+    "Systems & Hardware": "FPGA development, embedded systems (STM32), PCB design (EAGLE/Altium), serial protocols (RS-232/RS-485), ruggedized sensor deployment, HPC clusters",
+    "Tools & Platforms": "Git, CI/CD (Jacamar-CI), pytest, Docker, Linux, MATLAB, LabVIEW",
 }
 
 
@@ -214,6 +129,11 @@ _BASE_TEMPLATE = r"""
 \section{Experience}
 
 <<EXPERIENCE_BLOCKS>>
+
+% ── Projects (conditional — rendered only when the archetype provides a
+% non-empty project bank; otherwise this placeholder collapses to nothing,
+% so tier_2 / tier_3 resumes carry no empty header) ─────────────────────────
+<<PROJECTS_SECTION>>
 
 \end{document}
 """
@@ -362,6 +282,102 @@ def _escape_latex_safe(text: str) -> str:
 
 # Backwards-compat alias for callers expecting the old name.
 _escape_latex = _escape_latex_safe
+
+
+# ── BASE_RESUME assembly from the canonical source ─────────────────────────
+
+
+def _build_base_resume() -> dict:
+    """Assemble ``BASE_RESUME`` from ``profile/resume_source.yml``.
+
+    Merges the identity/education/skills constants with the canonical
+    ``professional_experience`` (the resume's spine). GTRI's ordered
+    ``programs`` become the employer's resume ``projects`` (the renderer's
+    term), Rain follows. Personal projects are intentionally NOT included —
+    they're surfaced conditionally via :func:`projects_for_archetype`.
+
+    Employer-level ``org`` / ``title`` / ``location`` / ``period`` are
+    LaTeX-escaped at build time because the renderer inserts them verbatim
+    (so ``Algorithms & Analysis Engineer`` becomes ``Algorithms \\& ...``,
+    matching the hand-escaped form the old hardcoded BASE_RESUME carried).
+    Program names + bullets stay raw — the renderer escapes those itself.
+    """
+    src = load_resume_source()
+    experience: list[dict] = []
+    for org in src.get("professional_experience", []) or []:
+        programs = [
+            {
+                "name": prog.get("name"),
+                "period": prog.get("period"),
+                "bullets": list(prog.get("bullets") or []),
+            }
+            for prog in (org.get("programs") or [])
+        ]
+        experience.append(
+            {
+                "org": _escape_latex_safe(org.get("org") or ""),
+                "title": _escape_latex_safe(org.get("title") or ""),
+                "location": _escape_latex_safe(org.get("location") or ""),
+                "period": _escape_latex_safe(org.get("period") or ""),
+                "projects": programs,
+            }
+        )
+    return {
+        **_IDENTITY,
+        "education": _EDUCATION,
+        "skills": _SKILLS,
+        "experience": experience,
+    }
+
+
+# Module-level source of truth for the prompt + renderer. Other modules
+# (e.g. scripts/cv_sync_check.py) import this name.
+BASE_RESUME = _build_base_resume()
+
+
+def projects_for_archetype(archetype_key: str) -> list[dict]:
+    """Return the ordered project-bank subset to surface for an archetype.
+
+    Reads ``archetype_projects[key]`` from the canonical source and resolves
+    each key against ``project_bank``, preserving map order. An unknown
+    archetype or an empty mapping returns ``[]`` — meaning an all-professional
+    resume with no Projects section (tier_2 / tier_3 by design).
+    """
+    src = load_resume_source()
+    keys = (src.get("archetype_projects") or {}).get(
+        (archetype_key or "").strip(), []
+    )
+    bank = {p.get("key"): p for p in (src.get("project_bank") or [])}
+    return [bank[k] for k in keys if k in bank]
+
+
+def _render_project_bank_block(bank: list[dict]) -> str:
+    """Render the archetype's project bank for the resume prompt.
+
+    Empty bank ⇒ an explicit "no projects" instruction (tier_2 / tier_3
+    all-professional resumes). Non-empty ⇒ the candidate projects the model
+    may surface, with the order pre-sorted by relevance for the lane.
+    """
+    if not bank:
+        return (
+            "PROJECT BANK FOR THIS LISTING: none.\n"
+            "This listing type gets an ALL-PROFESSIONAL resume. Output an "
+            'empty "projects" list ([]) — do NOT invent a projects section.'
+        )
+    lines = [
+        "PROJECT BANK FOR THIS LISTING (the ONLY personal projects you may "
+        "surface — pick the 2-3 most relevant for THIS role, reframe each "
+        "one-liner into the listing's language without fabricating, and return "
+        'them in the "projects" output key. Never add a project not listed '
+        "here):"
+    ]
+    for p in bank:
+        lines.append(
+            f"- key: {p.get('key')}\n"
+            f"  name: {p.get('name')}\n"
+            f"  one_liner: {p.get('one_liner')}"
+        )
+    return "\n".join(lines)
 
 
 # Page typography constants used to fit the Education/Skills block. The
@@ -516,6 +532,32 @@ def _build_experience_block(exp: dict) -> str:
     return "\n".join(lines)
 
 
+def _build_projects_block(projects: list | None) -> str:
+    """Render the optional, compact Projects section.
+
+    Returns "" when there are no projects, so the renderer emits no empty
+    header (tier_2 / tier_3 all-professional resumes). Each project is one
+    tight line — bold name + its reframed one-liner — keeping the whole
+    section to a few lines so it can never crowd out professional experience.
+    Names + descriptions originate from the LLM, so both pass through
+    ``_escape_latex_safe``.
+    """
+    items: list[str] = []
+    for proj in projects or []:
+        name = _escape_latex_safe(proj.get("name") or "")
+        desc = _escape_latex_safe(
+            proj.get("description") or proj.get("one_liner") or ""
+        )
+        if name and desc:
+            items.append(f"  \\item \\textbf{{{name}}} -- {desc}")
+        elif name or desc:
+            items.append(f"  \\item {name or desc}")
+    if not items:
+        return ""
+    body = "\n".join(items)
+    return "\\section{Projects}\n\n\\begin{itemize}\n" + body + "\n\\end{itemize}"
+
+
 def _render_latex(tailored: dict, style: str = "classic") -> str:
     """Build the full LaTeX source for ``tailored`` in the chosen style.
 
@@ -549,6 +591,13 @@ def _render_latex(tailored: dict, style: str = "classic") -> str:
     ]
     latex = latex.replace(
         "<<EXPERIENCE_BLOCKS>>", "\n\n\\vspace{6pt}\n\n".join(exp_blocks)
+    )
+
+    # Conditional Projects section — only when the tailored dict carries a
+    # non-empty `projects` list (archetype-provided bank). Empty/absent ⇒ the
+    # placeholder collapses to nothing (no empty header).
+    latex = latex.replace(
+        "<<PROJECTS_SECTION>>", _build_projects_block(tailored.get("projects"))
     )
     return latex
 
@@ -593,16 +642,26 @@ def _experience_projects(tailored: dict) -> list[tuple[dict, dict]]:
 def _trim_one_unit(tailored: dict) -> bool:
     """Drop exactly one unit of content from ``tailored`` in place.
 
-    Order (the deterministic one-page guarantee):
-      1. Drop the last bullet of the longest-remaining project (the one with
-         the most bullets, while any project still has >1 bullet).
-      2. Once every project is at its floor (≤1 bullet), drop the
-         lowest-priority whole project — the last one in the LLM's order —
+    Order (the deterministic one-page guarantee). Personal projects are the
+    lowest-priority content — the professional spine is never sacrificed to
+    fit a project — so they trim FIRST:
+      0. While a personal `projects` entry remains, drop the last one (each is
+         a single line, lowest priority last).
+      1. Then drop the last bullet of the longest-remaining professional
+         entry (while any entry still has >1 bullet).
+      2. Once every professional entry is at its floor (≤1 bullet), drop the
+         lowest-priority whole entry — the last one in the LLM's order —
          removing its employer if that empties it.
 
     Returns True if something was trimmed, False if nothing remains to trim
-    (≤1 project left at the bullet floor).
+    (no personal projects and ≤1 professional entry at the bullet floor).
     """
+    # 0. Personal projects first — protect professional experience.
+    personal = tailored.get("projects")
+    if personal:
+        personal.pop()
+        return True
+
     pairs = _experience_projects(tailored)
     if not pairs:
         return False
@@ -694,7 +753,8 @@ def _trim_budget(tailored: dict) -> int:
     """
     pairs = _experience_projects(tailored)
     bullets = sum(len(p.get("bullets") or []) for _e, p in pairs)
-    return bullets + len(pairs) + 2
+    personal = len(tailored.get("projects") or [])
+    return bullets + len(pairs) + personal + 2
 
 
 def _fit_to_one_page(
@@ -773,7 +833,19 @@ def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
         or classify_archetype(job)
     )
     job["_archetype"] = archetype_meta
-    archetype_block = render_archetype_block(archetype_meta.get("archetype", ""))
+    archetype_key = archetype_meta.get("archetype", "")
+    archetype_block = render_archetype_block(archetype_key)
+
+    # Archetype-conditional project bank. Only the lane's subset (or none)
+    # reaches the model — projects can ONLY come from here, so the LLM can't
+    # inject a generic "Personal Projects" block on its own.
+    project_bank = projects_for_archetype(archetype_key)
+    project_bank_block = _render_project_bank_block(project_bank)
+    honesty = load_resume_source().get("honesty_constraints") or []
+    honesty_block = (
+        "HONESTY CONSTRAINTS (carry into every bullet + project line):\n"
+        + "\n".join(f"- {c}" for c in honesty)
+    ) if honesty else ""
 
     prompt = load_task_prompt(
         "tailor_latex_resume",
@@ -784,6 +856,14 @@ def generate_tailored_latex(job: dict, tailoring: dict) -> dict:
         job_desc=job_desc,
         match_chat_block=match_chat_block,
         archetype_block=archetype_block,
+        project_bank_block=project_bank_block,
+        honesty_block=honesty_block,
+    )
+
+    logger.info(
+        "Resume project bank for archetype %r: %s",
+        archetype_key,
+        [p.get("key") for p in project_bank] or "none (all-professional)",
     )
 
     # Session I: static rules + profile + voice ride in the cached

@@ -1,0 +1,202 @@
+# Canonical Resume Source — Vishal Pathak
+#
+# Structured transcription of profile/RESUME_CANONICAL_SOURCE.md (signed-off
+# content). This is the source of truth the tailor draws from:
+#
+#   - professional_experience  → the spine of every resume (GTRI, then Rain).
+#                                The tailor SELECTS the most listing-relevant
+#                                programs and REFRAMES the same real bullets in
+#                                the listing's language — never fabricating.
+#   - project_bank             → personal projects, surfaced CONDITIONALLY by
+#                                archetype (never a generic "Personal Projects"
+#                                block). Each carries its honest status.
+#   - archetype_projects       → archetype-key → ordered list of project keys
+#                                (or empty). Empty ⇒ all-professional resume.
+#   - honesty_constraints      → carried into every generated resume.
+#
+# Identity / education / skills are NOT here — they are not part of the
+# canonical content doc; they live as constants in tailor/latex_resume.py and
+# are merged with professional_experience into BASE_RESUME by the loader.
+#
+# Transcription notes:
+#   - Bullets are verbatim from the doc (the deep technical detail is the
+#     point — do not paraphrase).
+#   - "DNN->SNN" is rendered as the LaTeX math arrow ``$\to$`` so pdflatex
+#     (T1 fontenc, no arrow-aware package) compiles it; the prose is otherwise
+#     unchanged.
+#   - The doc's "(approx — confirm)" editorial notes are NOT resume content;
+#     they are preserved per-program under an unrendered ``date_note`` field so
+#     nothing is lost, while the ``period`` carries the clean date.
+
+professional_experience:
+  - org: Georgia Tech Research Institute
+    title: Algorithms & Analysis Engineer
+    location: Atlanta, GA
+    period: August 2021 -- Present
+    # The programs below are the raw material; the tailor selects the most
+    # relevant per listing and reframes the bullets in the listing's language.
+    programs:
+      - name: "SPARSE: Spiking Processing for Autonomous RF & Sensor Engineering"
+        period: Aug 2021 -- Jul 2024
+        bullets:
+          - VHDL models of CUBA and LIF neurons matching Intel's LavaSDK behavior, enabling SNN deployment from simulation to FPGA hardware
+          - Deployed and benchmarked custom spiking networks on Intel's Kapoho Bay neuromorphic platform (power + inference for edge)
+          - Contributed to a DNN$\to$SNN conversion pipeline (backprop in the spiking regime) for overhead imagery and radar signal processing
+          - Trained deep-learning models on GTRI's ICEHAMMER HPC cluster (PyTorch, TensorFlow)
+
+      - name: "360-SA: 360° Situational Awareness"
+        period: 2023 -- Present
+        bullets:
+          - Built a pytest suite on the HPC cluster covering KITTI ingestion, object detection, and tracking
+          - Designed a Jacamar-CI pipeline automating build/test/deploy for vehicle-mounted 360° camera systems
+          - Engineered a TI SD384EVK hardware fix for the impedance mismatch between cameras and the Wolf Orin compute platform (designed + populated a PCB)
+          - Built a custom frame grabber for HGH's Spynel MWIR panoramic thermal camera, bridging its feed into the 360-SA vision pipeline
+          - Migrated the operator GUI from tkinter to PyQt6 (collapsible/movable panels, selectable UI elements)
+
+      - name: "GREMLIN: MWIR Video Processing"
+        period: "2025"
+        date_note: approx — code had 2023; confirm
+        bullets:
+          - Literature review to select model architectures for MWIR video post-processing
+          - Designed an annotation-repair algorithm that re-labels mis-detections by running data through trained models, extracting metadata, and comparing detection similarity
+          - Benchmarked server requirements against dataset size and project specs
+
+      - name: "ENFIRE: Environmental Imaging"
+        period: "2024"
+        date_note: approx — confirm
+        bullets:
+          - Assembled a rugged, portable sensor enclosure housing a Jetson Orin, Ouster LiDAR, DAGR receiver, AC battery pack, and network switch/router
+          - Integrated a CubeOrange autopilot with a Here 3 GNSS module into the hardware stack, replacing the DAGR as the positioning source
+          - Ran campus-scale SLAM and point-cloud mapping tests to validate environmental-imaging performance with and without the enclosure
+
+      - name: "HACS: Hardware & Control System"
+        period: "2024"
+        bullets:
+          - "Owned a custom thermal-control PCB end to end: hand-populated 0402 components on milled EagleCAD boards and delivered the integrated system for a vehicle demo"
+          - Wrote C++ firmware for an STM32 driving thermal switches and a status-LED array toggled by network messages over raw UDP/TCP
+
+      - name: "DRAGON: Drone Swarm Synchronization"
+        period: "2024"
+        bullets:
+          - Implemented Chrony time synchronization across a multi-drone swarm and profiled resilience under simulated network disruption
+
+      - name: "PAAM: AFSIM Simulation Surrogate Modeling"
+        period: "2022"
+        bullets:
+          - Built visualizations and surrogate models for high-dimensional AFSIM data, enabling exploratory analysis far faster than re-running the full simulation per parameter sweep
+
+      - name: "SHELAC: Rooftop Meteorological Sensor Deployment"
+        period: Dec 2025 -- Mar 2026
+        date_note: approx — confirm
+        bullets:
+          - Deployed two weather stations and three anemometers on the building roof, running comms cabling from the roof through an access hatch into the LIDAR lab below
+          - Sourced all cable stock/connectors and fabricated + bench-tested the ruggedized Ethernet (weather stations) and serial (anemometers) runs
+          - Converted the Young sonic anemometer from RS-232 to RS-485 in-line to preserve signal integrity over the long cable run
+
+      - name: "LMAO: Lab Inventory System Modernization"
+        period: Apr 2026 -- Present
+        date_note: approx — "past two months"
+        bullets:
+          - "Migrated the lab's equipment-checkout system from a legacy Flask portal to Django, enabling features like email reminders and automated database backups (system serves Raspberry-Pi kiosks, a REST API, and an admin interface)"
+          # Optional agentic emphasis (selected only for agentic listings):
+          - Drove the migration by orchestrating AI coding agents (Cline + Claude Code) against structured, acceptance-criteria-driven sessions
+
+  - org: Rain Neuromorphics
+    title: Electrical Engineering Intern
+    location: Gainesville, FL
+    period: May 2017 -- May 2018
+    # KEPT AS-IS per instruction.
+    programs:
+      - name: null
+        period: null
+        bullets:
+          - "Joined as employee #5 at age 19; designed, manufactured, and hand-populated a 40-neuron leaky-integrate-and-fire PCB in EAGLE for characterizing in-house memristive devices"
+          - Built an FPGA-based measurement system (Altera FPGA + Arduino) and supporting software to capture spiking-behavior data; benchmarked MNIST performance on neuromorphic hardware end to end
+
+# Personal projects, surfaced conditionally by archetype (see
+# archetype_projects). one_liner is verbatim from the doc, including the
+# honest status; archetypes tags mirror the doc's grouping.
+project_bank:
+  - key: job-pipeline
+    name: Autonomous job-application pipeline
+    one_liner: >-
+      multi-source discovery -> LLM scoring on a dual fit/legitimacy axis ->
+      tailored resume + cover-letter generation -> agentic browser pre-fill that
+      stops at submit for a human gate. CI, ~45 tests, Supabase audit trail
+      (every attempt writes an evidenced row). Built and operate solo.
+    archetypes: [tier_1_5_agentic_builder]
+
+  - key: meridian
+    name: MERIDIAN — autonomous options-trading system
+    one_liner: >-
+      three parallel LLM specialist agents plus a judge ensemble, RAG over
+      ChromaDB, a scheduled autonomous decision loop, running on Alpaca paper
+      money with cost tracking; 25 tests. Paper trading, not real capital.
+    archetypes: [tier_1_5_agentic_builder]
+
+  - key: universal-appointer
+    name: universal-appointer
+    one_liner: >-
+      a voice-AI agent that places real outbound phone calls (Vapi) to schedule
+      appointments; task-agnostic engine, Typer CLI, tested. Single-user.
+    archetypes: [tier_1_5_agentic_builder]
+
+  - key: instagram-saves
+    name: instagram-saves
+    one_liner: >-
+      agentic ETL turning saved Instagram posts into a searchable Notion
+      knowledge base via OCR + Whisper + Claude classification; tested. WIP.
+    archetypes: [tier_1_5_agentic_builder]
+
+  - key: papercuts
+    name: papercuts
+    one_liner: >-
+      a private, members-only book-club website (live at papercuts.cc):
+      magic-link auth, a monthly-meeting flow, and an audiobook library; Next.js
+      + Supabase, real members. The one thing that's genuinely shipped — concrete
+      proof of taking an idea to a live product fast with agentic-assisted
+      development. Live, real users.
+    archetypes: [tier_1_5_agentic_builder]
+
+  - key: sleepstories
+    name: sleepstories
+    one_liner: >-
+      a multi-model generative pipeline (LLM script -> TTS narration -> per-chapter
+      music -> image/video gen) producing a 30-minute sleep-story video. Proof of
+      concept.
+    archetypes: [tier_1_5_agentic_builder]
+
+  - key: cellular-gaits
+    name: cellular-gaits
+    one_liner: >-
+      a neural cellular automaton evolved with CMA-ES that drives a Flygym/MuJoCo
+      biomechanical fruit-fly model to a measured walking gait. Finished, runs.
+      The Hodgkin-Huxley -> embodied-sim through-line made concrete.
+    archetypes: [tier_1a_compneuro, tier_1b_neuromorphic, tier_1c_bci]
+
+# archetype-key → ordered list of project_bank keys to surface (most relevant
+# first). Empty list ⇒ NO projects section (all-professional resume).
+archetype_projects:
+  tier_1_5_agentic_builder:
+    - job-pipeline
+    - meridian
+    - universal-appointer
+    - instagram-saves
+    - papercuts
+    - sleepstories          # optional / last
+  tier_1a_compneuro:
+    - cellular-gaits
+  tier_1b_neuromorphic:
+    - cellular-gaits
+  tier_1c_bci:
+    - cellular-gaits
+  tier_2_ai_se: []
+  tier_3_mission_ml: []
+
+honesty_constraints:
+  - >-
+    Agentic projects are "built/operate solo" or WIP — never "shipped to
+    thousands." papercuts is the exception and may be shown as a genuinely
+    shipped, live product with real members (papercuts.cc).
+  - MERIDIAN is explicitly paper trading.
+  - Status as stated above; nothing rounded up. Reframe, never fabricate.

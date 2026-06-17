@@ -120,6 +120,28 @@ def load_application_defaults() -> dict:
     return defaults if isinstance(defaults, dict) else {}
 
 
+def load_resume_source() -> dict:
+    """Return the canonical resume source (``profile/resume_source.yml``).
+
+    The structured, signed-off transcription of
+    ``profile/RESUME_CANONICAL_SOURCE.md``. Shape:
+
+    - ``professional_experience`` — list of orgs (GTRI then Rain); each GTRI
+      program is an ordered entry with ``name`` / ``period`` / ``bullets``.
+      This is the spine of every tailored resume.
+    - ``project_bank`` — personal projects (``key`` / ``name`` / ``one_liner``
+      / ``archetypes``), surfaced conditionally by archetype.
+    - ``archetype_projects`` — archetype-key → ordered list of project keys
+      (empty ⇒ all-professional resume, no projects section).
+    - ``honesty_constraints`` — carried into every generated resume.
+
+    Returns an empty dict if the file is missing. Callers (``latex_resume``)
+    merge ``professional_experience`` with the identity/skills/education
+    constants into ``BASE_RESUME``.
+    """
+    return _read_yaml("resume_source.yml")
+
+
 def load_article_digest() -> str:
     """Return `profile/article-digest.md` contents (empty string if missing)."""
     return _read_text("article-digest.md")

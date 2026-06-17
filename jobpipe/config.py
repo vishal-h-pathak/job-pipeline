@@ -122,7 +122,7 @@ _CLAUDE_MODEL_FALLBACK: Final[str | None] = os.environ.get("CLAUDE_MODEL")
 TAILOR_CLAUDE_MODEL: Final[str] = (
     os.environ.get("TAILOR_CLAUDE_MODEL")
     or _CLAUDE_MODEL_FALLBACK
-    or "claude-sonnet-4-20250514"
+    or "claude-sonnet-4-6"
 )
 SUBMITTER_CLAUDE_MODEL: Final[str] = (
     os.environ.get("SUBMITTER_CLAUDE_MODEL")

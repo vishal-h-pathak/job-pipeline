@@ -65,7 +65,7 @@ archetypes:
     emphasis_proof_points:
       - VHDL CUBA/LIF neuron models matching Intel LavaSDK behavior
       - DNN→SNN conversion pipeline with backprop in spiking regime
-      - FlyGym + MuJoCo + connectomics personal projects
+      - FlyGym + MuJoCo + connectomics embodied-sim depth (cellular-gaits)
       - Hodgkin–Huxley origin story and the 10-year through-line
     tone_guidance: |
       Technical, mechanistic, comfortable with biology + engineering

@@ -65,6 +65,11 @@ from jobpipe.config import (  # noqa: E402
     HUMAN_APPROVAL_REQUIRED,
     MAX_ATTEMPTS_PER_JOB,
     SUBMIT_POLL_INTERVAL_SECONDS,
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY,
+    WATCH_POLL_INTERVAL_SECONDS,
+    WATCH_RECONNECT_MIN_SECONDS,
+    WATCH_RECONNECT_MAX_SECONDS,
 )
 from jobpipe.db import (  # noqa: E402
     get_approved_jobs,
@@ -428,17 +433,15 @@ def process_prefill_requested_jobs():
     # Lazy imports so the module stays importable without Playwright
     # installed (e.g. for --status / --test-tailor).
     from playwright.sync_api import sync_playwright
-    from jobpipe.shared.ats_detect import detect_ats, get_applicant
-    from jobpipe.submit.adapters.prepare_dom.universal import UniversalApplicant
     from jobpipe.submit.browser.local import open_browser_context, is_headless
-    from url_resolver import resolve_application_url
-    import json
 
     jobs = get_prefill_requested_jobs()
     if not jobs:
         return
 
     logger.info(f"Found {len(jobs)} prefill-requested job(s)")
+
+    dispatch = _make_prefill_dispatch()
 
     # One browser window for the whole run; a new tab per job (Part 1). The
     # context owns the window — close it once, after the last job. Individual
@@ -448,17 +451,38 @@ def process_prefill_requested_jobs():
         context, close_browser = open_browser_context(pw, headless=is_headless())
         try:
             for job in jobs:
-                _prefill_one_job(
-                    job,
-                    context,
-                    detect_ats=detect_ats,
-                    get_applicant=get_applicant,
-                    UniversalApplicant=UniversalApplicant,
-                    resolve_application_url=resolve_application_url,
-                    json=json,
-                )
+                dispatch(job, context)
         finally:
             close_browser()
+
+
+def _make_prefill_dispatch():
+    """Build a ``dispatch(job, context)`` callable wired with the lazy-imported
+    prepare-flow deps.
+
+    Both the one-shot ``process_prefill_requested_jobs`` cycle and the
+    long-lived ``run_submit_watch`` watcher fill a job the same way — open a tab
+    in the shared context, run the per-ATS handler (or the universal vision
+    fallback), then block on the stop-and-wait advance. Centralising the import
+    wiring here keeps the two call sites from drifting.
+    """
+    from jobpipe.shared.ats_detect import detect_ats, get_applicant
+    from jobpipe.submit.adapters.prepare_dom.universal import UniversalApplicant
+    from url_resolver import resolve_application_url
+    import json
+
+    def _dispatch(job, context):
+        _prefill_one_job(
+            job,
+            context,
+            detect_ats=detect_ats,
+            get_applicant=get_applicant,
+            UniversalApplicant=UniversalApplicant,
+            resolve_application_url=resolve_application_url,
+            json=json,
+        )
+
+    return _dispatch
 
 
 def _prefill_one_job(job, context, *, detect_ats, get_applicant,
@@ -1041,14 +1065,119 @@ def run_submit_only() -> None:
     parser.add_argument(
         "--status", action="store_true", help="Print job counts by status"
     )
+    parser.add_argument(
+        "--watch", action="store_true",
+        help="Stay alive and drive the browser on each dashboard 'Pre-fill' "
+             "click via Supabase Realtime (idle on a websocket otherwise).",
+    )
+    parser.add_argument(
+        "--poll", type=int, nargs="?", const=0, default=None, metavar="SECONDS",
+        help="With --watch, use the polling fallback instead of Realtime: "
+             "re-scan the prefilling queue every SECONDS "
+             f"(default {WATCH_POLL_INTERVAL_SECONDS}s when no value given).",
+    )
     args = parser.parse_args()
 
     if args.status:
         print_status()
         return
 
+    if args.watch or args.poll is not None:
+        run_submit_watch(poll_seconds=args.poll)
+        return
+
     logger.info(f"=== Submit (pre-fill) cycle at {datetime.utcnow().isoformat()} ===")
     process_prefill_requested_jobs()
+
+
+def build_submit_watcher(*, poll_seconds: int | None = None):
+    """Construct a :class:`SubmitWatcher` wired to the real prepare flow.
+
+    Factored out of :func:`run_submit_watch` so the wiring (which collaborators
+    the watcher gets) is unit-testable without opening a browser or a websocket.
+    ``poll_seconds`` selects the ``--poll`` fallback transport; ``None`` uses
+    Supabase Realtime.
+    """
+    from playwright.sync_api import sync_playwright
+    from jobpipe.submit.browser.local import open_browser_context, is_headless
+    from jobpipe.submit.watch import (
+        SubmitWatcher,
+        PollEventSource,
+        RealtimeEventSource,
+    )
+
+    dispatch = _make_prefill_dispatch()
+
+    def _open_context():
+        # The watcher owns one persistent context for its whole lifetime. We
+        # keep the sync_playwright() context-manager open by stashing it on the
+        # closer so teardown stops Playwright too.
+        pw_cm = sync_playwright()
+        pw = pw_cm.__enter__()
+        context, close_browser = open_browser_context(pw, headless=is_headless())
+
+        def _closer():
+            try:
+                close_browser()
+            finally:
+                pw_cm.__exit__(None, None, None)
+
+        return context, _closer
+
+    def _make_source(enqueue, stop_event):
+        if poll_seconds is not None:
+            return PollEventSource(
+                enqueue, stop_event,
+                interval=poll_seconds or WATCH_POLL_INTERVAL_SECONDS,
+            )
+        return RealtimeEventSource(
+            enqueue, stop_event,
+            url=SUPABASE_URL,
+            token=SUPABASE_SERVICE_ROLE_KEY,
+            reconnect_min=WATCH_RECONNECT_MIN_SECONDS,
+            reconnect_max=WATCH_RECONNECT_MAX_SECONDS,
+        )
+
+    return SubmitWatcher(
+        open_context=_open_context,
+        fetch_pending=get_prefill_requested_jobs,
+        fetch_one=get_job,
+        process_one=dispatch,
+        make_source=_make_source,
+    )
+
+
+def run_submit_watch(*, poll_seconds: int | None = None) -> None:
+    """Long-lived local watcher: hold one browser open, act on dashboard clicks.
+
+    Default transport is Supabase Realtime (idle on a websocket, acts the instant
+    a row hits ``status='prefilling'``). ``poll_seconds`` switches to the
+    ``--poll`` fallback. Runs until SIGINT; on Ctrl-C it closes the browser
+    cleanly. See :mod:`jobpipe.submit.watch` for the threading model and
+    ``jobpipe/submit/README.md`` for setup (one-time ATS login, ``channel=chrome``,
+    launchd auto-start).
+    """
+    import signal
+
+    transport = "poll" if poll_seconds is not None else "realtime"
+    logger.info(
+        "=== Submit watcher starting (%s) at %s ===",
+        transport, datetime.utcnow().isoformat(),
+    )
+    watcher = build_submit_watcher(poll_seconds=poll_seconds)
+
+    def _handle_sigint(signum, frame):
+        logger.info("SIGINT — stopping watcher")
+        watcher.request_stop()
+
+    try:
+        signal.signal(signal.SIGINT, _handle_sigint)
+    except (ValueError, OSError):
+        # Not on the main thread (e.g. some test runners) — Ctrl-C still raises
+        # KeyboardInterrupt, which run() catches.
+        pass
+
+    watcher.run()
 
 
 if __name__ == "__main__":

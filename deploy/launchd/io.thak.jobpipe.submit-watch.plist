@@ -22,12 +22,17 @@
     <key>Label</key>
     <string>io.thak.jobpipe.submit-watch</string>
 
-    <!-- The installed console script: `jobpipe-submit --watch`. Absolute path
-         to the venv's binary so launchd (which has no shell PATH) finds it. -->
+    <!-- Runs the venv's jobpipe-submit console script in watch + poll mode
+         (re-scan the prefilling queue every 15s) instead of depending on the
+         Supabase Realtime websocket, which proved unreliable for filtered
+         UPDATE delivery under launchd. Polling is robust and a 15s latency on a
+         personal tool is fine. Absolute path so launchd (no shell PATH) finds it. -->
     <key>ProgramArguments</key>
     <array>
         <string>@@VENV_BIN@@/jobpipe-submit</string>
         <string>--watch</string>
+        <string>--poll</string>
+        <string>15</string>
     </array>
 
     <!-- Repo root so load_dotenv() finds .env. -->

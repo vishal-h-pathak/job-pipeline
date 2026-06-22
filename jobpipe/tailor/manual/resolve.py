@@ -28,7 +28,11 @@ from __future__ import annotations
 import logging
 
 from jobpipe.shared.ats_detect import detect_ats
-from jobpipe.tailor.url_resolver import resolve_application_url
+from jobpipe.tailor.url_resolver import (
+    resolve_application_url,
+    resolve_headless_enabled,
+    resolve_to_ats_headless,
+)
 
 from . import ScrapedPosting
 from .scrape_ashby import fetch_ashby_posting
@@ -55,6 +59,19 @@ def resolve_url(url: str) -> ScrapedPosting:
         )
 
     ats = detect_ats(target)
+
+    # On-demand headless fallback: the static path couldn't identify an ATS
+    # (still generic/aggregator). With JOBPIPE_RESOLVE_HEADLESS on, drive a real
+    # browser through the JS Apply flow to capture the final ATS URL. Off by
+    # default — this is a single-job, human-initiated paste, so the cost is
+    # acceptable when opted in.
+    if ats == "generic" and resolve_headless_enabled():
+        headless_url = resolve_to_ats_headless(target)
+        if headless_url:
+            logger.info("manual: headless-resolved %s → %s", target, headless_url)
+            target = headless_url
+            ats = detect_ats(target)
+
     logger.info("manual: ats_kind=%s for %s", ats, target)
 
     if ats == "greenhouse":

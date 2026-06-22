@@ -129,6 +129,66 @@ def test_transient_fetch_never_drops(monkeypatch):
     assert job["link_status"] == "aggregator_unverified"
 
 
+# ── Gated headless fallback upgrade ─────────────────────────────────────────
+
+def test_aggregator_headless_upgrade_when_enabled(monkeypatch):
+    """With JOBPIPE_RESOLVE_HEADLESS on, an unverified aggregator that the
+    static path couldn't crack is upgraded to 'direct' when the headless
+    resolver reaches a real ATS."""
+    monkeypatch.setattr(agent, "resolve_application_url", _resolve_stub(**{
+        AGG: {"resolved": AGG, "is_ats": False, "status_code": 200,
+              "html": "<p>apply</p>"},
+    }))
+    monkeypatch.setattr(agent, "resolve_headless_enabled", lambda: True)
+    monkeypatch.setattr(agent, "resolve_to_ats_headless", lambda url, **k: GREENHOUSE)
+    job = _job()
+
+    decision, _ = agent._resolve_link_and_liveness(job)
+
+    assert decision == "ok"
+    assert job["link_status"] == "direct"
+    assert job["application_url"] == GREENHOUSE
+    assert job["ats_kind"] == "greenhouse"
+
+
+def test_aggregator_headless_not_called_when_disabled(monkeypatch):
+    monkeypatch.setattr(agent, "resolve_application_url", _resolve_stub(**{
+        AGG: {"resolved": AGG, "is_ats": False, "status_code": 200,
+              "html": "<p>apply</p>"},
+    }))
+    monkeypatch.setattr(agent, "resolve_headless_enabled", lambda: False)
+
+    def _boom(*a, **k):
+        raise AssertionError("headless must not run when the flag is off")
+
+    monkeypatch.setattr(agent, "resolve_to_ats_headless", _boom)
+    job = _job()
+
+    decision, _ = agent._resolve_link_and_liveness(job)
+
+    assert decision == "ok"
+    assert job["link_status"] == "aggregator_unverified"
+    assert job["application_url"] == AGG
+
+
+def test_aggregator_headless_miss_stays_flagged(monkeypatch):
+    """Headless enabled but it couldn't reach an ATS → posting stays honestly
+    flagged as aggregator_unverified (not silently passed as a clean form)."""
+    monkeypatch.setattr(agent, "resolve_application_url", _resolve_stub(**{
+        AGG: {"resolved": AGG, "is_ats": False, "status_code": 200,
+              "html": "<p>apply</p>"},
+    }))
+    monkeypatch.setattr(agent, "resolve_headless_enabled", lambda: True)
+    monkeypatch.setattr(agent, "resolve_to_ats_headless", lambda url, **k: None)
+    job = _job()
+
+    decision, _ = agent._resolve_link_and_liveness(job)
+
+    assert decision == "ok"
+    assert job["link_status"] == "aggregator_unverified"
+    assert job["application_url"] == AGG
+
+
 # ── _drop_as_suspicious (post-score gate) ───────────────────────────────────
 
 @pytest.mark.parametrize(

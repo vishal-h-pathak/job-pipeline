@@ -28,3 +28,15 @@ must also handle (schema.org JobPosting is a W3C spec, not a guess):
 |---|---|---|
 | `jsonld_jobposting.html` | schema.org JSON-LD `JobPosting.url` | ashby URL |
 | `anchor_apply.html` | anchor / `data-*` attr pointing at an ATS host | lever URL |
+
+## Source-URL extraction fixtures (`_extract_source_url_from_html`)
+
+These exercise recovery of the canonical *source* posting URL even when it is
+**not** on an ATS host — the input to the resolver's recursion (TealHQ →
+careers.qualcomm.com → the real ATS form a hop later). Distinct from the ATS
+extractor above, which only matches known-ATS hosts.
+
+| Fixture | Strategy it exercises | Expected |
+|---|---|---|
+| `teal_nextdata_qualcomm.html` | Next.js `<script id="__NEXT_DATA__">` `url` field → non-ATS careers host | `careers.qualcomm.com/...` |
+| `jsonld_source_careers.html` | schema.org JSON-LD `JobPosting.url` → non-ATS careers host | `careers.acme.com/...` |

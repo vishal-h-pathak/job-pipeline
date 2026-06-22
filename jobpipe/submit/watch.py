@@ -84,6 +84,83 @@ def extract_job_id(payload: object) -> Optional[str]:
     return str(jid) if jid else None
 
 
+class WatcherCoordinator:
+    """Decide whether THIS machine may claim jobs, and write its heartbeat.
+
+    The dual-machine design (feat/dual-machine-watcher) keeps a watcher running
+    on every machine but lets only one — the ``active_watcher_id`` in the
+    singleton ``watcher_config`` row — actually claim ``prefilling`` jobs. This
+    object is the per-cycle decision, injected into :class:`SubmitWatcher` as its
+    ``coordinate`` callback. Each :meth:`should_claim` call does exactly one
+    config read + one heartbeat write, so the dormant path stays cheap.
+
+    Collaborators are injected so this is testable without a real database:
+
+      * ``get_active() -> str | None`` — current ``active_watcher_id``.
+      * ``record_heartbeat(watcher_id, state)`` — upsert this machine's liveness.
+    """
+
+    def __init__(
+        self,
+        *,
+        watcher_id: str,
+        get_active: Callable[[], Optional[str]],
+        record_heartbeat: Callable[[str, str], None],
+    ) -> None:
+        self._watcher_id = watcher_id
+        self._get_active = get_active
+        self._record_heartbeat = record_heartbeat
+        # Latch so the "nobody is active" guidance is logged once per unset
+        # streak, not every cycle. Reset when a machine is set.
+        self._warned_unset = False
+
+    def should_claim(self) -> bool:
+        """Return True iff this machine is the active one; write a heartbeat.
+
+        Reads ``active_watcher_id`` first so the heartbeat reflects this cycle's
+        decision. A read failure is treated as "dormant" (safer than letting two
+        machines act on a transient error) and never raises into the watcher
+        loop. When no machine is active, logs a one-time INFO telling the user
+        how to pick one, then stays dormant — both machines acting is worse than
+        neither.
+        """
+        try:
+            active = self._get_active()
+        except Exception:
+            logger.exception("active-watcher read failed — staying dormant")
+            self._safe_heartbeat("dormant")
+            return False
+
+        is_active = active is not None and active == self._watcher_id
+        self._safe_heartbeat("active" if is_active else "dormant")
+
+        if active is None:
+            if not self._warned_unset:
+                logger.info(
+                    "No active watcher is set — this machine (%s) is dormant and "
+                    "will not claim jobs. Pick one with "
+                    "`jobpipe-submit --set-active %s` or from the dashboard.",
+                    self._watcher_id, self._watcher_id,
+                )
+                self._warned_unset = True
+            return False
+
+        # A machine is set; allow the unset guidance to fire again if it clears.
+        self._warned_unset = False
+        if not is_active:
+            logger.debug(
+                "Dormant — active watcher is %s, this is %s",
+                active, self._watcher_id,
+            )
+        return is_active
+
+    def _safe_heartbeat(self, state: str) -> None:
+        try:
+            self._record_heartbeat(self._watcher_id, state)
+        except Exception:  # a heartbeat write must never kill the watch loop
+            logger.exception("heartbeat write failed for %s", self._watcher_id)
+
+
 class SubmitWatcher:
     """Hold one browser open and drive it when rows transition to ``prefilling``."""
 
@@ -95,6 +172,7 @@ class SubmitWatcher:
         fetch_one: Callable[[str], Optional[dict]],
         process_one: Callable[[dict, object], None],
         make_source: Callable[["_Enqueue", threading.Event], "EventSource"],
+        coordinate: Callable[[], bool] | None = None,
         consumer_poll_timeout: float = 1.0,
     ) -> None:
         self._open_context = open_context
@@ -102,6 +180,12 @@ class SubmitWatcher:
         self._fetch_one = fetch_one
         self._process_one = process_one
         self._make_source = make_source
+        # Dual-machine gate (feat/dual-machine-watcher): returns True when THIS
+        # machine is the active one and may claim jobs. It also writes this
+        # machine's heartbeat as a side effect, so it must be called once per
+        # poll cycle even when dormant. Defaults to "always active" so the
+        # single-machine wiring and existing tests need no coordinator.
+        self._coordinate = coordinate or (lambda: True)
         self._consumer_poll_timeout = consumer_poll_timeout
 
         self._queue: "queue.Queue[object]" = queue.Queue()
@@ -130,7 +214,17 @@ class SubmitWatcher:
         self._queue.put(job_id)
 
     def _catch_up(self) -> None:
-        """Enqueue every row currently sitting in ``prefilling`` (deduped)."""
+        """Enqueue every row currently sitting in ``prefilling`` (deduped).
+
+        Runs on every poll tick and realtime (re)connect, so this is where the
+        per-cycle heartbeat + active-check live. ``_coordinate()`` writes this
+        machine's heartbeat and returns whether it may claim; a dormant machine
+        returns here without enqueuing anything (cheap: one config read + one
+        heartbeat write, no browser, no claim).
+        """
+        if not self._coordinate():
+            logger.debug("Dormant this cycle — not claiming prefilling jobs")
+            return
         try:
             pending = self._fetch_pending() or []
         except Exception:  # never let a transient read kill the loop
@@ -150,6 +244,13 @@ class SubmitWatcher:
             return
         job_id = str(item)
         try:
+            # Active-check gates *claiming* a realtime job event too (poll-mode
+            # claims are already gated in _catch_up). A job whose process_one is
+            # already running is unaffected — only the claim is gated, so an
+            # in-progress stop-and-wait cycle finishes even if the toggle flips.
+            if not self._coordinate():
+                logger.debug("Dormant — not claiming %s this cycle", job_id)
+                return
             job = self._fetch_one(job_id)
             # Re-read at process time: the row may have already advanced (handled
             # by a prior pass, or skipped) between enqueue and now.

@@ -663,3 +663,87 @@ def verify_materials_hash(job: dict, resume_bytes: bytes,
         )
         return False
     return True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  WATCHER COORDINATION — dual-machine submit-watcher toggle + heartbeats
+#  (feat/dual-machine-watcher; tables from migration 015)
+# ══════════════════════════════════════════════════════════════════════════
+# Both tables are service-role-only (RLS, no policies) so these go through the
+# same service-role client as the rest of the pipeline. `watcher_config` is a
+# singleton keyed on the literal id=true; `watcher_heartbeats` is one row per
+# machine, upserted on its `watcher_id` primary key.
+
+def get_active_watcher_id() -> str | None:
+    """Return the machine currently allowed to claim prefilling jobs.
+
+    ``None`` means no machine is active (the seeded default) — every watcher
+    stays dormant until the user picks one via the dashboard or the
+    ``jobpipe-submit --set-active`` CLI.
+    """
+    result = (
+        _get_client().table("watcher_config")
+        .select("active_watcher_id")
+        .eq("id", True)
+        .limit(1)
+        .execute()
+    )
+    rows = result.data or []
+    if not rows:
+        return None
+    return rows[0].get("active_watcher_id")
+
+
+def set_active_watcher_id(watcher_id: str | None) -> None:
+    """Set (or clear, with ``None``) which machine may claim jobs.
+
+    Upserts the singleton ``watcher_config`` row so the toggle works even if the
+    seed insert from migration 015 never ran.
+    """
+    (
+        _get_client().table("watcher_config")
+        .upsert(
+            {
+                "id": True,
+                "active_watcher_id": watcher_id,
+                "updated_at": _utcnow(),
+            },
+            on_conflict="id",
+        )
+        .execute()
+    )
+    logger.info("active_watcher_id -> %s", watcher_id)
+
+
+def record_heartbeat(watcher_id: str, state: str) -> None:
+    """Record that ``watcher_id`` is alive, in ``state`` ('active'|'dormant').
+
+    Called once per poll cycle by the watcher. Upserts on the ``watcher_id``
+    primary key so the dashboard sees a fresh ``last_seen`` for liveness.
+    """
+    (
+        _get_client().table("watcher_heartbeats")
+        .upsert(
+            {
+                "watcher_id": watcher_id,
+                "state": state,
+                "last_seen": _utcnow(),
+            },
+            on_conflict="watcher_id",
+        )
+        .execute()
+    )
+
+
+def get_watcher_heartbeats() -> list[dict]:
+    """Return every known machine's heartbeat row (newest first).
+
+    Powers the dashboard's machine list and the CLI ``--who-is-active`` view.
+    """
+    result = (
+        _get_client().table("watcher_heartbeats")
+        .select("watcher_id, last_seen, state")
+        .order("last_seen", desc=True)
+        .execute()
+    )
+    return result.data or []

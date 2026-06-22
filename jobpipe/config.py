@@ -178,8 +178,30 @@ REVIEW_DASHBOARD_URL: Final[str]       = os.environ.get(
 BROWSER_PROFILE_ENV: Final[str]     = "JOBPIPE_BROWSER_PROFILE"
 BROWSER_PROFILE_DEFAULT: Final[str] = "~/.jobpipe/chrome-profile"
 BROWSER_CDP_ENV: Final[str]         = "JOBPIPE_BROWSER_CDP"
+# Playwright browser channel for the persistent visible context. Empty →
+# Playwright's bundled Chromium (the historical default). ``chrome`` drives the
+# user's installed Google Chrome (``channel="chrome"``); ``msedge`` / ``chrome-beta``
+# also work. Read live (an env *name*) so the watcher / a test can set it after
+# import. Only the local visible prepare flow honours it; the cookieless headless
+# fallback ignores it so CI never depends on a system Chrome being installed.
+BROWSER_CHANNEL_ENV: Final[str]     = "JOBPIPE_BROWSER_CHANNEL"
 HANDOFF_DIR_ENV: Final[str]         = "JOBPIPE_HANDOFF_DIR"
 HANDOFF_DIR_DEFAULT: Final[str]     = "~/Downloads/jobpipe"
+
+# Local submit watcher (jobpipe-submit --watch). Default transport is Supabase
+# Realtime (event-driven, idle on a websocket). The ``--poll`` fallback re-reads
+# the prefilling queue every WATCH_POLL_INTERVAL_SECONDS for environments where
+# Realtime is unavailable. The realtime thread reconnects with exponential
+# backoff between WATCH_RECONNECT_MIN_SECONDS and WATCH_RECONNECT_MAX_SECONDS.
+WATCH_POLL_INTERVAL_SECONDS: Final[int] = int(
+    os.environ.get("WATCH_POLL_INTERVAL_SECONDS", "15")
+)
+WATCH_RECONNECT_MIN_SECONDS: Final[float] = float(
+    os.environ.get("WATCH_RECONNECT_MIN_SECONDS", "1.0")
+)
+WATCH_RECONNECT_MAX_SECONDS: Final[float] = float(
+    os.environ.get("WATCH_RECONNECT_MAX_SECONDS", "30.0")
+)
 # Per-adapter minimum confidence for auto-submit. Jobs below this route
 # to needs_review regardless of AUTO_SUBMIT_THRESHOLD.
 ATS_CONFIDENCE_MIN: Final[dict[str, float]] = {

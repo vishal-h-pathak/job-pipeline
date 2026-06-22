@@ -70,6 +70,12 @@ jobpipe-hunt = "jobpipe.hunt.agent:run"
 # PR-13 reused the ``jobpipe-submit`` script name on purpose.
 jobpipe-tailor = "jobpipe.tailor.pipeline:run_tailor_only"
 jobpipe-submit = "jobpipe.tailor.pipeline:run_submit_only"
+# feat/submit-watch: autonomous local watcher. Holds ONE persistent visible
+# browser open and drives it the instant the dashboard flips a row to
+# status='prefilling' (Supabase Realtime; --poll fallback). Equivalent to
+# `jobpipe-submit --watch`; bound separately so the launchd LaunchAgent has a
+# clean zero-arg entry point. Realtime transport by default (poll_seconds=None).
+jobpipe-submit-watch = "jobpipe.tailor.pipeline:run_submit_watch"
 # PR-tailor-manual-url: manual job-URL tailor — paste a posting URL,
 # resolve it through the per-ATS scrapers (Greenhouse / Lever / Ashby)
 # or the Playwright generic fallback, upsert a jobs row, and either run

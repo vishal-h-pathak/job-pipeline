@@ -39,6 +39,7 @@ from typing import Callable, Tuple
 
 from jobpipe.config import (
     BROWSER_CDP_ENV,
+    BROWSER_CHANNEL_ENV,
     BROWSER_PROFILE_DEFAULT,
     BROWSER_PROFILE_ENV,
 )
@@ -64,6 +65,18 @@ def profile_dir() -> Path:
     ``~/.jobpipe/chrome-profile``."""
     raw = os.environ.get(BROWSER_PROFILE_ENV) or BROWSER_PROFILE_DEFAULT
     return Path(raw).expanduser()
+
+
+def browser_channel() -> str:
+    """The Playwright browser channel for the persistent visible context.
+
+    Empty string → Playwright's bundled Chromium (the historical default).
+    ``chrome`` drives the user's installed Google Chrome (``channel="chrome"``);
+    ``msedge`` / ``chrome-beta`` / ``chrome-dev`` also work. Safari / WebKit
+    cannot be driven as a channel — only Chromium-family browsers. Read live so
+    the watcher (or a test) can set ``JOBPIPE_BROWSER_CHANNEL`` after import.
+    """
+    return os.environ.get(BROWSER_CHANNEL_ENV, "").strip()
 
 
 def _has_display() -> bool:
@@ -116,10 +129,20 @@ def open_browser_context(pw, *, headless: bool) -> Tuple[object, Callable[[], No
 
     profile = profile_dir()
     profile.mkdir(parents=True, exist_ok=True)
-    logger.info("Launching persistent visible browser, profile=%s", profile)
-    context = pw.chromium.launch_persistent_context(
+    channel = browser_channel()
+    # ``channel="chrome"`` drives the user's real Google Chrome; an empty channel
+    # falls back to Playwright's bundled Chromium. Only pass the kwarg when set so
+    # we don't force a system-Chrome dependency on the default path.
+    launch_kwargs = dict(
         user_data_dir=str(profile),
         headless=False,
         viewport=_VIEWPORT,
     )
+    if channel:
+        launch_kwargs["channel"] = channel
+    logger.info(
+        "Launching persistent visible browser, profile=%s channel=%s",
+        profile, channel or "(bundled chromium)",
+    )
+    context = pw.chromium.launch_persistent_context(**launch_kwargs)
     return context, context.close

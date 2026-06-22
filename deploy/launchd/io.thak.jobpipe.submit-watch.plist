@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  io.thak.jobpipe.submit-watch — LaunchAgent for the local submit watcher.
+
+  This is a TEMPLATE. The @@PLACEHOLDER@@ tokens are filled in by
+  scripts/install_submit_watcher.sh with your actual repo path, venv, and
+  Node bin dir, then the result is written to
+  ~/Library/LaunchAgents/io.thak.jobpipe.submit-watch.plist and loaded.
+
+  It is a LaunchAgent (per-user, GUI session) — NOT a LaunchDaemon — on
+  purpose: the watcher opens a *visible* Chrome window, which needs your Aqua
+  login session. A LaunchDaemon runs in the pre-login system context with no
+  display and could not show the browser.
+
+  Constraint: the Mac must be awake and logged in for a dashboard click to fire
+  a browser. Clicks while it is asleep/off simply queue in 'prefilling'; the
+  watcher's startup/reconnect catch-up picks them up on next wake. Use
+  `caffeinate -s` (or Energy Saver) to keep it awake during a session.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.thak.jobpipe.submit-watch</string>
+
+    <!-- Runs the venv's jobpipe-submit console script in watch + poll mode
+         (re-scan the prefilling queue every 15s) instead of depending on the
+         Supabase Realtime websocket, which proved unreliable for filtered
+         UPDATE delivery under launchd. Polling is robust and a 15s latency on a
+         personal tool is fine. Absolute path so launchd (no shell PATH) finds it. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>@@VENV_BIN@@/jobpipe-submit</string>
+        <string>--watch</string>
+        <string>--poll</string>
+        <string>15</string>
+    </array>
+
+    <!-- Repo root so load_dotenv() finds .env. -->
+    <key>WorkingDirectory</key>
+    <string>@@REPO_DIR@@</string>
+
+    <!-- launchd does NOT inherit your shell env. Put the venv bin first (the
+         console script + python), then Node's bin (Playwright shells out to
+         `node` for channel="chrome"), then the usual system paths. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>@@VENV_BIN@@:@@NODE_BIN@@:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Drive the user's real Google Chrome with a persistent profile.
+             Comment this out to use Playwright's bundled Chromium instead. -->
+        <key>JOBPIPE_BROWSER_CHANNEL</key>
+        <string>chrome</string>
+    </dict>
+
+    <!-- Start at login and keep alive: relaunch if it crashes or the websocket
+         drops and the process exits. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Don't hammer relaunch if it dies immediately on a misconfig. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <!-- Logs for debugging — tail these to see catch-up / event / fill lines. -->
+    <key>StandardOutPath</key>
+    <string>@@LOG_PATH@@</string>
+    <key>StandardErrorPath</key>
+    <string>@@LOG_PATH@@</string>
+</dict>
+</plist>

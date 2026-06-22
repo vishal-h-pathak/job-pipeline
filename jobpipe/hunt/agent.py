@@ -86,6 +86,8 @@ from jobpipe.db import get_seen_ids, upsert_job  # noqa: E402
 from jobpipe.tailor.url_resolver import (  # noqa: E402
     resolve_application_url,
     is_ats_url,
+    resolve_headless_enabled,
+    resolve_to_ats_headless,
 )
 from jobpipe.shared.liveness import classify_posting  # noqa: E402
 from jobpipe.shared.ats_detect import detect_ats  # noqa: E402
@@ -186,6 +188,19 @@ def _resolve_link_and_liveness(job: dict) -> tuple[str, str | None]:
     job["application_url"] = resolved
     job["ats_kind"] = detect_ats(resolved)
     job["link_status"] = "direct" if result.get("is_ats") else "aggregator_unverified"
+
+    # Gated headless fallback: for an aggregator the static path couldn't crack,
+    # drive a real browser through the JS Apply flow to capture the final ATS
+    # URL. Default OFF (JOBPIPE_RESOLVE_HEADLESS) so the cron hunt stays cheap;
+    # only ever runs for an unverified link. A miss leaves the honest
+    # aggregator_unverified flag in place rather than faking a clean form.
+    if job["link_status"] == "aggregator_unverified" and resolve_headless_enabled():
+        ats = resolve_to_ats_headless(resolved)
+        if ats:
+            logger.info("[resolve] headless upgraded %s → %s", resolved, ats)
+            job["application_url"] = ats
+            job["ats_kind"] = detect_ats(ats)
+            job["link_status"] = "direct"
     return "ok", fetched_html
 
 

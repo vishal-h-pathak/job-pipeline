@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from urllib.parse import urlparse, urljoin
 
@@ -269,28 +270,254 @@ def _extract_ats_link_from_html(
     return None
 
 
-def resolve_application_url(url: str, timeout: float = 15.0) -> dict:
-    """
-    Return a dict with the resolved URL and a trail of redirects/extractions.
+# ── Source-URL extraction (off-host canonical/apply URL, possibly non-ATS) ───
+# Distinct from the ATS extractor above: this recovers the original *posting*
+# URL even when it is NOT (yet) on a known ATS host, so resolve_application_url
+# can recurse on it — e.g. TealHQ embeds careers.qualcomm.com, which itself
+# leads to the real Workday/Greenhouse form a second hop away. Aggregators
+# carry this URL in their JSON-LD JobPosting or SPA hydration blob.
 
-    {
-      "original": "...",
-      "resolved": "...",         # best guess at the real ATS URL
-      "is_ats": True/False,      # whether resolved is a known ATS
-      "trail": [url1, url2, ...]
-      "notes": "...",
-      "status_code": 200/None,   # HTTP status of the fetched page
-      "html": "...",             # body of the fetched page (None on error)
-    }
+# Keys whose value is the canonical/external apply URL, most specific first.
+# ``url`` is last because it is the most ambiguous (also used for logos, the
+# company homepage, etc.) — only consulted when nothing more specific matched.
+_APPLY_URL_KEYS = (
+    "applyurl", "apply_url", "applylink", "apply_link",
+    "applicationurl", "application_url",
+    "externalurl", "external_url", "externalapplyurl", "external_apply_url",
+    "sourceurl", "source_url", "redirecturl", "redirect_url",
+    "joburl", "job_url", "url",
+)
 
-    ``status_code`` + ``html`` are carried so a caller can run a liveness
-    check on the page WITHOUT re-fetching it (the hunt discovery gate shares
-    this one fetch across resolve → liveness → enrich). They reflect the
-    aggregator page when an ATS link was extracted from it, and the final
-    redirect target otherwise.
-    """
-    trail = [url]
-    notes = []
+# Per-aggregator hints: the key under which each host stores the source/apply
+# URL, tried before the generic key order. tealhq is verified from a real
+# __NEXT_DATA__/__REACT_QUERY_STATE__ capture; simplify/wellfound hints are
+# best-effort (their live pages refuse our HTTP client) and fall back to the
+# generic walk, which covers them too.
+_AGGREGATOR_SOURCE_KEYS = {
+    "tealhq.com": ("url",),
+    "www.tealhq.com": ("url",),
+    "simplify.jobs": ("applyurl", "apply_url", "url"),
+    "wellfound.com": ("applyurl", "apply_url", "joburl", "url"),
+}
+
+# SPA bootstrap globals whose right-hand side is a JSON object literal.
+_SPA_STATE_GLOBALS = (
+    "__INITIAL_STATE__", "__NUXT__", "__REACT_QUERY_STATE__",
+    "__APOLLO_STATE__", "__PRELOADED_STATE__",
+)
+
+_ASSET_EXTS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico",
+    ".css", ".js", ".woff", ".woff2", ".ttf", ".pdf",
+)
+
+
+def _safe_json(text: str):
+    """json.loads that returns None instead of raising on any bad input."""
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        return None
+
+
+def _balanced_braces(text: str, start: int) -> str | None:
+    """Return the ``{...}`` substring of ``text`` starting at ``start`` (a ``{``),
+    matching nested braces while respecting JSON string literals. None if
+    unbalanced. Used to carve a SPA-state object out of a ``window.X = {…};``
+    assignment without depending on a brittle non-greedy regex."""
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
+def _iter_spa_json(soup: BeautifulSoup):
+    """Yield parsed JSON objects from SPA bootstrap scripts.
+
+    Handles ``<script id="__NEXT_DATA__" type="application/json">`` (pure JSON
+    body) and ``window.__INITIAL_STATE__ = {…};``-style assignments. A block
+    that won't parse is skipped, never raised."""
+    for tag in soup.find_all("script"):
+        raw = tag.string or tag.get_text() or ""
+        if not raw.strip():
+            continue
+        if (tag.get("id") or "").strip() == "__NEXT_DATA__":
+            obj = _safe_json(raw)
+            if obj is not None:
+                yield obj
+            continue
+        for g in _SPA_STATE_GLOBALS:
+            idx = raw.find(g)
+            if idx == -1:
+                continue
+            brace = raw.find("{", idx)
+            if brace == -1:
+                continue
+            blob = _balanced_braces(raw, brace)
+            obj = _safe_json(blob) if blob else None
+            if obj is not None:
+                yield obj
+            break
+
+
+def _iter_url_candidates(obj):
+    """Walk a parsed JSON object, yielding ``(key_lower, value)`` for every
+    string value whose key names an apply/source URL (see ``_APPLY_URL_KEYS``)."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if (
+                isinstance(k, str)
+                and isinstance(v, str)
+                and k.lower() in _APPLY_URL_KEYS
+                and v.startswith("http")
+            ):
+                yield k.lower(), v
+            else:
+                yield from _iter_url_candidates(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _iter_url_candidates(v)
+
+
+def _iter_dicts(obj):
+    """Yield every dict reachable in a parsed JSON object/array."""
+    if isinstance(obj, dict):
+        yield obj
+        for v in obj.values():
+            yield from _iter_dicts(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _iter_dicts(v)
+
+
+def _is_asset_url(url: str) -> bool:
+    try:
+        return urlparse(url).path.lower().endswith(_ASSET_EXTS)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _usable_source(url: str, base_host: str) -> bool:
+    """A candidate is a usable next hop only if it is a real off-host page —
+    not the aggregator's own host and not a static asset."""
+    u = url.replace("\\/", "/")
+    host = _host_of(u)
+    return bool(host) and host != base_host and not _is_asset_url(u)
+
+
+def _jsonld_source_url(soup: BeautifulSoup, base_host: str) -> str | None:
+    """A schema.org JobPosting's ``url`` / ``sameAs`` pointing off-host.
+
+    Returns the canonical posting URL regardless of whether it is an ATS host
+    (the recursion decides what to do with it). Prefers a value found on a
+    block actually typed ``JobPosting`` over an incidental ``url`` elsewhere."""
+    fallback = None
+    for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        data = _safe_json(tag.string or tag.get_text() or "")
+        if data is None:
+            continue
+        for d in _iter_dicts(data):
+            t = d.get("@type") or d.get("type")
+            is_job = (isinstance(t, str) and "jobposting" in t.lower()) or (
+                isinstance(t, list) and any("jobposting" in str(x).lower() for x in t)
+            )
+            for key in ("url", "sameAs"):
+                val = d.get(key)
+                cand = None
+                if isinstance(val, str):
+                    cand = val
+                elif isinstance(val, list):
+                    cand = next(
+                        (x for x in val if isinstance(x, str) and x.startswith("http")),
+                        None,
+                    )
+                if cand and cand.startswith("http") and _usable_source(cand, base_host):
+                    if is_job:
+                        return cand.replace("\\/", "/")
+                    fallback = fallback or cand.replace("\\/", "/")
+    return fallback
+
+
+def _best_source_candidate(candidates, base_host: str, preferred_keys=()) -> str | None:
+    """Pick the best off-host source URL from ``(key, url)`` SPA candidates.
+
+    Order: an aggregator-specific preferred key → any known-ATS host → any
+    apply-specific key → the first generic ``url``."""
+    cleaned = [
+        (key, url.replace("\\/", "/"))
+        for key, url in candidates
+        if _usable_source(url, base_host)
+    ]
+    if not cleaned:
+        return None
+    for pk in preferred_keys:
+        for key, u in cleaned:
+            if key == pk:
+                return u
+    for _, u in cleaned:
+        if _is_ats(_host_of(u)):
+            return u
+    for key, u in cleaned:
+        if key != "url":
+            return u
+    return cleaned[0][1]
+
+
+def _extract_source_url_from_html(html: str, base_url: str) -> str | None:
+    """Return the canonical *source* posting URL embedded in an aggregator page,
+    even when it is not (yet) on a known ATS host — so ``resolve_application_url``
+    can recurse on it. Tries JSON-LD JobPosting (``url`` / ``sameAs``) then SPA
+    bootstrap state (``__NEXT_DATA__``, ``window.__INITIAL_STATE__`` / ``__NUXT__``
+    / ``__REACT_QUERY_STATE__``, …), honouring per-aggregator key hints. Excludes
+    same-host self-links and static assets. Never raises; never fabricates."""
+    try:
+        soup = BeautifulSoup(html or "", "html.parser")
+    except Exception as e:  # noqa: BLE001 — malformed input must not crash resolve
+        logger.info(f"resolver: source HTML parse failed: {e}")
+        return None
+
+    base_host = _host_of(base_url)
+    hit = _jsonld_source_url(soup, base_host)
+    if hit:
+        logger.info(f"resolver: source URL via JSON-LD → {hit}")
+        return hit
+
+    candidates = []
+    for obj in _iter_spa_json(soup):
+        candidates.extend(_iter_url_candidates(obj))
+    preferred = _AGGREGATOR_SOURCE_KEYS.get(base_host, ())
+    hit = _best_source_candidate(candidates, base_host, preferred)
+    if hit:
+        logger.info(f"resolver: source URL via SPA state → {hit}")
+        return hit
+    return None
+
+
+def _fetch_page(url: str, timeout: float = 15.0):
+    """Fetch ``url`` following HTTP redirects with one bounded GET.
+
+    Returns ``(final_url, status_code, html, history_urls)``; on any failure
+    returns ``(url, None, None, [])`` (a clean miss the caller can fall back
+    on). Isolated as the single network seam so the recursion in
+    :func:`resolve_application_url` is fully testable without live HTTP."""
     try:
         with httpx.Client(
             follow_redirects=True,
@@ -298,58 +525,229 @@ def resolve_application_url(url: str, timeout: float = 15.0) -> dict:
             headers={"User-Agent": _USER_AGENT},
         ) as client:
             r = client.get(url)
-            # Record history
-            for h in r.history:
-                trail.append(str(h.url))
-            trail.append(str(r.url))
+            history = [str(h.url) for h in r.history]
+            return str(r.url), r.status_code, r.text, history
+    except Exception as e:  # noqa: BLE001 — any fetch failure is a clean miss
+        logger.warning(f"resolver fetch error on {url}: {e}")
+        return url, None, None, []
 
-            final_url = str(r.url)
-            final_host = _host_of(final_url)
 
-            if _is_ats(final_host):
-                return {
-                    "original": url,
-                    "resolved": final_url,
-                    "is_ats": True,
-                    "trail": trail,
-                    "notes": "direct redirect to ATS",
-                    "status_code": r.status_code,
-                    "html": r.text,
-                }
+def _result(original, resolved, is_ats, trail, notes, status_code, html) -> dict:
+    return {
+        "original": original,
+        "resolved": resolved,
+        "is_ats": is_ats,
+        "trail": trail,
+        "notes": notes,
+        "status_code": status_code,
+        "html": html,
+    }
 
-            if _is_aggregator(final_host):
-                # Try to extract the real ATS URL from the aggregator page
-                ats_url = _extract_ats_link_from_html(r.text, final_url)
-                if ats_url:
-                    return {
-                        "original": url,
-                        "resolved": ats_url,
-                        "is_ats": _is_ats(_host_of(ats_url)),
-                        "trail": trail + [ats_url],
-                        "notes": f"extracted from aggregator ({final_host})",
-                        "status_code": r.status_code,
-                        "html": r.text,
-                    }
-                notes.append(f"aggregator {final_host}: no ATS link found on page")
 
-            # Fall back to whatever we ended at
-            return {
-                "original": url,
-                "resolved": final_url,
-                "is_ats": _is_ats(final_host),
-                "trail": trail,
-                "notes": "; ".join(notes) or f"final host={final_host}",
-                "status_code": r.status_code,
-                "html": r.text,
-            }
-    except Exception as e:
-        logger.warning(f"resolver error on {url}: {e}")
-        return {
-            "original": url,
-            "resolved": url,
-            "is_ats": False,
-            "trail": trail,
-            "notes": f"error: {e}",
-            "status_code": None,
-            "html": None,
-        }
+def resolve_application_url(url: str, timeout: float = 15.0, *, max_hops: int = 3) -> dict:
+    """
+    Resolve ``url`` to the deepest real ATS application URL reachable, following
+    aggregator → aggregator → careers-site → ATS chains via static extraction.
+
+    Returns:
+    {
+      "original": "...",
+      "resolved": "...",         # deepest URL reached (ATS when found)
+      "is_ats": True/False,      # whether resolved is a known ATS host
+      "trail": [url1, url2, ...], # every redirect + extraction hop
+      "notes": "...",
+      "status_code": 200/None,   # HTTP status of the FIRST fetched page
+      "html": "...",             # body of the FIRST fetched page (None on error)
+    }
+
+    Each hop: fetch (following redirects); if the final host is a known ATS,
+    stop. Otherwise try to extract a direct ATS link from the page, then a
+    canonical *source* URL (which may be another aggregator or a careers
+    landing page) and recurse on it — capped at ``max_hops`` and guarded
+    against host-revisit loops.
+
+    ``status_code`` + ``html`` reflect the FIRST fetched page so the hunt
+    discovery gate can share this one fetch across resolve → liveness →
+    enrich without re-fetching (the first page — typically the aggregator —
+    carries the richest description).
+    """
+    original = url
+    trail = [url]
+    notes: list[str] = []
+    first_status = None
+    first_html = None
+    visited_hosts: set[str] = set()
+    current = url
+    last_final = url
+
+    for hop in range(max_hops):
+        final_url, status_code, html, history = _fetch_page(current, timeout)
+        for h in history:
+            if h not in trail:
+                trail.append(h)
+        if final_url not in trail:
+            trail.append(final_url)
+        if hop == 0:
+            first_status, first_html = status_code, html
+        last_final = final_url
+        final_host = _host_of(final_url)
+
+        # Direct ATS reached (redirect target is itself an ATS) → done.
+        if _is_ats(final_host):
+            return _result(
+                original, final_url, True, trail,
+                "direct redirect to ATS" if hop == 0 else
+                f"reached ATS after {hop + 1} hops",
+                first_status, first_html,
+            )
+
+        # Try to recover a direct ATS link embedded in this page.
+        ats_url = _extract_ats_link_from_html(html, final_url) if html else None
+        if ats_url:
+            return _result(
+                original, ats_url, _is_ats(_host_of(ats_url)),
+                trail + ([ats_url] if ats_url not in trail else []),
+                f"extracted ATS link from {final_host}",
+                first_status, first_html,
+            )
+
+        # Otherwise look for a canonical source URL to follow.
+        visited_hosts.add(final_host)
+        source_url = _extract_source_url_from_html(html, final_url) if html else None
+        if not source_url:
+            notes.append(f"{final_host}: no deeper apply link found")
+            break
+        if _host_of(source_url) in visited_hosts or source_url in trail:
+            notes.append(f"loop guard: {source_url} already visited")
+            break
+        if _is_ats(_host_of(source_url)):
+            # Source is already an ATS — accept without spending another fetch.
+            return _result(
+                original, source_url, True, trail + [source_url],
+                f"source URL from {final_host} is ATS",
+                first_status, first_html,
+            )
+        trail.append(source_url)
+        current = source_url
+    else:
+        notes.append(f"hop cap ({max_hops}) reached")
+
+    # Exhausted / dead-ended — return the deepest page we actually reached.
+    return _result(
+        original, last_final, _is_ats(_host_of(last_final)), trail,
+        "; ".join(notes) or f"final host={_host_of(last_final)}",
+        first_status, first_html,
+    )
+
+
+# ── Gated headless fallback (the hard, JS-driven Apply flows) ────────────────
+# When static extraction can't crack a page (the Apply action is pure JS with
+# no embedded source URL — TealHQ's motivating case), drive a real browser
+# through the Apply flow and capture the final ATS URL. EXPENSIVE + network, so
+# it is OPT-IN: the cron hunt only invokes it when ``JOBPIPE_RESOLVE_HEADLESS``
+# is set, and only for results still flagged ``aggregator_unverified``. The
+# tailor's prepare step may also call ``resolve_to_ats_headless`` on-demand for
+# a single job. Playwright is imported lazily so the static path keeps zero
+# extra dependencies at import time.
+
+_RESOLVE_HEADLESS_ENV = "JOBPIPE_RESOLVE_HEADLESS"
+
+# Anchors/buttons whose text/role indicates the Apply action to click.
+_APPLY_CLICK_TEXTS = ("apply now", "apply for this job", "apply", "i'm interested")
+
+
+def resolve_headless_enabled() -> bool:
+    """True when ``JOBPIPE_RESOLVE_HEADLESS`` is truthy.
+
+    Read live (not captured at import) so a process or test can toggle it.
+    Default OFF — the cron hunt must stay cheap; the Playwright fallback is
+    strictly opt-in."""
+    return os.environ.get(_RESOLVE_HEADLESS_ENV, "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _click_apply(page, context, timeout_ms: int) -> "object | None":
+    """Click the first Apply-looking control on ``page``.
+
+    Returns the page that holds the result of the click: a freshly opened tab
+    if the Apply opened a popup/new window, otherwise the same page after its
+    navigation settles. Returns None when no Apply control was found/clickable.
+    """
+    for text in _APPLY_CLICK_TEXTS:
+        locator = page.get_by_role("link", name=text, exact=False).first
+        try:
+            count = locator.count()
+        except Exception:  # noqa: BLE001
+            count = 0
+        if not count:
+            locator = page.get_by_role("button", name=text, exact=False).first
+            try:
+                count = locator.count()
+            except Exception:  # noqa: BLE001
+                count = 0
+        if not count:
+            continue
+        # The Apply action may open a new tab; race a popup against same-tab nav.
+        try:
+            with context.expect_page(timeout=timeout_ms) as popup_info:
+                locator.click(timeout=timeout_ms)
+            new_page = popup_info.value
+            new_page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+            return new_page
+        except Exception:  # noqa: BLE001 — no popup; treat as same-tab navigation
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+            except Exception:  # noqa: BLE001
+                pass
+            return page
+    return None
+
+
+def _headless_driver(url: str, *, max_clicks: int = 3, nav_timeout_ms: int = 20000):
+    """Drive a headless browser from ``url`` through up to ``max_clicks`` Apply
+    actions, returning the final landed URL (str) or None.
+
+    Reuses the submit browser infra (cookieless headless context). The caller
+    (:func:`resolve_to_ats_headless`) decides whether the landed URL is an ATS.
+    Best-effort: any Playwright error propagates to the caller, which logs and
+    returns None. Verified manually against the TealHQ → Qualcomm flow."""
+    from playwright.sync_api import sync_playwright  # lazy: keep import-time light
+
+    from jobpipe.submit.browser import local as _local
+
+    with sync_playwright() as pw:
+        context, closer = _local.open_browser_context(pw, headless=True)
+        try:
+            page = context.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout_ms)
+            for _ in range(max_clicks):
+                if _is_ats(_host_of(page.url)):
+                    return page.url
+                landed = _click_apply(page, context, nav_timeout_ms)
+                if landed is None:
+                    break
+                page = landed
+            return page.url
+        finally:
+            closer()
+
+
+def resolve_to_ats_headless(url: str, *, max_clicks: int = 3):
+    """Drive a real headless browser through the Apply flow to capture the final
+    ATS application URL. Returns that URL (str) when a known ATS host is reached,
+    else None.
+
+    EXPENSIVE + network. Gate the call behind :func:`resolve_headless_enabled`
+    in the cron hunt; the tailor may call it on-demand for a single job. Never
+    raises — a missing browser / navigation failure logs and returns None."""
+    try:
+        final = _headless_driver(url, max_clicks=max_clicks)
+    except Exception as e:  # noqa: BLE001 — headless is best-effort, never fatal
+        logger.warning(f"resolver: headless resolve failed for {url}: {e}")
+        return None
+    if final and _is_ats(_host_of(final)):
+        logger.info(f"resolver: headless resolved {url} → {final}")
+        return final
+    logger.info(f"resolver: headless reached non-ATS {final} for {url}")
+    return None

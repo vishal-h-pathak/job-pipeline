@@ -27,7 +27,11 @@ from urllib.parse import urlparse
 import pytest
 
 from jobpipe.tailor import url_resolver
-from jobpipe.tailor.url_resolver import _extract_ats_link_from_html, _is_ats
+from jobpipe.tailor.url_resolver import (
+    _extract_ats_link_from_html,
+    _extract_source_url_from_html,
+    _is_ats,
+)
 
 _FX = Path(__file__).resolve().parent / "fixtures" / "aggregators"
 
@@ -121,3 +125,43 @@ def test_malformed_html_returns_none_no_raise():
     assert _extract_ats_link_from_html("<html><a href=", "https://x.example") is None
     assert _extract_ats_link_from_html("", "https://x.example") is None
     assert _extract_ats_link_from_html("not html at all {", "https://x.example") is None
+
+
+# ── Source-URL extraction (off-host, possibly non-ATS — feeds recursion) ─────
+# Distinct from _extract_ats_link_from_html: this recovers the canonical
+# *source* posting URL even when it is NOT yet an ATS host, so the resolver
+# can recurse on it (e.g. TealHQ → careers.qualcomm.com → the real ATS form).
+
+
+def test_source_extractor_recovers_nextdata_source_url():
+    """TealHQ embeds the original posting URL in its __NEXT_DATA__ blob; the
+    source host (careers.qualcomm.com) is NOT an ATS, so only the source
+    extractor (not the ATS extractor) can recover it."""
+    html = _load("teal_nextdata_qualcomm.html")
+    src = _extract_source_url_from_html(
+        html, "https://www.tealhq.com/job/pre-sales-solution-engineer_abc"
+    )
+    assert src == "https://careers.qualcomm.com/careers/job/446702216307"
+    # The ATS extractor must NOT match — it is a careers site, not an ATS.
+    assert _extract_ats_link_from_html(html, "https://www.tealhq.com/job/x") is None
+
+
+def test_source_extractor_recovers_jsonld_url():
+    html = _load("jsonld_source_careers.html")
+    src = _extract_source_url_from_html(html, "https://aggregator.example/p/9")
+    assert src == "https://careers.acme.com/jobs/9f3c-senior-ml-engineer"
+
+
+def test_source_extractor_ignores_same_host_url():
+    """A self-referential url (same host as the aggregator) is not a hop."""
+    html = (
+        '<script id="__NEXT_DATA__" type="application/json">'
+        '{"props":{"job":{"url":"https://www.tealhq.com/job/self"}}}</script>'
+    )
+    assert _extract_source_url_from_html(html, "https://www.tealhq.com/job/self") is None
+
+
+def test_source_extractor_no_url_returns_none():
+    assert _extract_source_url_from_html("<html><body>x</body></html>", "https://x.e") is None
+    assert _extract_source_url_from_html("", "https://x.example") is None
+    assert _extract_source_url_from_html("garbage { not json", "https://x.example") is None

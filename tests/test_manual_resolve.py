@@ -96,6 +96,57 @@ def test_resolve_url_falls_through_to_generic_for_unknown_ats():
     gen.assert_called_once_with("https://acme.example.com/careers/role")
 
 
+def test_resolve_url_headless_upgrade_when_enabled():
+    """When static resolution leaves a generic/aggregator URL and
+    JOBPIPE_RESOLVE_HEADLESS is on, the on-demand headless resolver upgrades
+    it to the real ATS before dispatch."""
+    aggregator = "https://www.tealhq.com/job/pre-sales_abc"
+    real = "https://job-boards.greenhouse.io/qualcomm/jobs/99"
+    with patch(
+        "jobpipe.tailor.manual.resolve.resolve_application_url",
+        side_effect=_no_redirect,
+    ), patch(
+        "jobpipe.tailor.manual.resolve.resolve_headless_enabled",
+        return_value=True,
+    ), patch(
+        "jobpipe.tailor.manual.resolve.resolve_to_ats_headless",
+        return_value=real,
+    ), patch(
+        "jobpipe.tailor.manual.resolve.fetch_greenhouse_posting",
+        return_value=_posting("greenhouse"),
+    ) as gh, patch(
+        "jobpipe.tailor.manual.resolve.fetch_generic_posting"
+    ) as gen:
+        from jobpipe.tailor.manual.resolve import resolve_url
+        result = resolve_url(aggregator)
+
+    assert result.ats_kind == "greenhouse"
+    gh.assert_called_once_with(real)
+    gen.assert_not_called()
+
+
+def test_resolve_url_headless_not_called_when_disabled():
+    aggregator = "https://www.tealhq.com/job/x"
+    with patch(
+        "jobpipe.tailor.manual.resolve.resolve_application_url",
+        side_effect=_no_redirect,
+    ), patch(
+        "jobpipe.tailor.manual.resolve.resolve_headless_enabled",
+        return_value=False,
+    ), patch(
+        "jobpipe.tailor.manual.resolve.resolve_to_ats_headless",
+        side_effect=AssertionError("headless must not run when the flag is off"),
+    ), patch(
+        "jobpipe.tailor.manual.resolve.fetch_generic_posting",
+        return_value=_posting("generic", confidence="low"),
+    ) as gen:
+        from jobpipe.tailor.manual.resolve import resolve_url
+        result = resolve_url(aggregator)
+
+    assert result.ats_kind == "generic"
+    gen.assert_called_once_with(aggregator)
+
+
 def test_resolve_url_follows_aggregator_redirect_before_dispatch():
     """If resolve_application_url surfaces a different URL, we must use
     that for ATS detection and for the fetcher call."""

@@ -70,11 +70,16 @@ from jobpipe.config import (  # noqa: E402
     WATCH_POLL_INTERVAL_SECONDS,
     WATCH_RECONNECT_MIN_SECONDS,
     WATCH_RECONNECT_MAX_SECONDS,
+    JOBPIPE_WATCHER_ID,
 )
 from jobpipe.db import (  # noqa: E402
     get_approved_jobs,
+    get_active_watcher_id,
     get_job,
     get_prefill_requested_jobs,
+    get_watcher_heartbeats,
+    record_heartbeat,
+    set_active_watcher_id,
     mark_preparing,
     mark_ready_for_review,
     mark_awaiting_submit,
@@ -1076,7 +1081,27 @@ def run_submit_only() -> None:
              "re-scan the prefilling queue every SECONDS "
              f"(default {WATCH_POLL_INTERVAL_SECONDS}s when no value given).",
     )
+    # Dual-machine toggle (feat/dual-machine-watcher). Flippable from any
+    # terminal on either machine; the dashboard writes the same row.
+    parser.add_argument(
+        "--set-active", nargs="?", const="", default=None, metavar="WATCHER_ID",
+        help="Set which machine may claim jobs (e.g. 'macbook' / 'desktop'). "
+             "With no value, print the current active watcher instead.",
+    )
+    parser.add_argument(
+        "--who-is-active", action="store_true",
+        help="Print the active watcher id and the known machine heartbeats.",
+    )
     args = parser.parse_args()
+
+    # Coordination CLI is a pure DB op — no browser, handled before anything else.
+    if args.who_is_active or args.set_active == "":
+        _print_active_watcher()
+        return
+    if args.set_active is not None:
+        set_active_watcher_id(args.set_active)
+        print(f"active watcher set to {args.set_active!r}")
+        return
 
     if args.status:
         print_status()
@@ -1088,6 +1113,35 @@ def run_submit_only() -> None:
 
     logger.info(f"=== Submit (pre-fill) cycle at {datetime.utcnow().isoformat()} ===")
     process_prefill_requested_jobs()
+
+
+def _print_active_watcher() -> None:
+    """Print the active watcher id + known machine heartbeats (``--who-is-active``).
+
+    Read-only coordination view, shared by ``--who-is-active`` and a bare
+    ``--set-active`` (no value). Marks this machine and flags stale heartbeats so
+    the user can tell at a glance which machine is live and which is set active.
+    """
+    active = get_active_watcher_id()
+    print(f"active_watcher_id = {active or '(none set)'}")
+    print(f"this machine      = {JOBPIPE_WATCHER_ID}")
+    heartbeats = get_watcher_heartbeats()
+    if not heartbeats:
+        print("no heartbeats recorded yet (no watcher has run since migration 015)")
+        return
+    print("\nmachines:")
+    for hb in heartbeats:
+        wid = hb.get("watcher_id", "?")
+        marks = []
+        if wid == active:
+            marks.append("ACTIVE")
+        if wid == JOBPIPE_WATCHER_ID:
+            marks.append("this")
+        suffix = f"  [{', '.join(marks)}]" if marks else ""
+        print(
+            f"  - {wid:<12} state={hb.get('state', '?'):<8} "
+            f"last_seen={hb.get('last_seen', '?')}{suffix}"
+        )
 
 
 def build_submit_watcher(*, poll_seconds: int | None = None):
@@ -1104,9 +1158,19 @@ def build_submit_watcher(*, poll_seconds: int | None = None):
         SubmitWatcher,
         PollEventSource,
         RealtimeEventSource,
+        WatcherCoordinator,
     )
 
     dispatch = _make_prefill_dispatch()
+
+    # Dual-machine gate: this machine only claims jobs when it is the active
+    # watcher. The coordinator writes a heartbeat each cycle either way so the
+    # dashboard can show liveness. (feat/dual-machine-watcher)
+    coordinator = WatcherCoordinator(
+        watcher_id=JOBPIPE_WATCHER_ID,
+        get_active=get_active_watcher_id,
+        record_heartbeat=record_heartbeat,
+    )
 
     def _open_context():
         # The watcher owns one persistent context for its whole lifetime. We
@@ -1144,6 +1208,7 @@ def build_submit_watcher(*, poll_seconds: int | None = None):
         fetch_one=get_job,
         process_one=dispatch,
         make_source=_make_source,
+        coordinate=coordinator.should_claim,
     )
 
 
@@ -1161,8 +1226,8 @@ def run_submit_watch(*, poll_seconds: int | None = None) -> None:
 
     transport = "poll" if poll_seconds is not None else "realtime"
     logger.info(
-        "=== Submit watcher starting (%s) at %s ===",
-        transport, datetime.utcnow().isoformat(),
+        "=== Submit watcher starting (%s, id=%s) at %s ===",
+        transport, JOBPIPE_WATCHER_ID, datetime.utcnow().isoformat(),
     )
     watcher = build_submit_watcher(poll_seconds=poll_seconds)
 

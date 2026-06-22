@@ -50,6 +50,13 @@
              Comment this out to use Playwright's bundled Chromium instead. -->
         <key>JOBPIPE_BROWSER_CHANNEL</key>
         <string>chrome</string>
+        <!-- Dual-machine coordination: this machine's stable watcher id. The
+             singleton watcher_config.active_watcher_id must equal this for the
+             Mac to claim prefilling jobs; otherwise it stays alive but dormant.
+             Flip the active machine from the dashboard or
+             `jobpipe-submit --set-active macbook`. -->
+        <key>JOBPIPE_WATCHER_ID</key>
+        <string>macbook</string>
     </dict>
 
     <!-- Start at login and keep alive: relaunch if it crashes or the websocket

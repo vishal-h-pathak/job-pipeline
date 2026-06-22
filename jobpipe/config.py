@@ -28,6 +28,7 @@ subtree shim — they're not cross-cutting.
 from __future__ import annotations
 
 import os
+import socket
 from typing import Final, Literal
 
 from dotenv import load_dotenv
@@ -201,6 +202,16 @@ WATCH_RECONNECT_MIN_SECONDS: Final[float] = float(
 )
 WATCH_RECONNECT_MAX_SECONDS: Final[float] = float(
     os.environ.get("WATCH_RECONNECT_MAX_SECONDS", "30.0")
+)
+# Dual-machine coordination (feat/dual-machine-watcher). Each watcher process
+# has a stable id; the user runs one watcher per machine (MacBook + Windows PC)
+# and a singleton ``watcher_config.active_watcher_id`` row decides which single
+# machine is allowed to *claim* prefilling jobs. The other stays alive but
+# dormant so the two never race for the same row. Defaults to the OS hostname so
+# a machine has a sensible id even before its auto-start sets one explicitly
+# (the launchd plist / Task Scheduler wrapper set ``macbook`` / ``desktop``).
+JOBPIPE_WATCHER_ID: Final[str] = (
+    os.environ.get("JOBPIPE_WATCHER_ID") or socket.gethostname() or "watcher"
 )
 # Per-adapter minimum confidence for auto-submit. Jobs below this route
 # to needs_review regardless of AUTO_SUBMIT_THRESHOLD.

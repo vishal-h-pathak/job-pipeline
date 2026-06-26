@@ -91,6 +91,7 @@ from jobpipe.tailor.url_resolver import (  # noqa: E402
 )
 from jobpipe.shared.liveness import classify_posting  # noqa: E402
 from jobpipe.shared.ats_detect import detect_ats  # noqa: E402
+from jobpipe.shared import cost  # noqa: E402  (cost-event attribution context)
 
 # ── Logging — stream to stdout so run_agent.sh's redirect captures it ─────
 logging.basicConfig(
@@ -392,7 +393,11 @@ def run() -> None:
         return
     if args.mode:
         config.set_mode(args.mode)
-    _execute()
+    # Attribute every Anthropic call in this hunt run to stage="hunt". No
+    # runs-row id is created in this path, so run_id stays None — the
+    # cost_events rows are still stage-useful, just not run-rolled-up.
+    with cost.cost_context(run_id=None, stage="hunt"):
+        _execute()
 
 
 if __name__ == "__main__":

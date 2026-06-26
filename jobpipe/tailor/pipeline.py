@@ -98,6 +98,7 @@ from tailor.cover_letter_pdf import render_cover_letter_pdf  # noqa: E402
 from tailor.latex_resume import generate_tailored_latex  # noqa: E402
 from tailor.form_answers import generate_form_answers  # noqa: E402
 from jobpipe.shared.ats_detect import detect_ats, get_applicant  # noqa: E402
+from jobpipe.shared import cost  # noqa: E402  (cost-event attribution context)
 from interview_prep.generator import generate_stories  # noqa: E402
 from interview_prep.bank import save_stories  # noqa: E402
 from jobpipe.notify import (  # noqa: E402  PR-8: canonical send_* names
@@ -133,6 +134,23 @@ SCORE_THRESHOLD: int = 6
 
 
 def process_one_approved_job(job_id: str) -> None:
+    """Public per-row tailor entry: open a cost-attribution context, delegate.
+
+    Wraps the whole per-row pipeline in
+    ``cost_context(stage="tailor", job_id=job_id)`` (S2) so every Anthropic
+    call the tailor modules make through ``llm.complete()`` lands a
+    ``cost_events`` row attributed to this job. No tailor-side runs-row id
+    exists, so ``run_id`` stays ``None`` (the rows are still job/stage-useful,
+    just not run-rolled-up). All three callers — the bulk loop, the
+    ``--job-id`` CLI, and the manual handoff CLI — route through here, so the
+    context is set in exactly one place. Work lives in
+    :func:`_process_one_approved_job`.
+    """
+    with cost.cost_context(stage="tailor", job_id=job_id):
+        _process_one_approved_job(job_id)
+
+
+def _process_one_approved_job(job_id: str) -> None:
     """Tailor a single ``approved`` row end-to-end (PR-14).
 
     Fetches the row by id, validates ``status == 'approved'``, then runs

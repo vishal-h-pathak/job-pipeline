@@ -41,6 +41,8 @@ from typing import Any, Union
 
 import anthropic
 
+from jobpipe.shared import cost
+
 logger = logging.getLogger("jobpipe.shared.llm")
 
 # Cool-off (one attempt + 15 min, no retries), matching chat-auth.ts.
@@ -109,6 +111,23 @@ def _anthropic_client(api_key: str) -> anthropic.Anthropic:
 
 def _join_text(resp: Any) -> str:
     return "".join(b.text for b in resp.content if hasattr(b, "text"))
+
+
+# ── Cost capture (side effect — never alters complete()'s return) ───────────
+
+def _record_cost(model: str, usage: Any, auth_path: str) -> None:
+    """Record one Anthropic call to ``cost_events`` (best-effort).
+
+    Capture is a pure side effect of :func:`complete`: it must never change
+    the returned text nor raise, so the whole thing is guarded. The recorder
+    itself swallows DB errors; this extra guard also covers a missing/odd
+    ``usage`` object so a billable call can never be broken by telemetry.
+    ``auth_path="oauth"`` prices at $0 (subscription) inside the recorder.
+    """
+    try:
+        cost.record_anthropic(model, usage, auth_path=auth_path)
+    except Exception as exc:  # noqa: BLE001 — telemetry must never raise
+        logger.debug("cost capture skipped (%s): %s", auth_path, exc)
 
 
 # ── OAuth path (fallback) ───────────────────────────────────────────────────
@@ -238,6 +257,12 @@ def _oauth_complete(*, system_text: str, prompt: str, model: str, token: str) ->
 
         text = "".join(parts)
 
+        # Cost capture (subscription path): record at auth_path="oauth" so the
+        # call is visible at $0. Use whatever token counts the Agent SDK
+        # exposed on the ResultMessage; if it exposed none, the recorder
+        # writes a zero-unit marker — we never invent token numbers.
+        _record_cost(model, getattr(result_msg, "usage", None), "oauth")
+
         if result_msg is None:
             # No result envelope at all: return whatever text we saw, else
             # treat the empty completion as a failure.
@@ -287,6 +312,7 @@ def complete(*, system: SystemContent, prompt: str, model: str, max_tokens: int)
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
+            _record_cost(model, getattr(resp, "usage", None), "api_key")
             return _join_text(resp)
         except Exception as exc:  # noqa: BLE001 — classify, then re-raise or fall through
             if not is_api_key_unusable_error(exc):

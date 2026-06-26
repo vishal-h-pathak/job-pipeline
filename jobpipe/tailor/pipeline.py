@@ -55,6 +55,7 @@ del _sys, _Path, _TAILOR_DIR
 
 import argparse  # noqa: E402
 import logging  # noqa: E402
+import os  # noqa: E402
 import sys  # noqa: E402
 import time  # noqa: E402
 from datetime import datetime  # noqa: E402
@@ -137,16 +138,21 @@ def process_one_approved_job(job_id: str) -> None:
     """Public per-row tailor entry: open a cost-attribution context, delegate.
 
     Wraps the whole per-row pipeline in
-    ``cost_context(stage="tailor", job_id=job_id)`` (S2) so every Anthropic
-    call the tailor modules make through ``llm.complete()`` lands a
-    ``cost_events`` row attributed to this job. No tailor-side runs-row id
-    exists, so ``run_id`` stays ``None`` (the rows are still job/stage-useful,
-    just not run-rolled-up). All three callers — the bulk loop, the
-    ``--job-id`` CLI, and the manual handoff CLI — route through here, so the
-    context is set in exactly one place. Work lives in
+    ``cost_context(run_id=..., stage="tailor", job_id=job_id)`` (S2/S6) so
+    every Anthropic call the tailor modules make through ``llm.complete()``
+    lands a ``cost_events`` row attributed to this job. The runs-row id is
+    minted by tailor.yml (dashboard dispatch) and handed in via
+    ``JOBPIPE_RUN_ID`` (S6); all jobs in one tailor run share it, so
+    ``mark_run.py``'s ``rollup_run()`` can sum them into ``runs.cost_usd``.
+    Unset (local runs, smoke tests) → ``run_id`` resolves to ``None``: the
+    rows are still job/stage-useful, just not run-rolled-up. All three callers
+    — the bulk loop, the ``--job-id`` CLI, and the manual handoff CLI — route
+    through here, so the context is set in exactly one place. Work lives in
     :func:`_process_one_approved_job`.
     """
-    with cost.cost_context(stage="tailor", job_id=job_id):
+    with cost.cost_context(
+        run_id=(os.getenv("JOBPIPE_RUN_ID") or None), stage="tailor", job_id=job_id
+    ):
         _process_one_approved_job(job_id)
 
 

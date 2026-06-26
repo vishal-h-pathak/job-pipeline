@@ -52,6 +52,7 @@ del _sys, _Path, _HUNT_DIR
 
 import argparse
 import logging
+import os
 import traceback
 
 from dotenv import load_dotenv
@@ -393,10 +394,13 @@ def run() -> None:
         return
     if args.mode:
         config.set_mode(args.mode)
-    # Attribute every Anthropic call in this hunt run to stage="hunt". No
-    # runs-row id is created in this path, so run_id stays None — the
-    # cost_events rows are still stage-useful, just not run-rolled-up.
-    with cost.cost_context(run_id=None, stage="hunt"):
+    # Attribute every Anthropic call in this hunt run to stage="hunt". The
+    # runs-row id is minted by the GHA workflow (dashboard-dispatch input or
+    # the cron create_run step), not here, and handed to us via JOBPIPE_RUN_ID
+    # (S6) so the cost_events rows carry it and mark_run.py's rollup_run() can
+    # sum them into runs.cost_usd. Unset (local runs, smoke tests) → None: the
+    # rows are still stage-useful, just not run-rolled-up.
+    with cost.cost_context(run_id=(os.getenv("JOBPIPE_RUN_ID") or None), stage="hunt"):
         _execute()
 
 

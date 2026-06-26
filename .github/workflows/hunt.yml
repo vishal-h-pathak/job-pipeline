@@ -69,6 +69,13 @@ jobs:
       - name: Hunt
         id: hunt
         env:
+          # Per-run cost rollup (S6): thread the runs-row id into the agent so
+          # cost.cost_context tags every cost_events row with it and the
+          # mark_run.py finalize step's rollup_run() can sum them into
+          # runs.cost_usd. inputs.run_id covers the dashboard-dispatch case;
+          # steps.create_run.outputs.RUN_ID covers the cron case (that step
+          # runs first). Empty for manual smoke runs → run_id resolves to None.
+          JOBPIPE_RUN_ID: ${{ inputs.run_id || steps.create_run.outputs.RUN_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Max-plan OAuth fallback (jobpipe.shared.llm). Used only when
           # ANTHROPIC_API_KEY is unset or has been benched by a

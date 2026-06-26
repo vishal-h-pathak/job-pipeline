@@ -38,6 +38,7 @@ from typing import Optional
 import anthropic
 
 from jobpipe.submit.config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from jobpipe.shared.cost import cost_context, record_anthropic
 from jobpipe.submit.adapters.browser_tools import BrowserSession
 from jobpipe.tailor.prompts import load_profile, load_prompt
 
@@ -348,6 +349,14 @@ def run_submission_agent(
                 "screenshots": session.screenshots,
                 "filled_fields": session.filled_fields,
             }
+
+        # Cost telemetry: this direct-SDK turn loop bypasses shared/llm.py.
+        # Record per-turn (simpler + more granular than accumulating to loop
+        # exit); usage sums across turns into one run via rollup. Best-effort.
+        with cost_context(stage="submit", job_id=job.get("job_id") or job.get("id")):
+            record_anthropic(
+                SUBMITTER_MODEL, getattr(response, "usage", None), "api_key"
+            )
 
         messages.append({"role": "assistant", "content": response.content})
 

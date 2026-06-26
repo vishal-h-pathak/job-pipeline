@@ -24,6 +24,7 @@ import time
 import requests
 
 from jobpipe.config import get_mode
+from jobpipe.shared import cost, pricing
 from jobpipe.shared.jobid import make_job_id
 
 logger = logging.getLogger("sources.serpapi")
@@ -173,3 +174,13 @@ def fetch():
         "serpapi total: %d unique entries from %d searches (budget=%d)",
         yielded, searches_issued, MAX_SEARCHES_PER_RUN,
     )
+
+    # End-of-run cost event: one row capturing this run's billable search
+    # count. Best-effort (record_units swallows its own errors).
+    if searches_issued:
+        cost.record_units(
+            "serpapi",
+            {"searches": searches_issued},
+            pricing.SERPAPI_USD_PER_SEARCH * searches_issued,
+            stage="discovery",
+        )

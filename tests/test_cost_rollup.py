@@ -61,6 +61,10 @@ class _FakeQuery:
     def execute(self):
         if self._mode == "select":
             return MagicMock(data=list(self._store.get("rows", [])))
+        if self._mode == "update" and self._store.get("update_returns_empty"):
+            # supabase-py can return an empty representation (.data == []) on a
+            # successful write — the S7 regression case.
+            return MagicMock(data=[])
         return MagicMock(data=[{}])
 
 
@@ -120,6 +124,39 @@ def test_mark_run_completed_triggers_rollup(fake_db, monkeypatch):
     cost_updates = [u for u in runs if "cost_usd" in u["payload"]]
     assert len(cost_updates) == 1
     assert cost_updates[0]["payload"]["cost_usd"] == pytest.approx(4.0)
+
+
+def test_mark_run_completed_rolls_up_even_on_empty_update_data(fake_db, monkeypatch):
+    """Regression (S7): supabase-py's update().execute() can return ``data == []``
+    on a successful write. The rollup must still run BEFORE the res.data check, so
+    ``runs.cost_usd`` is written for every completed run — not silently skipped.
+    """
+    mark_run = _load_mark_run()
+
+    store = fake_db
+    store["rows"] = [{"cost_usd": 1.50}, {"cost_usd": 0.30}]
+    store["update_returns_empty"] = True  # status write returns no representation
+
+    # Spy on rollup_run (call through so the real cost_usd update still lands).
+    from jobpipe.shared import cost as cost_mod
+    seen: list[str] = []
+    real_rollup = cost_mod.rollup_run
+
+    def _spy(run_id):
+        seen.append(run_id)
+        return real_rollup(run_id)
+
+    monkeypatch.setattr(cost_mod, "rollup_run", _spy)
+
+    monkeypatch.setattr(sys, "argv", ["mark_run.py", "run-empty", "completed"])
+    rc = mark_run.main()
+    # Empty .data still trips the exit-1 path, but the rollup must have fired first.
+    assert rc == 1
+    assert seen == ["run-empty"]
+
+    cost_updates = [u for u in _run_updates(store) if "cost_usd" in u["payload"]]
+    assert len(cost_updates) == 1
+    assert cost_updates[0]["payload"]["cost_usd"] == pytest.approx(1.80)
 
 
 def test_mark_run_running_does_not_roll_up(fake_db, monkeypatch):

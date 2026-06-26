@@ -102,16 +102,18 @@ def main() -> int:
         .eq("id", args.run_id)
         .execute()
     )
-    if not res.data:
-        print(f"mark_run: no row updated for id={args.run_id}", file=sys.stderr)
-        return 1
-
-    # End-of-run cost rollup: sum this run's cost_events into runs.cost_usd
-    # now that the run is finalized. Best-effort (rollup_run swallows its own
-    # errors); skip cleanly when there's no run to roll up.
+    # Roll up BEFORE the res.data check: supabase-py's update().execute() can
+    # return an empty representation (.data == []) even on a successful write,
+    # so a completed run must fold its cost_events into runs.cost_usd here,
+    # independent of the update's return shape. Best-effort — rollup_run
+    # swallows its own errors and never raises.
     if args.status == "completed" and args.run_id:
         from jobpipe.shared import cost
         cost.rollup_run(args.run_id)
+
+    if not res.data:
+        print(f"mark_run: no row updated for id={args.run_id}", file=sys.stderr)
+        return 1
     return 0
 
 

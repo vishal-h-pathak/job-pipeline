@@ -105,6 +105,13 @@ def main() -> int:
     if not res.data:
         print(f"mark_run: no row updated for id={args.run_id}", file=sys.stderr)
         return 1
+
+    # End-of-run cost rollup: sum this run's cost_events into runs.cost_usd
+    # now that the run is finalized. Best-effort (rollup_run swallows its own
+    # errors); skip cleanly when there's no run to roll up.
+    if args.status == "completed" and args.run_id:
+        from jobpipe.shared import cost
+        cost.rollup_run(args.run_id)
     return 0
 
 

@@ -16,6 +16,7 @@ from typing import Optional
 import anthropic
 
 from jobpipe.config import ANTHROPIC_API_KEY, TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
+from jobpipe.shared.cost import cost_context, record_anthropic
 from prompts import cached_system_blocks, load_task_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 
@@ -67,12 +68,16 @@ def generate_stories(job: dict, archetype_meta: Optional[dict] = None) -> list[d
     try:
         # Session I: static rules + profile + voice ride in the cached
         # system prefix; only the per-job prompt above goes uncached.
-        resp = _client_lazy().messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=3000,
-            system=cached_system_blocks(),
-            messages=[{"role": "user", "content": prompt}],
-        )
+        with cost_context(stage="interview_prep", job_id=job.get("id")):
+            resp = _client_lazy().messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=3000,
+                system=cached_system_blocks(),
+                messages=[{"role": "user", "content": prompt}],
+            )
+            # Cost telemetry: this direct-SDK call bypasses shared/llm.py,
+            # so record its usage here. Best-effort (never raises).
+            record_anthropic(CLAUDE_MODEL, getattr(resp, "usage", None), "api_key")
         text = "".join(b.text for b in resp.content if hasattr(b, "text"))
         result = _extract_json(text)
     except Exception as exc:

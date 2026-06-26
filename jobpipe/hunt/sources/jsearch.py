@@ -34,6 +34,7 @@ import time
 import requests
 
 from jobpipe.config import get_mode
+from jobpipe.shared import cost, pricing
 from jobpipe.shared.jobid import make_job_id
 
 logger = logging.getLogger("sources.jsearch")
@@ -180,3 +181,13 @@ def fetch():
         "jsearch total: %d unique entries from %d requests (budget=%d)",
         yielded, requests_issued, MAX_REQUESTS_PER_RUN,
     )
+
+    # End-of-run cost event: one row capturing this run's billable request
+    # count. Best-effort (record_units swallows its own errors).
+    if requests_issued:
+        cost.record_units(
+            "jsearch",
+            {"requests": requests_issued},
+            pricing.JSEARCH_USD_PER_REQUEST * requests_issued,
+            stage="discovery",
+        )

@@ -1,3 +1,5 @@
+> Cross-project context: ~/dev/jarvis/memory/INDEX.md — read it before asking the user to re-explain. This repo's capsule: ~/dev/jarvis/memory/projects/job-pipeline.md
+
 # Vishal Pathak — Agent Profile
 
 > Structured truth lives in `profile/profile.yml`; voice rules in `profile/voice-profile.md`.
@@ -13,26 +15,39 @@ each subpackage's `README.md`.
 
 ## Identity
 
-EE background with a long-running focus on neuromorphic hardware and
-brain-inspired computing. The through-line is emergence — the
-Hodgkin-Huxley model in college (ion channels as RC circuits scaling to
-cognition) pointed him toward this and he has not wandered far since.
-Rain Neuromorphics at 19 as employee #5, building memristive LIF neuron
-PCBs by hand. Four years at GTRI doing SNN deployment on Intel Kapoho
-Bay, VHDL neuron modeling, and eventually broader computer vision and
-embedded ML. Now looking to get back closer to the neuroscience end of
-the spectrum.
+EE background; has been working in AI since 2017, and that throughline is
+the story. It began in neuromorphic hardware and brain-inspired computing
+— the Hodgkin-Huxley model in college (ion channels as RC circuits
+scaling to cognition), Rain Neuromorphics at 19 as employee #5
+hand-building memristive LIF neuron PCBs, then four years at GTRI (SNN
+deployment on Intel Kapoho Bay, VHDL neuron modeling, and a steadily
+widening applied skillset: computer vision, embedded ML, real
+deployment). That arc has brought him to the present: building tools
+across many domains with frontier agentic workflows, and learning as much
+as he can about these tools to stay ahead as AI advancement accelerates.
+Neuromorphics/SNNs are now the depth that explains how he thinks (systems,
+emergence), not the pitch — the present-tense identity is agentic builder.
 
 ## What he's looking for
 
-**Tier 1:** Computational neuroscience, neuromorphic engineering,
-connectomics, embodied simulation, BCI. eon.systems is the
-reference-point role.
-**Tier 2:** Sales engineering in AI/LLM. Strong communicator, rare
-technical depth, no formal sales experience but has pitched to DoD
-sponsors. Would need to be a domain he finds genuinely interesting.
-**Tier 3:** ML/CV engineering at mission-driven organizations. Heavily
-dependent on the company.
+> One-liner (his words): "I want a new job that lets me continue doing
+> what I've been doing: using frontier agentic workflows to build tools
+> for whomever needs them."
+
+**Tier 1:** Agentic / applied AI engineering — building agentic tools and
+products with frontier models, applied agent engineering,
+forward-deployed/applied AI. The clear current target as of mid-2026.
+**Tier 2:** Sales / solutions / forward-deployed engineering in AI/LLM.
+Strong communicator, rare technical depth, no formal sales experience but
+has pitched to DoD sponsors. Domain must be genuinely interesting.
+**Tier 3:** ML/CV engineering, or computational neuroscience /
+neuromorphic / connectomics / embodied sim / BCI (eon.systems was the
+reference role). Was tier 1 earlier in the 2026 search; still of genuine
+interest but no longer the primary lean. Heavily dependent on the company.
+
+> **Positioning note:** earlier in the 2026 search neuro/neuromorphic was
+> tier 1. As of mid-2026 that flipped — agentic-workflow / frontier-model
+> work is primary. Treat neuro as origin and depth, not the headline.
 
 **Disqualifiers:**
 - DoD/defense contracts, government, roles with no clear mission.
@@ -55,19 +70,29 @@ something.
 
 ## Key technical skills
 
-FlyGym, MuJoCo, Brian2, Gymnasium API, VHDL SNN implementation, Intel
-Kapoho Bay (Loihi 1/2), memristive hardware, DNN→SNN conversion,
-PyTorch, TensorFlow, HPC training, RT-DETRv2, embedded ML (Jetson Orin),
-PCB design (EagleCAD/Altium), PyQt6 desktop GUI development, serial
-protocol integration (RS-232, RS-485), ruggedized sensor + cable
-deployment, AFSIM surrogate modeling, C++, Python.
+Frontier agentic workflows — end-to-end tool building (this job pipeline,
+Meridian trading telemetry, Cellular Gaits, the portfolio site,
+Papercuts); multi-machine agent orchestration; LLM app plumbing
+(Anthropic SDK, Supabase, Next.js/React, Playwright). FlyGym, MuJoCo,
+Brian2, Gymnasium API, VHDL SNN implementation, Intel Kapoho Bay (Loihi
+1/2), memristive hardware, DNN→SNN conversion, PyTorch, TensorFlow, HPC
+training, RT-DETRv2, embedded ML (Jetson Orin), PCB design
+(EagleCAD/Altium), PyQt6 desktop GUI development, serial protocol
+integration (RS-232, RS-485), ruggedized sensor + cable deployment, AFSIM
+surrogate modeling, C++, Python.
 
 ## Portfolio goal
 
-`vishal.pa.thak.io` should feel like a person with a specific
-long-running obsession, not a generated candidate page. The thread from
-Hodgkin-Huxley → memristors → spiking networks → connectomics should be
-legible. Prioritize personality and genuine content over polish.
+`vishal.pa.thak.io` should showcase one thing: him — his interests, the
+jobs and path that got him here (AI since 2017: neuromorphics → GTRI →
+agentic building), the wide skillset from the GTRI years, and the new
+agentic work he's doing now. The organizing throughline is "working in AI
+since 2017 brought me here," present-tense identity an agentic builder of
+tools across domains; neuromorphics is the deep origin discovered one
+layer in, not the front door. The diverse project set is evidence for
+"tools for whomever needs them," not sprawl. Prioritize personality and
+genuine content over polish; it should not read as a generated candidate
+page.
 
 ## Personal
 

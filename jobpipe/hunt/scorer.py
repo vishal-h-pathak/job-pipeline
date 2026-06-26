@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 
 # Canonical package path, not the hunt-local bare `prompts` import the
@@ -17,7 +18,12 @@ from jobpipe.hunt.prompts import build_profile_prompt_string, load_prompt
 # it falls through to subscription OAuth instead of failing the run.
 from jobpipe.shared import llm
 
-MODEL = "claude-opus-4-7"
+# Cost control (2026-06): the scorer makes one call per surviving posting,
+# so model choice dominates daily hunt spend. Dropped Opus 4.7 → Sonnet 4.6
+# ($5/$25 → $3/$15 per Mtok in/out) to cut per-run cost; this also realigns
+# the code with hunt/README.md, which already documents Sonnet. Override via
+# the HUNT_SCORER_MODEL env knob if a future run wants a different tier.
+MODEL = os.getenv("HUNT_SCORER_MODEL") or "claude-sonnet-4-6"
 
 
 # System prompt is loaded lazily on first scoring call from

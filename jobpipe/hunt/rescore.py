@@ -40,10 +40,10 @@ logger = logging.getLogger("hunt.rescore")
 RESCORABLE_STATUSES = ("new", "discovered", "ignored")
 
 # Scorer model pricing, USD per million tokens. Matches jobpipe.hunt
-# .scorer.MODEL ("claude-opus-4-7"). Override via env when pricing or
-# the model changes.
-INPUT_USD_PER_MTOK = float(os.environ.get("RESCORE_INPUT_USD_PER_MTOK", "5.0"))
-OUTPUT_USD_PER_MTOK = float(os.environ.get("RESCORE_OUTPUT_USD_PER_MTOK", "25.0"))
+# .scorer.MODEL ("claude-sonnet-4-6" as of the 2026-06 cost-control switch
+# from Opus 4.7). Override via env when pricing or the model changes.
+INPUT_USD_PER_MTOK = float(os.environ.get("RESCORE_INPUT_USD_PER_MTOK", "3.0"))
+OUTPUT_USD_PER_MTOK = float(os.environ.get("RESCORE_OUTPUT_USD_PER_MTOK", "15.0"))
 
 # Observed scorer responses are a small JSON object (max_tokens=600).
 EST_OUTPUT_TOKENS_PER_ROW = 250

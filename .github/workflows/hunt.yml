@@ -26,8 +26,14 @@ on:
       run_id:
         description: "public.runs.id to update (omit for cron / manual smoke runs)"
         required: false
-  schedule:
-    - cron: "0 14 * * *"
+  # Daily cron DISABLED 2026-06 for cost control: the autonomous 14:00 UTC
+  # run scored every surviving posting on the API-key path and was the sole
+  # source of unattended Anthropic spend (~$3–4/day on Opus). Hunt now runs
+  # only on demand via the dashboard "Run hunt" button (workflow_dispatch).
+  # Re-enable by uncommenting the schedule block below once the cost tracker
+  # is in place and a budget ceiling is agreed.
+  # schedule:
+  #   - cron: "0 14 * * *"
 
 jobs:
   hunt:

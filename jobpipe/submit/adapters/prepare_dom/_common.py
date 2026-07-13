@@ -60,15 +60,52 @@ def name_attr_selectors(name_map: dict, label_text: str) -> list[str]:
     return [f'input[name="{name}"]', f'textarea[name="{name}"]']
 
 
+# ── Frame-aware locator resolution (frame + shadow-DOM piercing, Task 1) ────
+#
+# Every primitive below only ever searched ``page.locator(selector)`` — the
+# top document. That misses any field rendered inside an iframe (an embed of
+# a company's own careers page, or an ATS widget that mounts its form in a
+# child frame). Playwright's own CSS engine already pierces *open* shadow
+# roots for a same-document ``page.locator()`` call, so no extra work is
+# needed there — but it does NOT reach into iframes on its own; that needs
+# the explicit ``frame_locator()`` API per-frame.
+
+def _iter_frame_locators(page: Any, selector: str) -> list:
+    """Return a locator for ``selector`` scoped to each iframe on the page,
+    in DOM order, via Playwright's ``frame_locator()`` API.
+
+    Called only AFTER the top-document locator for this selector has already
+    failed to match — the top document stays the fast, common-case path with
+    no behavior change; this is purely a fallback. Counting the iframes or
+    building any one frame's locator can fail (a cross-origin restriction, a
+    detached iframe, or — in unit tests — a stub Page with no frame support
+    at all); every failure here is swallowed, contributing fewer candidates
+    rather than raising, exactly like a top-document selector miss.
+    """
+    try:
+        frame_count = page.locator("iframe").count()
+    except Exception:
+        return []
+    locators = []
+    for i in range(frame_count):
+        try:
+            locators.append(page.frame_locator("iframe").nth(i).locator(selector))
+        except Exception:
+            continue
+    return locators
+
+
 # ── Field-fill primitives (sync, swallow Playwright exceptions per-selector) ─
 
 def fill_text(page: Any, selectors: list[str], value: str,
               *, log: logging.Logger | None = None) -> bool:
-    """Try each selector in order; click + fill the first visible match.
+    """Try each selector in order (top document, then each iframe); click +
+    fill the first visible match.
 
-    Returns True on first successful fill, False if every selector misses.
-    Each per-selector failure (timeout, not-visible, detached) is swallowed
-    silently — the next selector gets a turn.
+    Returns True on first successful fill, False if every selector/frame
+    combination misses. Each per-candidate failure (timeout, not-visible,
+    detached, inaccessible frame) is swallowed silently — the next candidate
+    gets a turn.
     """
     log = log or logger
     for selector in selectors:
@@ -80,14 +117,25 @@ def fill_text(page: Any, selectors: list[str], value: str,
                 log.info(f"Filled via {selector}")
                 return True
         except Exception:
-            continue
+            pass
+        for frame_loc in _iter_frame_locators(page, selector):
+            try:
+                el = frame_loc.first
+                if el.is_visible(timeout=1000):
+                    el.click()
+                    el.fill(value)
+                    log.info(f"Filled via {selector} (iframe)")
+                    return True
+            except Exception:
+                continue
     log.debug("No selector matched for fill_text")
     return False
 
 
 def upload_file(page: Any, selectors: list[str], file_path: str,
                 *, log: logging.Logger | None = None) -> bool:
-    """Upload ``file_path`` into the first matching ``input[type=file]``.
+    """Upload ``file_path`` into the first matching ``input[type=file]``
+    (top document, then each iframe).
 
     Uses ``count() > 0`` rather than ``is_visible()`` because file inputs are
     frequently visually hidden behind a styled drop zone — they exist in the
@@ -102,14 +150,24 @@ def upload_file(page: Any, selectors: list[str], file_path: str,
                 log.info(f"Uploaded via {selector}")
                 return True
         except Exception:
-            continue
+            pass
+        for frame_loc in _iter_frame_locators(page, selector):
+            try:
+                file_input = frame_loc.first
+                if file_input.count() > 0:
+                    file_input.set_input_files(file_path)
+                    log.info(f"Uploaded via {selector} (iframe)")
+                    return True
+            except Exception:
+                continue
     return False
 
 
 def paste_textarea(page: Any, selectors: list[str], text: str,
                    *, log: logging.Logger | None = None) -> bool:
     """Paste ``text`` into the first matching textarea or contenteditable
-    element. Same iteration semantics as ``fill_text``."""
+    element (top document, then each iframe). Same iteration semantics as
+    ``fill_text``."""
     log = log or logger
     for selector in selectors:
         try:
@@ -120,13 +178,24 @@ def paste_textarea(page: Any, selectors: list[str], text: str,
                 log.info(f"Pasted via {selector}")
                 return True
         except Exception:
-            continue
+            pass
+        for frame_loc in _iter_frame_locators(page, selector):
+            try:
+                el = frame_loc.first
+                if el.is_visible(timeout=1000):
+                    el.click()
+                    el.fill(text)
+                    log.info(f"Pasted via {selector} (iframe)")
+                    return True
+            except Exception:
+                continue
     return False
 
 
 def select_option(page: Any, selectors: list[str], value: str,
                   *, log: logging.Logger | None = None) -> bool:
-    """Choose ``value`` in the first matching visible ``<select>``.
+    """Choose ``value`` in the first matching visible ``<select>`` (top
+    document, then each iframe).
 
     Same iteration / exception-swallowing semantics as ``fill_text``. Used by
     the declarative field-map layer for ``type: select`` specs (none of the
@@ -144,7 +213,16 @@ def select_option(page: Any, selectors: list[str], value: str,
                 log.info(f"Selected via {selector}")
                 return True
         except Exception:
-            continue
+            pass
+        for frame_loc in _iter_frame_locators(page, selector):
+            try:
+                el = frame_loc.first
+                if el.is_visible(timeout=1000):
+                    el.select_option(value)
+                    log.info(f"Selected via {selector} (iframe)")
+                    return True
+            except Exception:
+                continue
     return False
 
 
@@ -159,24 +237,38 @@ def select_option(page: Any, selectors: list[str], value: str,
 
 def read_value(page: Any, selectors: list[str],
                *, log: logging.Logger | None = None) -> str:
-    """Re-read the current value at the first selector that yields one.
+    """Re-read the current value at the first selector that yields one (top
+    document, then each iframe — same frame-aware resolution as the fill
+    primitives above).
 
-    Tries each selector in the same order the fill primitives used, calling
-    ``input_value()`` (works for ``input`` / ``textarea`` / ``select``, not
-    ``input[type=file]`` — file inputs are verified via
+    Tries each selector/candidate in the same order the fill primitives
+    used, calling ``input_value()`` (works for ``input`` / ``textarea`` /
+    ``select``, not ``input[type=file]`` — file inputs are verified via
     ``upload_file``'s own count()-based check, not a DOM value read).
-    Any exception (no match, detached node, wrong element type) is
-    swallowed and the next selector gets a turn; returns ``""`` if nothing
-    yields a non-empty value.
+    Any exception (no match, detached node, wrong element type,
+    inaccessible frame) is swallowed and the next candidate gets a turn;
+    returns ``""`` if nothing yields a non-empty value.
+
+    This MUST use the same frame-aware resolution as the fill primitives —
+    a value written into an iframe field would otherwise read back empty
+    against the top document and P0's DOM re-read verification would
+    wrongly demote a successful frame-fill back to "didn't stick".
     """
     log = log or logger
     for selector in selectors:
         try:
             value = page.locator(selector).first.input_value()
         except Exception:
-            continue
+            value = ""
         if value:
             return value
+        for frame_loc in _iter_frame_locators(page, selector):
+            try:
+                value = frame_loc.first.input_value()
+            except Exception:
+                continue
+            if value:
+                return value
     return ""
 
 

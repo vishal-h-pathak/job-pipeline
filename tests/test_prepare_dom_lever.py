@@ -153,6 +153,39 @@ def test_eu_subdomain_navigates_to_apply(monkeypatch, stub_job):
     assert target == "https://jobs.eu.lever.co/some-org/job-id/apply"
 
 
+# ── Task 1: skip the /apply hop for a non-canonical (embed) URL ────────────
+#
+# Same rationale as ``prepare_dom/ashby.py``: a company's own careers page
+# can embed a Lever form. Such a URL has no org slug and doesn't match the
+# jobs(.eu)?.lever.co/<org>/<jobId> shape, so appending /apply to it would
+# 404 on the company's own site. The fix skips the goto for a non-canonical
+# URL and relies on the frame-aware fill primitives to reach the embedded
+# form's iframe instead.
+
+def test_embed_url_does_not_get_apply_hop(monkeypatch, stub_job):
+    """A company's own careers page embedding the Lever form — host is NOT
+    jobs(.eu)?.lever.co — must not trigger the /apply path-mutation goto."""
+    _patch_screenshot(monkeypatch)
+    page = _StubPage("https://boards.example.com/careers/swe")
+    applicant = LeverApplicant()
+
+    applicant.fill_form(page, stub_job)
+
+    assert page.goto_calls == []
+
+
+def test_lever_host_with_non_canonical_path_does_not_get_hop(monkeypatch, stub_job):
+    """Even on the lever.co host, a path that isn't the two-segment
+    ``/<org>/<jobId>`` shape is not canonical-form-shaped — no goto."""
+    _patch_screenshot(monkeypatch)
+    page = _StubPage("https://jobs.lever.co/epoch-ai")
+    applicant = LeverApplicant()
+
+    applicant.fill_form(page, stub_job)
+
+    assert page.goto_calls == []
+
+
 # ── Part A: data-driven field-fill parity ──────────────────────────────────
 
 class _FillLocator:

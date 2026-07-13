@@ -103,10 +103,20 @@ class _StubPage:
 
     Tests construct one with a dict of ``{selector: locator_kwargs}`` and the
     page returns matching locators. Unknown selectors return a locator that
-    is invisible / count==0 so the helper falls through to the next."""
+    is invisible / count==0 so the helper falls through to the next.
 
-    def __init__(self, behaviors: dict):
+    ``iframe_behaviors`` (frame + shadow-DOM piercing, Task 1) is an optional
+    ``{frame_index: {selector: locator_kwargs}}`` map. When set, ``locator
+    ("iframe")`` reports ``count() == len(iframe_behaviors)`` so the
+    frame-aware primitives know how many iframes to walk, and
+    ``frame_locator("iframe").nth(i).locator(selector)`` resolves against
+    that frame's own behavior dict. Tests that never pass
+    ``iframe_behaviors`` get ``count() == 0`` — no frames tried, byte-
+    identical to the pre-Task-1 behavior."""
+
+    def __init__(self, behaviors: dict, iframe_behaviors: Optional[dict] = None):
         self.behaviors = behaviors
+        self.iframe_behaviors = iframe_behaviors or {}
         self.fills: list[tuple[str, str]] = []
         self.uploads: list[tuple[str, str]] = []
         self.selects: list[tuple[str, str]] = []
@@ -117,8 +127,32 @@ class _StubPage:
 
     def locator(self, selector: str) -> _StubLocator:
         self.locator_calls.append(selector)
+        if selector == "iframe":
+            return _StubLocator(selector, self, count=len(self.iframe_behaviors))
         kwargs = self.behaviors.get(selector, {})
         return _StubLocator(selector, self, **kwargs)
+
+    def frame_locator(self, selector: str) -> "_StubFrameLocator":
+        return _StubFrameLocator(self)
+
+
+class _StubFrameLocator:
+    """Stand-in for Playwright's ``FrameLocator`` — scoped to one iframe once
+    ``.nth(i)`` picks an index. ``.locator(selector)`` resolves against that
+    frame's own behavior dict (``page.iframe_behaviors[index]``), keyed under
+    ``"iframe[{index}] {selector}"`` so fills/values are trackable per-frame
+    without colliding with the top document's own selector namespace."""
+
+    def __init__(self, page: _StubPage, index: Optional[int] = None):
+        self.page = page
+        self.index = index
+
+    def nth(self, i: int) -> "_StubFrameLocator":
+        return _StubFrameLocator(self.page, i)
+
+    def locator(self, selector: str) -> _StubLocator:
+        kwargs = self.page.iframe_behaviors.get(self.index, {}).get(selector, {})
+        return _StubLocator(f"iframe[{self.index}] {selector}", self.page, **kwargs)
 
 
 # ── label_selectors / name_attr_selectors ──────────────────────────────────
@@ -164,7 +198,9 @@ def test_fill_text_falls_through_when_first_selector_not_visible():
     ok = fill_text(page, ["sel-a", "sel-b"], "value-2")
     assert ok is True
     assert page.fills == [("sel-b", "value-2")]
-    assert page.locator_calls == ["sel-a", "sel-b"]
+    # sel-a's top-doc miss triggers a frame-aware fallback probe ("iframe")
+    # before the loop moves on to sel-b (no iframes configured -> 0 found).
+    assert page.locator_calls == ["sel-a", "iframe", "sel-b"]
 
 
 def test_fill_text_swallows_per_selector_exceptions_and_continues():
@@ -310,7 +346,9 @@ def test_select_option_selects_first_visible_match():
     ok = select_option(page, ["select-a", "select-b"], "LinkedIn")
     assert ok is True
     assert page.selects == [("select-b", "LinkedIn")]
-    assert page.locator_calls == ["select-a", "select-b"]
+    # select-a's top-doc miss triggers a frame-aware fallback probe
+    # ("iframe") before the loop moves on to select-b.
+    assert page.locator_calls == ["select-a", "iframe", "select-b"]
 
 
 def test_select_option_returns_false_when_no_visible_select():
@@ -566,3 +604,123 @@ def test_scan_required_fields_degrades_to_empty_on_scan_failure():
             raise RuntimeError("selector engine blew up")
 
     assert scan_required_fields(_BoomPage()) == []
+
+
+# ── Frame-aware resolution (frame + shadow-DOM piercing, Task 1) ───────────
+#
+# Every primitive is proven to fall through top-document -> iframe when the
+# selector is absent from the top document but present inside an iframe, in
+# each direction: found only in the top doc (no frame probe needed), found
+# only in an iframe, found in neither, and a frame-access failure swallowed
+# exactly like any other per-selector miss.
+
+def test_fill_text_falls_through_from_top_document_into_iframe():
+    page = _StubPage({}, iframe_behaviors={0: {"sel-a": {"visible": True}}})
+    ok = fill_text(page, ["sel-a"], "value-iframe")
+    assert ok is True
+    assert page.fills == [("iframe[0] sel-a", "value-iframe")]
+
+
+def test_upload_file_falls_through_from_top_document_into_iframe():
+    page = _StubPage({}, iframe_behaviors={0: {"sel-a": {"count": 1}}})
+    ok = upload_file(page, ["sel-a"], "/tmp/resume.pdf")
+    assert ok is True
+    assert page.uploads == [("iframe[0] sel-a", "/tmp/resume.pdf")]
+
+
+def test_paste_textarea_falls_through_from_top_document_into_iframe():
+    page = _StubPage({}, iframe_behaviors={0: {"textarea": {"visible": True}}})
+    ok = paste_textarea(page, ["textarea"], "cover body")
+    assert ok is True
+    assert page.fills == [("iframe[0] textarea", "cover body")]
+
+
+def test_select_option_falls_through_from_top_document_into_iframe():
+    page = _StubPage({}, iframe_behaviors={0: {"select-a": {"visible": True}}})
+    ok = select_option(page, ["select-a"], "LinkedIn")
+    assert ok is True
+    assert page.selects == [("iframe[0] select-a", "LinkedIn")]
+
+
+def test_read_value_falls_through_from_top_document_into_iframe():
+    """A value written into iframe index 0 must read back from that same
+    frame — proves read_value uses the SAME frame-aware resolution as the
+    fill primitives, so a successful frame-fill never gets misread as empty
+    against the top document (which would wrongly demote it under P0's DOM
+    re-read verification)."""
+    page = _StubPage({}, iframe_behaviors={0: {"sel-a": {}}})
+    page.values["iframe[0] sel-a"] = "hello-from-iframe"
+    assert read_value(page, ["sel-a"]) == "hello-from-iframe"
+
+
+def test_frame_iteration_visits_multiple_iframes_in_dom_order():
+    """The selector matches only inside the SECOND iframe (index 1) — proves
+    the walk doesn't stop after the first iframe and visits frames in DOM
+    order rather than, say, only ever trying index 0."""
+    page = _StubPage(
+        {},
+        iframe_behaviors={
+            0: {},  # present but the selector isn't found in this frame
+            1: {"sel-a": {"visible": True}},
+        },
+    )
+    ok = fill_text(page, ["sel-a"], "value-2nd-frame")
+    assert ok is True
+    assert page.fills == [("iframe[1] sel-a", "value-2nd-frame")]
+
+
+def test_fill_text_prefers_top_document_over_iframe():
+    """When the same selector is visible in BOTH the top document and an
+    iframe, the top document wins (it's searched first) — no ``"iframe"``
+    probe is even needed."""
+    page = _StubPage(
+        {"sel-a": {"visible": True}},
+        iframe_behaviors={0: {"sel-a": {"visible": True}}},
+    )
+    ok = fill_text(page, ["sel-a"], "value-top")
+    assert ok is True
+    assert page.fills == [("sel-a", "value-top")]
+    assert "iframe" not in page.locator_calls
+
+
+def test_fill_text_returns_false_when_selector_absent_from_frames_too():
+    page = _StubPage({}, iframe_behaviors={0: {}, 1: {}})
+    ok = fill_text(page, ["sel-a"], "value")
+    assert ok is False
+    assert page.fills == []
+
+
+def test_frame_access_failure_is_swallowed_and_falls_through():
+    """A Page whose ``frame_locator()`` raises (cross-origin restriction, a
+    detached iframe) must not propagate — the primitive just reports no
+    match, exactly like any other per-selector miss, never raises."""
+
+    class _BrokenFramePage(_StubPage):
+        def frame_locator(self, selector: str):
+            raise RuntimeError("cross-origin frame — inaccessible")
+
+    page = _BrokenFramePage(
+        {}, iframe_behaviors={0: {"sel-a": {"visible": True}}}
+    )
+    ok = fill_text(page, ["sel-a"], "value")
+    assert ok is False
+
+
+def test_frame_locator_missing_entirely_is_swallowed():
+    """An even more degenerate stub than a raising one: a Page whose
+    ``"iframe"`` count is > 0 but that has no ``frame_locator()`` method at
+    all. ``AttributeError`` must be swallowed the same as any other
+    per-frame failure rather than propagating out of the primitive."""
+
+    class _CountOnlyPage:
+        def __init__(self):
+            self.fills: list = []
+            self.values: dict = {}
+
+        def locator(self, selector: str):
+            if selector == "iframe":
+                return _StubLocator("iframe", self, count=2)
+            return _StubLocator(selector, self, visible=False)
+
+    page = _CountOnlyPage()
+    assert fill_text(page, ["sel-a"], "value") is False

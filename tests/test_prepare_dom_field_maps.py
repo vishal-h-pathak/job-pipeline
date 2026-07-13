@@ -252,11 +252,19 @@ def test_apply_field_map_label_defaults_to_key_when_label_absent():
 def test_text_field_chain_is_name_attr_then_label_selectors():
     """A text spec with a ``name`` builds ``input[name=]`` + ``textarea[name=]``
     first, then the four label/aria/placeholder fallbacks — the exact order
-    the per-ATS adapters used before the data-driven rewrite."""
+    the per-ATS adapters used before the data-driven rewrite.
+
+    ``"iframe"`` calls are filtered out of the recorded locator_calls before
+    the order assertion: the frame-aware resolver (Task 1) probes for
+    iframes after every top-document miss, which is a separate concern from
+    the chain-CONSTRUCTION order this test pins — the stub Page has no
+    iframes configured, so every probe finds none and contributes nothing.
+    """
     page = _StubPage()  # all invisible → walk the whole chain
     specs = [{"key": "First Name", "name": "job_application[first_name]"}]
     apply_field_map(page, specs, {"First Name": "Test"})
-    assert page.locator_calls == [
+    calls = [c for c in page.locator_calls if c != "iframe"]
+    assert calls == [
         'input[name="job_application[first_name]"]',
         'textarea[name="job_application[first_name]"]',
         'label:has-text("First Name") input',
@@ -269,11 +277,13 @@ def test_text_field_chain_is_name_attr_then_label_selectors():
 def test_text_field_chain_appends_fuzzy_name_fallback_when_flagged():
     """Ashby text fields carry ``fuzzy_name_fallback`` — the chain gains the
     two ``input[name*=...]`` fuzzy selectors after the label fallbacks,
-    matching the old ``_ashby_field_selectors`` helper exactly."""
+    matching the old ``_ashby_field_selectors`` helper exactly. (``"iframe"``
+    probe calls filtered out — see the previous test's docstring.)"""
     page = _StubPage()
     specs = [{"key": "First Name", "fuzzy_name_fallback": True}]
     apply_field_map(page, specs, {"First Name": "Test"})
-    assert page.locator_calls == [
+    calls = [c for c in page.locator_calls if c != "iframe"]
+    assert calls == [
         'label:has-text("First Name") input',
         'label:has-text("First Name") >> input',
         'input[aria-label="First Name"]',
@@ -286,14 +296,17 @@ def test_text_field_chain_appends_fuzzy_name_fallback_when_flagged():
 def test_explicit_selectors_lead_then_label_fallback_for_text():
     """Phone-style specs put an explicit ``selectors`` lead first (the
     ``input[type=tel]:visible`` intl-tel-input anchor) then the label
-    fallbacks — file/textarea specs use the explicit list ONLY."""
+    fallbacks — file/textarea specs use the explicit list ONLY. (``"iframe"``
+    probe calls filtered out — see the first chain-order test's docstring.)
+    """
     page = _StubPage()
     specs = [{
         "key": "Phone", "type": "text",
         "selectors": ['input[type="tel"]:visible', 'input[id="phone"]'],
     }]
     apply_field_map(page, specs, {"Phone": "+1-555-0100"})
-    assert page.locator_calls == [
+    calls = [c for c in page.locator_calls if c != "iframe"]
+    assert calls == [
         'input[type="tel"]:visible',
         'input[id="phone"]',
         'label:has-text("Phone") input',
@@ -304,13 +317,16 @@ def test_explicit_selectors_lead_then_label_fallback_for_text():
 
 
 def test_file_field_chain_is_explicit_selectors_only_no_label_fallback():
+    """(``"iframe"`` probe calls filtered out — see the first chain-order
+    test's docstring.)"""
     page = _StubPage()
     specs = [{
         "key": "__resume__", "label": "Resume", "type": "file",
         "selectors": ['input[type="file"][name="resume"]', 'input[type="file"]'],
     }]
     apply_field_map(page, specs, {"__resume__": "/tmp/r.pdf"})
-    assert page.locator_calls == [
+    calls = [c for c in page.locator_calls if c != "iframe"]
+    assert calls == [
         'input[type="file"][name="resume"]',
         'input[type="file"]',
     ]

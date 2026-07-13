@@ -168,6 +168,46 @@ def test_preserves_query_string(monkeypatch, stub_job):
     )
 
 
+# ── Task 1: skip the /application hop for a non-canonical (embed) URL ──────
+#
+# ``AshbyApplicant.detect`` also matches a company's OWN careers page that
+# embeds an Ashby form via ``?ashby_jid=<uuid>`` — that URL carries no org
+# slug, so there is no way to derive the canonical jobs.ashbyhq.com/<org>/
+# <jobId> target from it. Appending /application to an embed's own path
+# (e.g. the company's /careers page) would just 404. The fix: only append
+# /application when the current URL already looks like the canonical
+# jobs.ashbyhq.com/<org>/<jobId> job-board path (pinned above, unchanged);
+# an embed-shaped URL skips the goto entirely and relies on the frame-aware
+# fill primitives to find the form inside its iframe.
+
+def test_embed_url_does_not_get_application_hop(monkeypatch, stub_job):
+    """A company's own careers page carrying ``?ashby_jid=`` — host is NOT
+    jobs.ashbyhq.com — must not trigger the /application path-mutation
+    goto."""
+    _patch_screenshot(monkeypatch)
+    page = _StubPage(
+        "https://boards.example.com/careers/swe?ashby_jid=abc-123-def"
+    )
+    applicant = AshbyApplicant()
+
+    applicant.fill_form(page, stub_job)
+
+    assert page.goto_calls == []
+
+
+def test_ashby_host_with_non_canonical_path_does_not_get_hop(monkeypatch, stub_job):
+    """Even on the ashbyhq.com host, a path that isn't the two-segment
+    ``/<org>/<jobId>`` shape (e.g. an org-only listing page) is not
+    canonical-form-shaped — no goto."""
+    _patch_screenshot(monkeypatch)
+    page = _StubPage("https://jobs.ashbyhq.com/far.ai")
+    applicant = AshbyApplicant()
+
+    applicant.fill_form(page, stub_job)
+
+    assert page.goto_calls == []
+
+
 # ── Part A: data-driven field-fill parity ──────────────────────────────────
 
 class _FillLocator:

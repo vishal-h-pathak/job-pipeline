@@ -39,6 +39,30 @@ from .field_maps import run_field_map_fill
 
 logger = logging.getLogger("prepare_dom.lever")
 
+_CANONICAL_HOSTS = {"jobs.lever.co", "jobs.eu.lever.co"}
+_FORM_SUFFIX = "/apply"
+
+
+def _is_canonical_form_url(url: str) -> bool:
+    """True when ``url`` already matches the canonical
+    ``jobs(.eu)?.lever.co/<org>/<jobId>`` shape (optionally with the
+    ``/apply`` form suffix already appended).
+
+    Mirrors ``prepare_dom/ashby.py::_is_canonical_form_url`` — see that
+    docstring for the embed-URL rationale. Lever forms can also be embedded
+    on a company's own careers page; an embed URL won't have this host or
+    path shape, so the ``/apply`` path-mutation hop is skipped for it and
+    the frame-aware fill primitives take over instead.
+    """
+    parsed = urlparse(url or "")
+    if (parsed.hostname or "").lower() not in _CANONICAL_HOSTS:
+        return False
+    path = parsed.path.rstrip("/")
+    if path.endswith(_FORM_SUFFIX):
+        path = path[: -len(_FORM_SUFFIX)]
+    segments = [s for s in path.split("/") if s]
+    return len(segments) == 2
+
 
 class LeverApplicant(BaseApplicant):
     """Playwright-based DOM form filler for Lever ATS applications."""
@@ -73,17 +97,31 @@ class LeverApplicant(BaseApplicant):
             # name="comments", name="phone") only exist on /apply, so
             # without this hop fill_form would survey an empty page.
             # Idempotent — if the URL already ends in /apply, no extra goto.
+            #
+            # As with Ashby, that path-mutation only makes sense on a
+            # canonical jobs(.eu)?.lever.co job-board URL. An embed (a
+            # company's own careers page hosting the Lever form) has no org
+            # slug to build a canonical target from, so skip the goto for
+            # a non-canonical URL and rely on the frame-aware fill
+            # primitives to find the form inside its iframe instead.
             current = page.url
-            parsed = urlparse(current)
-            path = parsed.path.rstrip("/")
-            if not path.endswith("/apply"):
-                new_path = path + "/apply"
-                target = urlunparse(parsed._replace(path=new_path))
+            if _is_canonical_form_url(current):
+                parsed = urlparse(current)
+                path = parsed.path.rstrip("/")
+                if not path.endswith("/apply"):
+                    new_path = path + "/apply"
+                    target = urlunparse(parsed._replace(path=new_path))
+                    logger.info(
+                        f"lever: navigating from overview to form: {target}"
+                    )
+                    page.goto(
+                        target, wait_until="domcontentloaded", timeout=45000
+                    )
+            else:
                 logger.info(
-                    f"lever: navigating from overview to form: {target}"
-                )
-                page.goto(
-                    target, wait_until="domcontentloaded", timeout=45000
+                    "lever: URL is not a canonical jobs(.eu)?.lever.co/"
+                    "<org>/<jobId> path (likely a company-page embed) - "
+                    "staying put and relying on frame-aware fill"
                 )
 
             page.wait_for_load_state("networkidle", timeout=15000)

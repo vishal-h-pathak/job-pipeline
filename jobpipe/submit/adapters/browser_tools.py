@@ -45,6 +45,29 @@ _ENUMERATE_JS = r"""
     const seen = new Set();
     let counter = 0;
 
+    // Walk ``root`` (a Document or a ShadowRoot) and every OPEN shadow root
+    // nested inside it, collecting every element that matches ``selector``.
+    // Playwright's own `page.locator()` CSS engine already pierces open
+    // shadow roots natively for same-document queries — this plain-JS
+    // enumeration (used by the *universal* agent's get_form_fields tool via
+    // `page.evaluate`) needs the same reach so the agent can see/tag fields
+    // Chrome exposes through an open `shadowRoot`.
+    //
+    // Limitation: a CLOSED shadow root (`attachShadow({mode: 'closed'})`)
+    // sets `el.shadowRoot` to null from outside its own module scope, so it
+    // is fundamentally unreachable here (and to Playwright's CSS engine) —
+    // this is a JS/DOM API limitation, not a bug in this walk. No workaround
+    // is attempted; closed-shadow forms simply won't be seen.
+    const queryAllDeep = (root, selector) => {
+        let results = Array.from(root.querySelectorAll(selector));
+        root.querySelectorAll('*').forEach(el => {
+            if (el.shadowRoot) {
+                results = results.concat(queryAllDeep(el.shadowRoot, selector));
+            }
+        });
+        return results;
+    };
+
     const getLabel = (el) => {
         // 1. aria-label
         if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
@@ -96,7 +119,7 @@ _ENUMERATE_JS = r"""
     };
 
     // Inputs, textareas
-    document.querySelectorAll('input, textarea').forEach(el => {
+    queryAllDeep(document, 'input, textarea').forEach(el => {
         if (!isVisible(el) && el.type !== 'file') return;
         if (seen.has(el)) return;
         seen.add(el);
@@ -118,7 +141,7 @@ _ENUMERATE_JS = r"""
     });
 
     // Native selects
-    document.querySelectorAll('select').forEach(el => {
+    queryAllDeep(document, 'select').forEach(el => {
         if (!isVisible(el)) return;
         if (seen.has(el)) return;
         seen.add(el);
@@ -144,7 +167,7 @@ _ENUMERATE_JS = r"""
     const comboSel =
         '[role="combobox"], [role="listbox"], [data-react-select-container="true"], ' +
         '.select__control, .select2-container, [class*="Select-control"]';
-    document.querySelectorAll(comboSel).forEach(el => {
+    queryAllDeep(document, comboSel).forEach(el => {
         if (!isVisible(el)) return;
         if (seen.has(el)) return;
         seen.add(el);
@@ -163,7 +186,7 @@ _ENUMERATE_JS = r"""
     });
 
     // Buttons and links (so the agent can click Apply / Continue / Submit)
-    document.querySelectorAll('button, a[role="button"], [type="submit"]').forEach(el => {
+    queryAllDeep(document, 'button, a[role="button"], [type="submit"]').forEach(el => {
         if (!isVisible(el)) return;
         if (seen.has(el)) return;
         seen.add(el);

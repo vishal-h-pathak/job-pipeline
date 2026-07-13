@@ -34,6 +34,36 @@ from .field_maps import run_field_map_fill
 
 logger = logging.getLogger("prepare_dom.ashby")
 
+_CANONICAL_HOST = "jobs.ashbyhq.com"
+_FORM_SUFFIX = "/application"
+
+
+def _is_canonical_form_url(url: str) -> bool:
+    """True when ``url`` already matches the canonical
+    ``jobs.ashbyhq.com/<org>/<jobId>`` shape (optionally with the
+    ``/application`` form suffix already appended).
+
+    ``AshbyApplicant.detect`` matches on three signals: the
+    ``jobs.ashbyhq.com`` host, the loose ``jobs.ashby`` substring, and the
+    ``ashby_jid`` query param a company's OWN careers page uses to embed an
+    Ashby form (no org slug anywhere in that URL — there is no reliable way
+    to derive the canonical job-board URL from it). Appending
+    ``/application`` to an embed's path just produces a 404 on the
+    company's own site. This check is what lets ``fill_form`` tell the two
+    apart: only a URL that is already canonical-shaped gets the
+    ``/application`` path-mutation hop; anything else (an embed) is left
+    alone and handled by the frame-aware fill primitives instead (the
+    embedded form typically lives inside an iframe on the company's page).
+    """
+    parsed = urlparse(url or "")
+    if (parsed.hostname or "").lower() != _CANONICAL_HOST:
+        return False
+    path = parsed.path.rstrip("/")
+    if path.endswith(_FORM_SUFFIX):
+        path = path[: -len(_FORM_SUFFIX)]
+    segments = [s for s in path.split("/") if s]
+    return len(segments) == 2
+
 
 class AshbyApplicant(BaseApplicant):
     """Playwright-based DOM form filler for Ashby ATS applications."""
@@ -76,17 +106,35 @@ class AshbyApplicant(BaseApplicant):
             # at /{org}/{job_id}/application. Without this hop the surveyor
             # finds an empty page and returns success=False. Idempotent —
             # if the URL already ends in /application, no extra goto.
+            #
+            # But that path-mutation only makes sense on a canonical
+            # jobs.ashbyhq.com job-board URL. ``detect()`` also matches an
+            # EMBED — a company's own careers page carrying ``?ashby_jid=``
+            # — and there's no org slug in an embed URL to build a
+            # canonical target from. Appending /application to an embed's
+            # own path (e.g. the company's /careers page) just 404s. So:
+            # skip the goto entirely for a non-canonical URL and stay put —
+            # the embedded form renders inside an iframe on the current
+            # page, which the frame-aware fill primitives (_common.py) can
+            # now reach directly.
             current = page.url
-            parsed = urlparse(current)
-            path = parsed.path.rstrip("/")
-            if not path.endswith("/application"):
-                new_path = path + "/application"
-                target = urlunparse(parsed._replace(path=new_path))
+            if _is_canonical_form_url(current):
+                parsed = urlparse(current)
+                path = parsed.path.rstrip("/")
+                if not path.endswith("/application"):
+                    new_path = path + "/application"
+                    target = urlunparse(parsed._replace(path=new_path))
+                    logger.info(
+                        f"ashby: navigating from overview to form: {target}"
+                    )
+                    page.goto(
+                        target, wait_until="domcontentloaded", timeout=45000
+                    )
+            else:
                 logger.info(
-                    f"ashby: navigating from overview to form: {target}"
-                )
-                page.goto(
-                    target, wait_until="domcontentloaded", timeout=45000
+                    "ashby: URL is not a canonical jobs.ashbyhq.com/<org>/"
+                    "<jobId> path (likely a company-page embed) - staying "
+                    "put and relying on frame-aware fill"
                 )
 
             page.wait_for_load_state("networkidle", timeout=15000)

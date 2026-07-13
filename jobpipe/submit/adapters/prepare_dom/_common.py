@@ -1052,11 +1052,19 @@ def scan_required_fields(page: Any, *,
         (``page.frame_locator("iframe").nth(i)``) or enumerating its
         required elements (``.locator(selector).count()``) raising IS a
         ``scan_incomplete`` event — we now know a frame exists and could
-        not confirm whether it holds any required, unanswered field. An
-        individual element's attribute read failing once we're already
-        enumerating a successfully-counted frame is still just skipped
-        (same per-element best-effort as the top document), not itself
-        incomplete.
+        not confirm whether it holds any required, unanswered field.
+        Unlike the top document, a per-element READ FAILURE (an exception
+        actually raised while resolving one already-counted element) is
+        ALSO ``scan_incomplete`` (not a silent skip): that frame's own
+        ``count()`` already proved the element exists, so failing to read
+        it means "known-required and unreadable," not "nothing to see
+        here." An element that reads successfully but simply resolves to
+        NO label (e.g. one option of an already-tracked radio/select
+        group whose distinguishing label lives on a sibling node, not
+        every matching element — real ATS markup does this) is NOT
+        incomplete; it's the same harmless no-op as the top document's
+        equivalent case. Only a genuine exception proves a field is
+        actually being missed.
       - The OUTER ``page.locator("iframe").count()`` call raising (e.g. a
         stub Page with no iframe support at all, as used throughout the
         pre-frame-aware unit tests) is treated as "zero iframes on this
@@ -1104,9 +1112,24 @@ def scan_required_fields(page: Any, *,
                 el_selector = _resolve_dom_selector(el)
                 kind = _resolve_dom_kind(el)
             except Exception:
+                # Unlike the top document's per-element skip, this frame's
+                # own count() already PROVED a required element exists here
+                # — a subsequent read failure means "known-required and
+                # unreadable," not "nothing to see." Treat it the same as
+                # an inaccessible frame rather than silently dropping a
+                # confirmed-required field from the set.
+                scan_incomplete = True
                 continue
             if label and label not in found:
                 found[label] = (el_selector, kind)
+            # An individual element resolving to NO label (e.g. one option
+            # of an already-tracked radio/select group whose distinguishing
+            # label lives on a sibling, not on every matching node) is a
+            # normal, harmless no-op here — NOT itself incomplete. Only a
+            # genuine read/enumeration EXCEPTION (above) proves a real
+            # required field is being missed; an empty label on a node
+            # that's part of a group we may have already tracked under a
+            # different node's label is not that.
 
     entries = [
         {"label": label, "selectors": [sel] if sel else [], "kind": kind}

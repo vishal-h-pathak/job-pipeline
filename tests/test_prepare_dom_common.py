@@ -927,6 +927,12 @@ class _ReqLocator:
         return len(self._nodes)
 
     def nth(self, i: int) -> "_ReqLocator":
+        # "_boom": True (frame-hardening fix) simulates a specific element
+        # that raises on access even though this locator's own count()
+        # already succeeded — e.g. a node that detaches between the count
+        # and the per-element read.
+        if self._nodes[i].get("_boom"):
+            raise RuntimeError("stub: element access blew up after count()")
         return _ReqLocator([self._nodes[i]])
 
     @property
@@ -1187,6 +1193,39 @@ def test_scan_required_fields_marks_incomplete_when_frame_inaccessible():
     # Whatever this scan did or didn't find inside the inaccessible frame is
     # not the point of this test (the caller-side refusal is) — but it must
     # not have silently fabricated an entry either.
+    assert entries == []
+
+
+def test_scan_required_fields_frame_element_read_failure_marks_incomplete():
+    """Narrower residual (post-review hardening): a frame's OWN count()
+    already proved a required element exists, but reading that specific
+    element (``.nth(j)``) then raises — e.g. it detached between the count
+    and the read. Unlike the top document (which never proved the element
+    existed in a way worth trusting), this frame case has positive evidence
+    a real required field is being missed, so it must ALSO set
+    scan_incomplete=True rather than silently skipping like the top
+    document's per-element best-effort contract."""
+    frame = _ReqFrameRoot([{"attrs": {"aria-label": "Willing to relocate?"}, "_boom": True}])
+    page = _ReqPage([], iframes=[frame])
+    entries, incomplete = scan_required_fields(page)
+    assert incomplete is True
+    assert entries == []
+
+
+def test_scan_required_fields_frame_element_with_no_label_is_a_harmless_noop():
+    """A frame required-element that resolves to NO label at all (no
+    aria-label, placeholder, name, or associated <label for>) is a normal
+    no-op — e.g. one option of a radio/select group whose distinguishing
+    label lives on a sibling node, not every matching element. This must
+    NOT set scan_incomplete: an earlier attempt at this hardening treated
+    every unlabeled node as "incomplete," which broke real ATS markup
+    (Ashby's embedded work-authorization <select> options) that has no
+    per-option label by design. Only a genuine read/enumeration EXCEPTION
+    (see the sibling test above) proves a field is actually being missed."""
+    frame = _ReqFrameRoot([{"attrs": {}}])
+    page = _ReqPage([], iframes=[frame])
+    entries, incomplete = scan_required_fields(page)
+    assert incomplete is False
     assert entries == []
 
 

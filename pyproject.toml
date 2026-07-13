@@ -107,6 +107,7 @@ packages = [
     "jobpipe.submit.adapters.deterministic",
     "jobpipe.submit.adapters.prepare_dom",
     "jobpipe.submit.browser",
+    "jobpipe.submit.scripts",
 ]
 
 [tool.setuptools.package-data]

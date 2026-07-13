@@ -250,7 +250,13 @@ def apply_field_map(
                 scoped_needles=scoped_needles,
             )
             if ok:
-                ok = bool(read_value(page, chain, log=log))
+                # The re-read must use the SAME scoped enumeration the fill
+                # used (Task 3 finding fix) — a plain .first re-read would
+                # check the wrong textarea whenever the fill landed on a
+                # non-first candidate, wrongly demoting a fill that stuck.
+                ok = bool(read_value(
+                    page, chain, log=log, scoped_needles=scoped_needles,
+                ))
         elif ftype == "select":
             ok = select_option(page, chain, value, log=log, misses=candidates)
             if ok:

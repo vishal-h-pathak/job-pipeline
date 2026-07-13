@@ -41,6 +41,7 @@ class _StubLocator:
         raise_on_visible: bool = False,
         discard_fill: bool = False,
         attrs: Optional[dict] = None,
+        nodes: Optional[list] = None,
     ):
         self.selector = selector
         self.page = page
@@ -55,9 +56,22 @@ class _StubLocator:
         # ``input_value()`` read-back reports empty (fill didn't stick).
         self.discard_fill = discard_fill
         self._attrs = attrs or {}
+        # Multi-element behind one selector (Task 3 finding fix): each dict
+        # in ``nodes`` is a set of kwargs for one DISTINCT candidate (its
+        # own ``visible``/``attrs``/``raise_on_visible``/``discard_fill``),
+        # mirroring how a real page can have several ``<textarea>``
+        # elements match the same bare selector string. When given,
+        # ``count()`` reports ``len(nodes)`` and ``nth(i)`` resolves a
+        # fresh ``_StubLocator`` for that specific node (tagged
+        # ``f"{selector}#{i}"`` so ``page.fills`` can tell candidates
+        # apart) instead of the single shared-instance behavior every
+        # other stub locator in this suite relies on.
+        self._nodes = nodes
 
     @property
     def first(self):
+        if self._nodes:
+            return self.nth(0)
         return self
 
     def is_visible(self, timeout: int = 1000) -> bool:
@@ -66,9 +80,13 @@ class _StubLocator:
         return self.visible
 
     def count(self) -> int:
+        if self._nodes is not None:
+            return len(self._nodes)
         return self._count
 
     def nth(self, i: int) -> "_StubLocator":
+        if self._nodes is not None:
+            return _StubLocator(f"{self.selector}#{i}", self.page, **self._nodes[i])
         return self
 
     def click(self) -> None:
@@ -856,6 +874,44 @@ def test_read_value_swallows_exceptions_per_selector():
     assert read_value(_BoomPage(), ["sel-a"]) == ""
 
 
+def test_read_value_scoped_reads_back_the_non_first_matching_candidate():
+    """The other half of the multi-textarea finding fix: after
+    ``paste_textarea`` fills the SECOND (correctly labeled) candidate
+    behind the bare catch-all, a plain ``.first`` re-read would check the
+    FIRST (unfilled, wrong) textarea and report an empty value — wrongly
+    demoting a fill that actually stuck. ``scoped_needles`` must re-read
+    via the same label-match enumeration, not ``.first``."""
+    page = _StubPage({
+        "textarea": {"nodes": [
+            {"visible": True, "attrs": {"aria-label": "Why this role?"}},
+            {"visible": True, "attrs": {"aria-label": "Cover Letter"}},
+        ]},
+    })
+    # Simulate the fill having already landed on the second candidate.
+    page.values["textarea#1"] = "Dear team, ..."
+    value = read_value(page, ["textarea"], scoped_needles=("cover", "letter"))
+    assert value == "Dear team, ..."
+
+
+def test_read_value_scoped_returns_empty_when_no_candidate_matches_the_needles():
+    page = _StubPage({
+        "textarea": {"nodes": [
+            {"visible": True, "attrs": {"aria-label": "Custom question"}},
+        ]},
+    })
+    page.values["textarea#0"] = "some stray value"
+    value = read_value(page, ["textarea"], scoped_needles=("cover", "letter"))
+    assert value == ""
+
+
+def test_read_value_unscoped_when_no_needles_given_is_unaffected():
+    """Default ``scoped_needles=None`` — behavior identical to before this
+    fix, even for a selector literally named "textarea"."""
+    page = _StubPage({})
+    page.values["textarea"] = "plain value"
+    assert read_value(page, ["textarea"]) == "plain value"
+
+
 # ── scan_required_fields (form-derived required-set, P0 #2) ────────────────
 
 class _ReqLocator:
@@ -1135,10 +1191,23 @@ def test_select_combobox_misses_records_success_entry():
 
 
 # ── Scoped cover-letter textarea fallback (Task 3 / #3) ────────────────────
+#
+# ``count: 1`` is now required (in addition to ``visible``/``attrs``) on
+# every single-textarea scoped fixture below: the fix that closed the
+# "only ever inspects .first" finding replaced the scoped branch's
+# ``.first``-based check with the same ``count()`` + ``nth(i)`` enumeration
+# ``scan_required_fields`` uses, so the stub locator's ``count()`` (not just
+# ``is_visible()``) now has to accurately model "one element exists here" —
+# a real Playwright ``page.locator("textarea")`` matching one element
+# reports ``count() == 1``; the stub previously left ``count`` defaulted to
+# 0 because the old ``.first``-based code never called it.
 
 def test_paste_textarea_scoped_rejects_mislabeled_bare_catch_all():
     page = _StubPage({
-        "textarea": {"visible": True, "attrs": {"aria-label": "Why this role?"}},
+        "textarea": {
+            "visible": True, "count": 1,
+            "attrs": {"aria-label": "Why this role?"},
+        },
     })
     ok = paste_textarea(
         page, ["textarea"], "Dear team, ...",
@@ -1150,7 +1219,10 @@ def test_paste_textarea_scoped_rejects_mislabeled_bare_catch_all():
 
 def test_paste_textarea_scoped_accepts_properly_labeled_bare_catch_all():
     page = _StubPage({
-        "textarea": {"visible": True, "attrs": {"aria-label": "Cover Letter"}},
+        "textarea": {
+            "visible": True, "count": 1,
+            "attrs": {"aria-label": "Cover Letter"},
+        },
     })
     ok = paste_textarea(
         page, ["textarea"], "Dear team, ...",
@@ -1158,6 +1230,84 @@ def test_paste_textarea_scoped_accepts_properly_labeled_bare_catch_all():
     )
     assert ok is True
     assert page.fills == [("textarea", "Dear team, ...")]
+
+
+# ── Multiple textareas behind the bare catch-all (the finding this fix
+# addresses): the scoped check used to inspect ONLY ``page.locator
+# ("textarea").first`` — on a form whose FIRST textarea is an unlabeled or
+# mislabeled custom question and a correctly labeled "Cover Letter"
+# textarea renders LATER in DOM order, the old code stopped the wrong
+# behavior (no longer mis-filling the custom question) but never delivered
+# the right one (finding and filling the actually-correct textarea) — it
+# just silently filled nothing. These tests use ``_StubLocator``'s new
+# ``nodes`` param (multiple DISTINCT elements behind one selector string,
+# mirroring ``scan_required_fields``'s own multi-node coverage) to prove
+# the fix now enumerates every candidate rather than stopping at ``.first``.
+
+def test_paste_textarea_scoped_multiple_textareas_fills_the_correctly_labeled_one_even_when_not_first():
+    """The brief's exact motivating scenario: first textarea is a mislabeled
+    custom question, second is properly labeled "Cover Letter" — the cover
+    letter must land in the SECOND one, not nowhere."""
+    page = _StubPage({
+        "textarea": {"nodes": [
+            {"visible": True, "attrs": {"aria-label": "Why this role?"}},
+            {"visible": True, "attrs": {"aria-label": "Cover Letter"}},
+        ]},
+    })
+    ok = paste_textarea(
+        page, ["textarea"], "Dear team, ...",
+        scoped_needles=("cover", "letter"),
+    )
+    assert ok is True
+    # The SECOND candidate (index 1) is the one that got filled — the fix
+    # doesn't just avoid the wrong box, it finds the right one.
+    assert page.fills == [("textarea#1", "Dear team, ...")]
+
+
+def test_paste_textarea_scoped_multiple_textareas_all_mislabeled_fills_nothing():
+    """Every candidate behind the bare catch-all is mislabeled — the fixed
+    enumeration must exhaust all of them and report no fill, without
+    crashing or grabbing an arbitrary one."""
+    page = _StubPage({
+        "textarea": {"nodes": [
+            {"visible": True, "attrs": {"aria-label": "Custom question A"}},
+            {"visible": True, "attrs": {"aria-label": "Custom question B"}},
+        ]},
+    })
+    ok = paste_textarea(
+        page, ["textarea"], "Dear team, ...",
+        scoped_needles=("cover", "letter"),
+    )
+    assert ok is False
+    assert page.fills == []
+
+
+def test_paste_textarea_scoped_multiple_textareas_skips_invisible_and_exception_candidates():
+    """A fuller DOM-order walk: an invisible candidate, one whose
+    visibility check raises, a mislabeled one, then the correctly labeled
+    match last — every non-matching candidate must be tried and swallowed
+    in order before the real match is found."""
+    page = _StubPage({
+        "textarea": {"nodes": [
+            {"visible": False, "attrs": {"aria-label": "Cover Letter"}},  # not visible
+            {"raise_on_visible": True},  # blows up on is_visible()
+            {"visible": True, "attrs": {"aria-label": "Custom question"}},  # mislabeled
+            {"visible": True, "attrs": {"aria-label": "Cover Letter"}},  # the real match
+        ]},
+    })
+    misses: list = []
+    ok = paste_textarea(
+        page, ["textarea"], "Dear team, ...",
+        scoped_needles=("cover", "letter"), misses=misses,
+    )
+    assert ok is True
+    assert page.fills == [("textarea#3", "Dear team, ...")]
+    # The blown-up candidate (index 1) is recorded as a swallowed miss;
+    # the final success entry recovers the matched selector.
+    assert misses == [
+        {"selector": "textarea", "error": "RuntimeError"},
+        {"selector": "textarea"},
+    ]
 
 
 def test_paste_textarea_scoping_does_not_apply_to_qualified_selectors():

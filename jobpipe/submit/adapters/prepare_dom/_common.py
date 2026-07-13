@@ -282,6 +282,57 @@ def upload_file(
     return False, False
 
 
+def _fill_first_scoped_textarea(
+    locator: Any, text: str, needles: tuple[str, ...], *,
+    page: Any, log: logging.Logger, selector: str, frame_suffix: str,
+    misses: list | None,
+) -> bool:
+    """Enumerate EVERY element behind ``locator`` — mirrors
+    ``scan_required_fields``'s ``count()`` + ``nth(i)`` pattern rather than
+    ``.first`` — and fill the first one that is both visible and whose
+    resolved label matches one of ``needles``.
+
+    This is what lets the bare catch-all ``"textarea"`` selector find a
+    correctly labeled cover-letter box that renders AFTER an earlier,
+    unlabeled/mislabeled textarea on the same page: checking only ``.first``
+    (the pre-fix behavior) would stop at the wrong element and never look
+    any further, silently filling nothing even though a valid cover-letter
+    textarea exists later in DOM order.
+
+    Any failure enumerating or reading an individual candidate (a detached
+    node, ``is_visible``/label-resolution blowing up, the fill itself
+    raising) is swallowed, recorded in ``misses`` when given, and the next
+    candidate in DOM order is tried — same per-candidate exception contract
+    as every other primitive in this module. A total ``count()`` failure
+    (the selector itself is invalid, or a broken locator) is likewise
+    swallowed and reported as a single miss rather than propagating.
+    """
+    try:
+        count = locator.count()
+    except Exception as exc:
+        if misses is not None:
+            misses.append({"selector": selector, "error": type(exc).__name__})
+        return False
+    for i in range(count):
+        try:
+            el = locator.nth(i)
+            if not el.is_visible(timeout=1000):
+                continue
+            if not _label_matches_any(page, el, needles):
+                continue
+            el.click()
+            el.fill(text)
+        except Exception as exc:
+            if misses is not None:
+                misses.append({"selector": selector, "error": type(exc).__name__})
+            continue
+        log.info(f"Pasted via {selector}{frame_suffix}")
+        if misses is not None:
+            misses.append({"selector": selector})
+        return True
+    return False
+
+
 def paste_textarea(
     page: Any, selectors: list[str], text: str,
     *, log: logging.Logger | None = None,
@@ -290,7 +341,7 @@ def paste_textarea(
 ) -> bool:
     """Paste ``text`` into the first matching textarea or contenteditable
     element (top document, then each iframe). Same iteration semantics as
-    ``fill_text``.
+    ``fill_text`` for every UNSCOPED selector.
 
     ``scoped_needles`` (Task 3 / #3) restricts ONLY the bare catch-all
     ``"textarea"`` selector — every more-specific selector ahead of it in
@@ -298,30 +349,55 @@ def paste_textarea(
     exactly as before. The bare catch-all is the one that used to grab
     whichever textarea happened to render first on the page — often a
     custom question, not the cover letter, on a form with no properly
-    labeled cover-letter box. When scoped, it is only accepted if the
-    textarea's resolved label (``_resolve_dom_label`` — aria-label /
-    placeholder / name / associated ``label[for=id]``) contains at least
-    one needle, case-insensitively. A visible-but-mislabeled bare textarea
-    is treated as a plain non-match (falls through to the next candidate /
-    frame) — not a crash, and not a per-selector ``misses`` entry either
-    (mirrors the "not visible" precedent: no exception, no entry — the
-    field-level ``fill_report`` still shows the spec unfilled).
+    labeled cover-letter box.
+
+    When scoped, EVERY element matching the bare ``"textarea"`` selector is
+    enumerated in DOM order (``_fill_first_scoped_textarea`` — the
+    ``count()`` + ``nth(i)`` pattern, not just ``.first``), and the first
+    one whose resolved label (``_resolve_dom_label`` — aria-label /
+    placeholder / name / associated ``label[for=id]``) contains a needle,
+    case-insensitively, gets filled. This matters when the FIRST textarea
+    on the page is an unrelated/mislabeled custom question and the
+    correctly labeled cover-letter box renders later — checking only
+    ``.first`` would stop at the wrong element and fill nothing at all. If
+    no candidate (in the top document or any iframe) matches, this is a
+    plain non-match — not a crash, and not a per-selector ``misses`` entry
+    either (mirrors the "not visible" precedent: no exception, no entry —
+    the field-level ``fill_report`` still shows the spec unfilled).
     """
     log = log or logger
     for selector in selectors:
         scoped = bool(scoped_needles) and selector == "textarea"
+        if scoped:
+            try:
+                top_locator = page.locator(selector)
+            except Exception as exc:
+                if misses is not None:
+                    misses.append({"selector": selector, "error": type(exc).__name__})
+                top_locator = None
+            if top_locator is not None and _fill_first_scoped_textarea(
+                top_locator, text, scoped_needles,
+                page=page, log=log, selector=selector, frame_suffix="",
+                misses=misses,
+            ):
+                return True
+            for frame_loc in _iter_frame_locators(page, selector):
+                if _fill_first_scoped_textarea(
+                    frame_loc, text, scoped_needles,
+                    page=page, log=log, selector=selector,
+                    frame_suffix=" (iframe)", misses=misses,
+                ):
+                    return True
+            continue
         try:
             el = page.locator(selector).first
             if el.is_visible(timeout=1000):
-                if scoped and not _label_matches_any(page, el, scoped_needles):
-                    pass  # mislabeled catch-all match — fall through
-                else:
-                    el.click()
-                    el.fill(text)
-                    log.info(f"Pasted via {selector}")
-                    if misses is not None:
-                        misses.append({"selector": selector})
-                    return True
+                el.click()
+                el.fill(text)
+                log.info(f"Pasted via {selector}")
+                if misses is not None:
+                    misses.append({"selector": selector})
+                return True
         except Exception as exc:
             if misses is not None:
                 misses.append({"selector": selector, "error": type(exc).__name__})
@@ -329,8 +405,6 @@ def paste_textarea(
             try:
                 el = frame_loc.first
                 if el.is_visible(timeout=1000):
-                    if scoped and not _label_matches_any(page, el, scoped_needles):
-                        continue
                     el.click()
                     el.fill(text)
                     log.info(f"Pasted via {selector} (iframe)")
@@ -674,8 +748,45 @@ def wait_for_form_ready(
 # the LIVE DOM after a fill claims success so a fill that didn't stick can be
 # demoted back to unfilled.
 
+def _read_first_scoped_textarea_value(
+    locator: Any, page: Any, needles: tuple[str, ...],
+) -> str:
+    """Re-read the value of the first candidate behind ``locator`` — via
+    ``count()`` + ``nth(i)``, the SAME enumeration
+    ``_fill_first_scoped_textarea`` used to pick the fill target — whose
+    resolved label matches one of ``needles``, regardless of DOM position.
+
+    Exists because a plain ``.first``-based re-read would always check the
+    physically first ``<textarea>`` on the page, which is the WRONG
+    element whenever the fill actually landed on a later candidate (the
+    exact scenario scoped enumeration exists to handle: an earlier
+    mislabeled/custom-question textarea, then the correctly labeled cover
+    letter box later in DOM order) — that would wrongly demote a fill that
+    actually stuck. Any per-candidate failure (label resolution,
+    ``input_value()`` raising for a non-input element) is swallowed and the
+    next candidate is tried; a total ``count()`` failure or no match at all
+    returns ``""``, same as the rest of this module's exception contract.
+    """
+    try:
+        count = locator.count()
+    except Exception:
+        return ""
+    for i in range(count):
+        try:
+            el = locator.nth(i)
+            if not _label_matches_any(page, el, needles):
+                continue
+            value = el.input_value() or ""
+        except Exception:
+            continue
+        if value:
+            return value
+    return ""
+
+
 def read_value(page: Any, selectors: list[str],
-               *, log: logging.Logger | None = None) -> str:
+               *, log: logging.Logger | None = None,
+               scoped_needles: tuple[str, ...] | None = None) -> str:
     """Re-read the current value at the first selector that yields one (top
     document, then each iframe — same frame-aware resolution as the fill
     primitives above).
@@ -692,9 +803,36 @@ def read_value(page: Any, selectors: list[str],
     a value written into an iframe field would otherwise read back empty
     against the top document and P0's DOM re-read verification would
     wrongly demote a successful frame-fill back to "didn't stick".
+
+    ``scoped_needles`` (Task 3 finding fix) mirrors ``paste_textarea``'s
+    scoping for the bare catch-all ``"textarea"`` selector: when given, that
+    selector is re-read via ``_read_first_scoped_textarea_value``'s
+    enumeration + label-match order instead of always checking ``.first`` —
+    see that helper's docstring for why a plain ``.first`` re-read would
+    otherwise wrongly demote a scoped fill that landed on a non-first
+    candidate. Every other (unscoped) selector's re-read is completely
+    unaffected — default ``None`` is byte-identical to before this fix.
     """
     log = log or logger
     for selector in selectors:
+        if scoped_needles and selector == "textarea":
+            try:
+                top_locator = page.locator(selector)
+            except Exception:
+                top_locator = None
+            value = (
+                _read_first_scoped_textarea_value(top_locator, page, scoped_needles)
+                if top_locator is not None else ""
+            )
+            if value:
+                return value
+            for frame_loc in _iter_frame_locators(page, selector):
+                value = _read_first_scoped_textarea_value(
+                    frame_loc, page, scoped_needles,
+                )
+                if value:
+                    return value
+            continue
         try:
             value = page.locator(selector).first.input_value()
         except Exception:

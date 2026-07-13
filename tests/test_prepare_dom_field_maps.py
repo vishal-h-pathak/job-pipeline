@@ -40,6 +40,7 @@ class _StubLocator:
         discard_fill: bool = False,
         attrs: Optional[dict] = None,
         raise_on_visible: bool = False,
+        nodes: Optional[list] = None,
     ):
         self.selector = selector
         self.page = page
@@ -57,9 +58,20 @@ class _StubLocator:
         # node, an inaccessible frame) — the primitive must swallow it AND
         # (when a caller passes ``misses``) record ``{"selector", "error"}``.
         self.raise_on_visible = raise_on_visible
+        # Multi-element behind one selector (scoped-textarea enumeration
+        # fix): each dict in ``nodes`` is a set of kwargs for one DISTINCT
+        # candidate. When given, ``count()`` reports ``len(nodes)`` and
+        # ``nth(i)`` resolves a fresh ``_StubLocator`` for that node
+        # (tagged ``f"{selector}#{i}"`` in ``page.fills``) instead of the
+        # single shared-instance behavior every other stub locator here
+        # relies on. Mirrors ``test_prepare_dom_common.py``'s identical
+        # extension.
+        self._nodes = nodes
 
     @property
     def first(self):
+        if self._nodes:
+            return self.nth(0)
         return self
 
     def is_visible(self, timeout: int = 1000) -> bool:
@@ -68,9 +80,13 @@ class _StubLocator:
         return self.visible
 
     def count(self) -> int:
+        if self._nodes is not None:
+            return len(self._nodes)
         return self._count
 
     def nth(self, i: int) -> "_StubLocator":
+        if self._nodes is not None:
+            return _StubLocator(f"{self.selector}#{i}", self.page, **self._nodes[i])
         return self
 
     def click(self) -> None:
@@ -216,8 +232,13 @@ def test_apply_field_map_pastes_textarea_via_paste_textarea():
     # the __cover_letter__ key — it only accepts a textarea whose resolved
     # label contains a cover-letter needle, so this stub textarea carries
     # one (a realistic ATS would label its lone textarea somehow).
+    # ``count: 1`` models "one element exists here" — the scoped path now
+    # enumerates via count()+nth(i) rather than checking only ``.first``.
     page = _StubPage({
-        "textarea": {"visible": True, "attrs": {"aria-label": "Cover Letter"}},
+        "textarea": {
+            "visible": True, "count": 1,
+            "attrs": {"aria-label": "Cover Letter"},
+        },
     })
     specs = [{
         "key": "__cover_letter__", "label": "Cover Letter",
@@ -476,7 +497,7 @@ def test_apply_field_map_demotes_a_discarded_textarea_and_select_fill():
     # cleanly to isolate that.
     page = _StubPage({
         "textarea": {
-            "visible": True, "discard_fill": True,
+            "visible": True, "count": 1, "discard_fill": True,
             "attrs": {"aria-label": "Cover Letter"},
         },
         "select-a": {"visible": True, "discard_fill": True},
@@ -697,7 +718,10 @@ def test_cover_letter_bare_textarea_skips_mislabeled_custom_question():
     question (aria-label doesn't mention cover/letter) — the bare catch-all
     must NOT paste the cover letter into it."""
     page = _StubPage({
-        "textarea": {"visible": True, "attrs": {"aria-label": "Why do you want this role?"}},
+        "textarea": {
+            "visible": True, "count": 1,
+            "attrs": {"aria-label": "Why do you want this role?"},
+        },
     })
     specs = [{
         "key": "__cover_letter__", "label": "Cover Letter",
@@ -718,7 +742,10 @@ def test_cover_letter_bare_textarea_accepts_properly_labeled_textarea():
     check must still accept it (scoping isn't a blanket ban, just a label
     requirement)."""
     page = _StubPage({
-        "textarea": {"visible": True, "attrs": {"aria-label": "Cover Letter"}},
+        "textarea": {
+            "visible": True, "count": 1,
+            "attrs": {"aria-label": "Cover Letter"},
+        },
     })
     specs = [{
         "key": "__cover_letter__", "label": "Cover Letter",
@@ -728,6 +755,35 @@ def test_cover_letter_bare_textarea_accepts_properly_labeled_textarea():
         page, specs, {"__cover_letter__": "Dear team, ..."}
     )
     assert page.fills == [("textarea", "Dear team, ...")]
+    assert result["filled"] == ["Cover Letter"]
+    assert result["fill_report"][0]["matched_selector"] == "textarea"
+
+
+def test_cover_letter_bare_textarea_fills_the_correctly_labeled_one_when_a_mislabeled_textarea_renders_first():
+    """The review finding this test covers: the OLD scoped check only ever
+    inspected ``page.locator("textarea").first`` — on a form whose FIRST
+    textarea is an unrelated custom question and a correctly labeled
+    "Cover Letter" textarea renders SECOND, the old code stopped the wrong
+    behavior (no more mis-filling the custom question) but never delivered
+    the right one, silently filling nothing. This is the brief's own
+    worked example, exercised through the full ``apply_field_map`` path
+    (not just the ``paste_textarea`` primitive) to prove the acceptance
+    bar is actually met: the cover letter lands in the correctly labeled
+    textarea, not nowhere."""
+    page = _StubPage({
+        "textarea": {"nodes": [
+            {"visible": True, "attrs": {"aria-label": "Why do you want this role?"}},
+            {"visible": True, "attrs": {"aria-label": "Cover Letter"}},
+        ]},
+    })
+    specs = [{
+        "key": "__cover_letter__", "label": "Cover Letter",
+        "type": "textarea", "selectors": ["textarea"],
+    }]
+    result = apply_field_map(
+        page, specs, {"__cover_letter__": "Dear team, ..."}
+    )
+    assert page.fills == [("textarea#1", "Dear team, ...")]
     assert result["filled"] == ["Cover Letter"]
     assert result["fill_report"][0]["matched_selector"] == "textarea"
 

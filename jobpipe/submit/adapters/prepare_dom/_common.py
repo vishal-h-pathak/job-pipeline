@@ -568,15 +568,93 @@ def _best_matching_combobox_option(options: list[dict], value: str) -> dict | No
     return None
 
 
-def _combobox_selection_confirmed(display: str, value: str, chosen_text: str) -> bool:
+def _wait_for_listbox_closed(
+    page: Any, container: Any, *, timeout_s: float, poll_interval_s: float,
+    option_selector: str = '[role="option"]',
+) -> bool:
+    """Poll (bounded by ``timeout_s``) for evidence the listbox actually
+    closed after clicking an option — mirrors ``_wait_for_listbox_options``'s
+    polling style but waits for the OPPOSITE condition. Either signal below
+    is sufficient to report closed:
+
+      - the same ``[role="option"]`` selector ``_wait_for_listbox_options``
+        polls for rendering, now polled for its count to drop to 0.
+      - the combobox container's own ``aria-expanded`` attribute reading
+        ``"false"``. Some widgets hide the popup via CSS/other markup
+        changes without actually removing the option nodes from the DOM,
+        so the option-count signal alone could false-negative (the safe
+        direction — it would just fall through to "not confirmed" — but
+        this signal is cheap to check and more accurate for that widget
+        shape). A container with no ``aria-expanded`` attribute at all
+        (``get_attribute`` returns ``None``) is not treated as a signal
+        either way — a widget that never publishes that attribute simply
+        relies on the option-count signal alone.
+
+    Every per-poll failure (bad selector, detached popup, a container whose
+    ``get_attribute`` raises) is swallowed and just contributes another
+    "not yet closed" poll rather than raising — same contract as
+    ``_wait_for_listbox_options``. A genuinely broken widget (the click
+    handler did nothing) correctly times out and returns ``False``: the
+    listbox never closes and ``aria-expanded`` (if present) never flips —
+    this is the corroborating signal ``_combobox_selection_confirmed``
+    needs to reject a no-op click that happens to leave the input holding
+    the raw typed text (P0 MAJOR fix).
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            if page.locator(option_selector).count() == 0:
+                return True
+        except Exception:
+            pass
+        try:
+            expanded = container.get_attribute("aria-expanded")
+        except Exception:
+            expanded = None
+        if expanded == "false":
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll_interval_s)
+
+
+def _combobox_selection_confirmed(
+    display: str, value: str, chosen_text: str, *,
+    listbox_closed: bool,
+) -> bool:
     """Verify the click stuck by comparing the post-selection display value
     (``input_value()`` for a real ``<input>``, or ``text_content()``/chip
     text for a div-wrapper widget — see ``_fill_combobox``) against what we
-    typed and what we clicked."""
+    typed and what we clicked — corroborated by ``listbox_closed``.
+
+    MAJOR fix: for the input-direct ARIA shape, ``_fill_combobox`` types the
+    raw search text straight into the real ``<input>``'s ``.value`` via
+    ``container.fill(value)`` BEFORE the option is ever clicked. If the
+    widget's click handler is broken or ignored, ``.value`` never changes —
+    it just keeps holding whatever was typed — so ``display == value`` is
+    trivially true even though nothing was ever selected. That equality
+    alone is therefore NOT proof of a real selection; it's exactly what a
+    no-op click produces too.
+
+    ``display`` REFORMATTING away from the raw typed text into something
+    matching the chosen option's text (or containing it) IS strong evidence
+    on its own — a no-op click could never turn the input's value into text
+    it was never told to contain. Anything weaker — ``display`` merely
+    equal to the raw typed text, or ``chosen_text`` appearing inside that
+    UNCHANGED typed text — is accepted only when corroborated by
+    ``listbox_closed``: independent evidence (``_wait_for_listbox_closed``)
+    that the click actually did something.
+    """
     d = (display or "").strip().lower()
     if not d:
         return False
-    return d == (value or "").strip().lower() or chosen_text.strip().lower() in d
+    typed = (value or "").strip().lower()
+    chosen = chosen_text.strip().lower()
+    reformatted = d != typed and (d == chosen or chosen in d)
+    if reformatted:
+        return True
+    exact_or_contains = d == typed or chosen in d
+    return listbox_closed and exact_or_contains
 
 
 def _fill_combobox(
@@ -627,6 +705,14 @@ def _fill_combobox(
     except Exception:
         return False
 
+    # Corroborating evidence the click actually did something, independent
+    # of the display readback below — see _combobox_selection_confirmed's
+    # docstring for why display alone can be trivially misleading.
+    listbox_closed = _wait_for_listbox_closed(
+        page, container,
+        timeout_s=listbox_timeout_s, poll_interval_s=listbox_poll_interval_s,
+    )
+
     # Read back whichever signal actually reflects the post-selection value.
     # Two ARIA-1.2 combobox shapes are in scope (see the module note above):
     #   - ``role="combobox"`` directly on the real ``<input>`` — its
@@ -652,7 +738,9 @@ def _fill_combobox(
             display = container.text_content() or ""
         except Exception:
             pass
-    return _combobox_selection_confirmed(display, value, best["text"])
+    return _combobox_selection_confirmed(
+        display, value, best["text"], listbox_closed=listbox_closed,
+    )
 
 
 def select_combobox(
@@ -670,15 +758,22 @@ def select_combobox(
     itself isn't fillable — see ``_fill_combobox``); poll for the rendered
     listbox's options (``_wait_for_listbox_options``); pick the
     exact-match-preferred / substring-fallback option
-    (``_best_matching_combobox_option``); click it; and verify the selection
-    stuck by reading back the post-selection value — ``input_value()`` for
-    the ARIA shape where ``role="combobox"`` sits directly on the real
-    ``<input>``, falling back to ``text_content()`` for the div-wrapper
-    shape (see ``_fill_combobox``'s in-line comment for why one signal alone
-    can't cover both shapes; ``_combobox_selection_confirmed`` does the
-    actual comparison). Same per-selector exception-swallowing contract as
-    every other primitive in this module: any failure at any step just moves
-    on to the next candidate rather than raising.
+    (``_best_matching_combobox_option``); click it; wait for corroborating
+    evidence the click actually did something (``_wait_for_listbox_closed`` —
+    the listbox's own options disappearing, or ``aria-expanded`` flipping to
+    ``"false"``); and verify the selection stuck by reading back the
+    post-selection value — ``input_value()`` for the ARIA shape where
+    ``role="combobox"`` sits directly on the real ``<input>``, falling back
+    to ``text_content()`` for the div-wrapper shape (see ``_fill_combobox``'s
+    in-line comment for why one signal alone can't cover both shapes;
+    ``_combobox_selection_confirmed`` does the actual comparison, requiring
+    ``listbox_closed`` corroboration unless the display value REFORMATTED
+    into the chosen option's text — MAJOR fix: a display that merely still
+    equals the raw typed text is exactly what a widget with a broken/no-op
+    click handler would also produce, so that alone is not proof a selection
+    happened). Same per-selector exception-swallowing contract as every
+    other primitive in this module: any failure at any step just moves on to
+    the next candidate rather than raising.
     """
     log = log or logger
     for selector in selectors:

@@ -494,7 +494,18 @@ class _ComboOptionLocator:
     mirroring real DOM semantics where a real ``<input>``'s ``textContent``
     never changes but its ``.value`` does, and a div wrapper has the
     opposite: no ``.value``/``input_value()`` support, but a chip/display
-    text that does change."""
+    text that does change.
+
+    ``page.option_click_effective`` (P0 MAJOR-fix regression coverage) models
+    a widget whose click handler is broken/ignored: the click is still
+    tracked in ``clicked_options`` (Playwright's own ``.click()`` call did
+    not raise) but produces NO state change at all — no container
+    value/text update, no listbox-close signal — the exact "click succeeded,
+    widget did nothing" scenario the weak old confirmation check was fooled
+    by. ``page.count_reflects_close`` additionally lets a normal (effective)
+    click leave the ``[role="option"]`` node count untouched while still
+    flipping ``aria-expanded`` — modeling a widget that hides its popup via
+    CSS/markup rather than removing the option nodes."""
 
     def __init__(self, text: str, page: "_ComboPage"):
         self.text = text
@@ -502,10 +513,16 @@ class _ComboOptionLocator:
 
     def click(self) -> None:
         self.page.clicked_options.append(self.text)
+        if not self.page.option_click_effective:
+            return
         if self.page.container_accepts_fill:
             self.page.container_value = self.text
         else:
             self.page.container_text = self.text
+        if self.page.count_reflects_close:
+            self.page.listbox_open = False
+        if self.page.aria_expanded is not None:
+            self.page.aria_expanded = "false"
 
     def text_content(self) -> str:
         return self.text
@@ -514,7 +531,10 @@ class _ComboOptionLocator:
 class _ComboOptionsListLocator:
     """The ``[role="option"]`` locator — a fixed option-text list that can
     only "appear" (``count() > 0``) after ``reveal_after`` polls, simulating
-    a listbox rendering a beat after the combobox opens."""
+    a listbox rendering a beat after the combobox opens, and that
+    disappears (``count() == 0``) once ``page.listbox_open`` flips False —
+    simulating a real selection closing the popup (or staying stubbornly
+    open when the widget's click handler never fires)."""
 
     def __init__(self, options: list, page: "_ComboPage", reveal_after: int = 0):
         self._options = options
@@ -525,6 +545,8 @@ class _ComboOptionsListLocator:
     def count(self) -> int:
         self._poll_count += 1
         if self._poll_count <= self._reveal_after:
+            return 0
+        if not self.page.listbox_open:
             return 0
         return len(self._options)
 
@@ -547,7 +569,16 @@ class _ComboContainerLocator:
     reflects the actually-set value. When it's False (the div-wrapper
     shape), it's the other way around: ``input_value()`` raises (a div
     doesn't support it) and ``text_content()`` carries the chip/display
-    text."""
+    text.
+
+    ``fill()`` (input-direct shape only) sets BOTH ``typed_value`` (what the
+    test asserts was typed) AND ``container_value`` (what ``input_value()``
+    reads back) — mirroring the real DOM: Playwright's ``.fill()`` on a real
+    ``<input>`` sets its actual ``.value`` property directly, immediately,
+    before any click ever happens. This is exactly what makes the P0
+    MAJOR-fix regression scenario possible: if the option click's handler
+    never fires, ``.value`` simply keeps holding whatever ``.fill()`` set it
+    to — the input never reverts to empty."""
 
     def __init__(self, page: "_ComboPage"):
         self.page = page
@@ -566,6 +597,12 @@ class _ComboContainerLocator:
         if not self.page.container_accepts_fill:
             raise RuntimeError("div containers don't support .fill()")
         self.page.typed_value = value
+        self.page.container_value = value
+
+    def get_attribute(self, name: str):
+        if name == "aria-expanded":
+            return self.page.aria_expanded
+        return None
 
     def text_content(self) -> str:
         if self.page.container_accepts_fill:
@@ -604,24 +641,51 @@ class _ComboNestedInputLocator:
 class _ComboPage:
     """Stub Page for ``select_combobox``: one combobox container selector,
     an options list rendered under ``[role="option"]``, and a container
-    whose displayed text updates once an option is clicked."""
+    whose displayed text updates once an option is clicked.
+
+    ``option_click_effective`` / ``count_reflects_close`` / ``aria_expanded``
+    model the listbox-closed corroboration the P0 MAJOR fix added (see
+    ``_ComboOptionLocator.click()``):
+      - ``option_click_effective=True`` (default): a normal, working widget
+        — clicking an option updates the container's value/text AND (when
+        ``count_reflects_close`` is also True, the default) flips
+        ``listbox_open`` False so the ``[role="option"]`` count drops to 0.
+      - ``option_click_effective=False``: the widget's click handler is
+        broken/ignored — the click is tracked but produces NO state change
+        at all: no value/text update, no listbox close, no aria-expanded
+        flip. This is the exact vulnerable scenario the fix closes.
+      - ``count_reflects_close=False`` (with ``aria_expanded`` set to a
+        non-``None`` initial value): a normal, effective click still
+        updates the container's value/text but does NOT flip
+        ``listbox_open`` — modeling a widget that hides its popup via CSS
+        without removing the option nodes from the DOM — while
+        ``aria-expanded`` still flips to ``"false"``, proving that signal
+        path is independently sufficient.
+    """
 
     def __init__(
         self, container_selector: str, options: list, *,
         container_visible: bool = True,
         reveal_after: int = 0,
         container_accepts_fill: bool = True,
+        option_click_effective: bool = True,
+        count_reflects_close: bool = True,
+        aria_expanded: str | None = None,
     ):
         self.container_selector = container_selector
         self.options = options
         self.container_visible = container_visible
         self.reveal_after = reveal_after
         self.container_accepts_fill = container_accepts_fill
+        self.option_click_effective = option_click_effective
+        self.count_reflects_close = count_reflects_close
+        self.aria_expanded = aria_expanded
         self.container_text = ""
         self.container_value = ""
         self.clicked_container = False
         self.typed_value = None
         self.clicked_options: list = []
+        self.listbox_open = True
         self._options_locator = None
 
     def locator(self, selector: str):
@@ -733,6 +797,56 @@ def test_select_combobox_falls_through_to_next_selector_on_first_miss():
     # combo-a's top-doc miss triggers the frame-aware fallback probe before
     # moving on to combo-b — matches every other primitive's convention.
     assert page.locator_calls == ["combo-a", "iframe", "combo-b", "iframe"]
+
+
+def test_select_combobox_ignored_click_not_confirmed():
+    # P0 MAJOR fix (core regression test): the widget's click handler is
+    # broken/ignored. Clicking the option is tracked (Playwright's own
+    # .click() call didn't raise) but produces NO real state change — the
+    # container's display value still holds exactly the raw text that was
+    # typed via .fill() BEFORE the click, and the listbox never closes
+    # (option count stays non-zero on every poll). The old weak check
+    # (`display == value`) would confirm this as a successful selection
+    # purely because the input's unchanged value happens to equal what was
+    # typed — this asserts the fix rejects it.
+    page = _ComboPage(
+        "div[data-testid=combo]",
+        ["United States", "United Kingdom"],
+        option_click_effective=False,
+    )
+    ok = select_combobox(
+        page, ["div[data-testid=combo]"], "United States",
+        listbox_timeout_s=0.05, listbox_poll_interval_s=0.01,
+    )
+    assert ok is False
+    assert page.clicked_options == ["United States"]
+    # The widget never actually selected anything: display still holds
+    # exactly the raw typed text, and the listbox never closed.
+    assert page.container_value == "United States"
+    assert page.listbox_open is True
+
+
+def test_select_combobox_confirmed_via_aria_expanded_when_options_linger():
+    # Some widgets hide their popup via CSS/other markup changes without
+    # actually removing the [role="option"] nodes from the DOM — the
+    # option-count signal alone would time out (never see count hit 0) even
+    # though a real selection happened. aria-expanded flipping to "false" is
+    # the independent, cheaper-to-check signal that should catch it.
+    page = _ComboPage(
+        "div[data-testid=combo]",
+        ["United States", "United Kingdom"],
+        aria_expanded="true",
+        count_reflects_close=False,
+    )
+    ok = select_combobox(
+        page, ["div[data-testid=combo]"], "United States",
+        listbox_timeout_s=0.2, listbox_poll_interval_s=0.01,
+    )
+    assert ok is True
+    assert page.aria_expanded == "false"
+    # The option nodes never actually vanished - proves this test is really
+    # exercising the aria-expanded path, not the option-count path.
+    assert page.listbox_open is True
 
 
 # ── load_cover_letter ──────────────────────────────────────────────────────

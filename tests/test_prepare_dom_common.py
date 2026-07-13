@@ -21,6 +21,7 @@ from jobpipe.submit.adapters.prepare_dom._common import (
     paste_textarea,
     read_value,
     scan_required_fields,
+    select_combobox,
     select_option,
     upload_file,
 )
@@ -289,21 +290,33 @@ def test_phone_selectors_canonical_order_per_ats():
 
 
 # ── upload_file ────────────────────────────────────────────────────────────
+#
+# PR-7's contract was a bare bool: a selector matched and ``set_input_files``
+# didn't raise. Task 2 adds an upload-COMPLETION wait on top — evidence the
+# ATS actually accepted the file (its filename rendering somewhere in the
+# DOM) — bounded by a short timeout. ``upload_file`` now returns
+# ``(matched, confirmed)`` so a caller can tell "selector never matched" from
+# "matched but the ATS's async accept never showed up" (P0 review item 9:
+# ``set_input_files`` not raising is not proof of anything beyond Playwright
+# handing the browser a file).
 
 def test_upload_file_uses_first_selector_with_count_gt_zero():
     page = _StubPage({
         "sel-a": {"count": 0},
         "sel-b": {"count": 1},
+        "text=resume.pdf": {"count": 1},  # confirmation evidence already present
     })
-    ok = upload_file(page, ["sel-a", "sel-b"], "/tmp/resume.pdf")
-    assert ok is True
+    matched, confirmed = upload_file(page, ["sel-a", "sel-b"], "/tmp/resume.pdf")
+    assert matched is True
+    assert confirmed is True
     assert page.uploads == [("sel-b", "/tmp/resume.pdf")]
 
 
 def test_upload_file_returns_false_when_no_selector_finds_input():
     page = _StubPage({"sel-a": {"count": 0}})
-    ok = upload_file(page, ["sel-a"], "/tmp/resume.pdf")
-    assert ok is False
+    matched, confirmed = upload_file(page, ["sel-a"], "/tmp/resume.pdf")
+    assert matched is False
+    assert confirmed is False
     assert page.uploads == []
 
 
@@ -311,9 +324,80 @@ def test_upload_file_swallows_per_selector_exceptions():
     page = _StubPage({
         "sel-a": {"raise_on_visible": True, "count": 0},
         "sel-b": {"count": 1},
+        "text=r.pdf": {"count": 1},
     })
-    ok = upload_file(page, ["sel-a", "sel-b"], "/tmp/r.pdf")
-    assert ok is True
+    matched, confirmed = upload_file(page, ["sel-a", "sel-b"], "/tmp/r.pdf")
+    assert matched is True
+    assert confirmed is True
+
+
+def test_upload_file_confirmed_immediately_when_evidence_already_present():
+    page = _StubPage({
+        "sel-a": {"count": 1},
+        "text=resume.pdf": {"count": 1},
+    })
+    matched, confirmed = upload_file(page, ["sel-a"], "/tmp/resume.pdf")
+    assert matched is True
+    assert confirmed is True
+
+
+def test_upload_file_not_confirmed_on_timeout_when_no_evidence_ever_appears():
+    """The DOM never mutates to show the uploaded filename (the ATS's async
+    upload/parse step never completes, or completes with no visible trace).
+    Must report ``confirmed is False`` — NOT filled — rather than trusting
+    the non-raising ``set_input_files`` call. Uses a tiny timeout so the test
+    doesn't actually block for the production-scale default."""
+    page = _StubPage({"sel-a": {"count": 1}})  # no "text=resume.pdf" ever registered
+    matched, confirmed = upload_file(
+        page, ["sel-a"], "/tmp/resume.pdf",
+        confirm_timeout_s=0.05, confirm_poll_interval_s=0.01,
+    )
+    assert matched is True
+    assert confirmed is False
+
+
+def test_upload_file_confirmed_after_dom_mutates_a_few_polls_later():
+    """Simulates the realistic case: the ATS's async upload finishes a beat
+    AFTER ``set_input_files`` returns, so the filename evidence only appears
+    on a later poll — not the first check."""
+
+    class _DelayedConfirmPage(_StubPage):
+        def __init__(self, behaviors, confirm_selector, reveal_after):
+            super().__init__(behaviors)
+            self._confirm_selector = confirm_selector
+            self._reveal_after = reveal_after
+            self._poll_count = 0
+
+        def locator(self, selector):
+            if selector == self._confirm_selector:
+                self._poll_count += 1
+                count = 1 if self._poll_count >= self._reveal_after else 0
+                return _StubLocator(selector, self, count=count)
+            return super().locator(selector)
+
+    page = _DelayedConfirmPage(
+        {"sel-a": {"count": 1}}, "text=resume.pdf", reveal_after=3,
+    )
+    matched, confirmed = upload_file(
+        page, ["sel-a"], "/tmp/resume.pdf",
+        confirm_timeout_s=1.0, confirm_poll_interval_s=0.01,
+    )
+    assert matched is True
+    assert confirmed is True
+
+
+def test_upload_file_confirms_via_iframe_evidence():
+    """Both the file input AND the post-upload filename evidence live inside
+    the same iframe — the confirmation wait must be frame-aware too, not
+    just the initial selector match."""
+    page = _StubPage(
+        {},
+        iframe_behaviors={0: {"sel-a": {"count": 1}, "text=resume.pdf": {"count": 1}}},
+    )
+    matched, confirmed = upload_file(page, ["sel-a"], "/tmp/resume.pdf")
+    assert matched is True
+    assert confirmed is True
+    assert page.uploads == [("iframe[0] sel-a", "/tmp/resume.pdf")]
 
 
 # ── paste_textarea ─────────────────────────────────────────────────────────
@@ -366,6 +450,213 @@ def test_select_option_swallows_per_selector_exceptions():
     ok = select_option(page, ["select-a", "select-b"], "X")
     assert ok is True
     assert page.selects == [("select-b", "X")]
+
+
+# ── select_combobox (react-select / role="combobox" div fields, Task 2) ────
+#
+# ``fill_text`` / ``select_option`` only understand real <input>/<select>
+# elements. A react-select-style combobox is a click-to-open div/input pair
+# with a synthetic listbox popup. A dedicated stub models that shape: a
+# container locator that can be clicked/filled/read back, and a
+# ``[role="option"]`` listbox locator that can render immediately or after a
+# few polls.
+
+class _ComboOptionLocator:
+    """One resolved ``[role="option"]`` node — supports ``click()``
+    (tracked, and updates the container's own display text, mirroring a
+    react-select chip re-rendering post-selection) and ``text_content()``."""
+
+    def __init__(self, text: str, page: "_ComboPage"):
+        self.text = text
+        self.page = page
+
+    def click(self) -> None:
+        self.page.clicked_options.append(self.text)
+        self.page.container_text = self.text
+
+    def text_content(self) -> str:
+        return self.text
+
+
+class _ComboOptionsListLocator:
+    """The ``[role="option"]`` locator — a fixed option-text list that can
+    only "appear" (``count() > 0``) after ``reveal_after`` polls, simulating
+    a listbox rendering a beat after the combobox opens."""
+
+    def __init__(self, options: list, page: "_ComboPage", reveal_after: int = 0):
+        self._options = options
+        self.page = page
+        self._reveal_after = reveal_after
+        self._poll_count = 0
+
+    def count(self) -> int:
+        self._poll_count += 1
+        if self._poll_count <= self._reveal_after:
+            return 0
+        return len(self._options)
+
+    def nth(self, i: int) -> _ComboOptionLocator:
+        return _ComboOptionLocator(self._options[i], self.page)
+
+
+class _ComboContainerLocator:
+    """The combobox container itself — clickable, optionally fillable
+    (some ARIA-1.2 comboboxes put ``role="combobox"`` directly on the real
+    ``<input>``; others put it on a div wrapper and need a nested
+    ``input``), and readable back via ``text_content()`` once a selection
+    has landed."""
+
+    def __init__(self, page: "_ComboPage"):
+        self.page = page
+
+    @property
+    def first(self):
+        return self
+
+    def is_visible(self, timeout: int = 1000) -> bool:
+        return self.page.container_visible
+
+    def click(self) -> None:
+        self.page.clicked_container = True
+
+    def fill(self, value: str) -> None:
+        if not self.page.container_accepts_fill:
+            raise RuntimeError("div containers don't support .fill()")
+        self.page.typed_value = value
+
+    def text_content(self) -> str:
+        return self.page.container_text
+
+    def locator(self, selector: str):
+        if selector == "input" and not self.page.container_accepts_fill:
+            return _ComboNestedInputLocator(self.page)
+        return _StubLocator(selector, self.page, count=0)
+
+
+class _ComboNestedInputLocator:
+    """A real ``<input>`` nested inside a non-fillable div container."""
+
+    def __init__(self, page: "_ComboPage"):
+        self.page = page
+
+    @property
+    def first(self):
+        return self
+
+    def fill(self, value: str) -> None:
+        self.page.typed_value = value
+
+
+class _ComboPage:
+    """Stub Page for ``select_combobox``: one combobox container selector,
+    an options list rendered under ``[role="option"]``, and a container
+    whose displayed text updates once an option is clicked."""
+
+    def __init__(
+        self, container_selector: str, options: list, *,
+        container_visible: bool = True,
+        reveal_after: int = 0,
+        container_accepts_fill: bool = True,
+    ):
+        self.container_selector = container_selector
+        self.options = options
+        self.container_visible = container_visible
+        self.reveal_after = reveal_after
+        self.container_accepts_fill = container_accepts_fill
+        self.container_text = ""
+        self.clicked_container = False
+        self.typed_value = None
+        self.clicked_options: list = []
+        self._options_locator = None
+
+    def locator(self, selector: str):
+        if selector == self.container_selector:
+            return _ComboContainerLocator(self)
+        if selector == "iframe":
+            return _StubLocator(selector, self, count=0)
+        if selector == '[role="option"]':
+            if self._options_locator is None:
+                self._options_locator = _ComboOptionsListLocator(
+                    self.options, self, reveal_after=self.reveal_after,
+                )
+            return self._options_locator
+        return _StubLocator(selector, self, count=0, visible=False)
+
+
+def test_select_combobox_exact_match_selects_and_verifies():
+    page = _ComboPage(
+        "div[data-testid=combo]",
+        ["United States", "United Kingdom", "United Arab Emirates"],
+    )
+    ok = select_combobox(page, ["div[data-testid=combo]"], "United States")
+    assert ok is True
+    assert page.clicked_container is True
+    assert page.typed_value == "United States"
+    assert page.clicked_options == ["United States"]
+    assert page.container_text == "United States"
+
+
+def test_select_combobox_substring_case_insensitive_match():
+    page = _ComboPage(
+        "div[data-testid=combo]",
+        ["Yes, I am authorized to work in the US", "No"],
+    )
+    ok = select_combobox(page, ["div[data-testid=combo]"], "authorized")
+    assert ok is True
+    assert page.clicked_options == ["Yes, I am authorized to work in the US"]
+
+
+def test_select_combobox_no_match_returns_false():
+    page = _ComboPage("div[data-testid=combo]", ["Canada", "Mexico"])
+    ok = select_combobox(page, ["div[data-testid=combo]"], "United States")
+    assert ok is False
+    assert page.clicked_options == []
+
+
+def test_select_combobox_falls_through_when_container_not_visible():
+    page = _ComboPage("div[data-testid=combo]", ["A"], container_visible=False)
+    ok = select_combobox(page, ["div[data-testid=combo]"], "A")
+    assert ok is False
+    assert page.clicked_container is False
+
+
+def test_select_combobox_types_into_nested_input_when_container_rejects_fill():
+    page = _ComboPage(
+        "div[data-testid=combo]", ["Remote"], container_accepts_fill=False,
+    )
+    ok = select_combobox(page, ["div[data-testid=combo]"], "Remote")
+    assert ok is True
+    assert page.typed_value == "Remote"
+
+
+def test_select_combobox_waits_for_listbox_to_render_before_matching():
+    page = _ComboPage("div[data-testid=combo]", ["Georgia"], reveal_after=2)
+    ok = select_combobox(
+        page, ["div[data-testid=combo]"], "Georgia",
+        listbox_timeout_s=1.0, listbox_poll_interval_s=0.01,
+    )
+    assert ok is True
+
+
+def test_select_combobox_times_out_when_listbox_never_renders():
+    page = _ComboPage("div[data-testid=combo]", ["Georgia"], reveal_after=10_000)
+    ok = select_combobox(
+        page, ["div[data-testid=combo]"], "Georgia",
+        listbox_timeout_s=0.05, listbox_poll_interval_s=0.01,
+    )
+    assert ok is False
+    assert page.clicked_options == []
+
+
+def test_select_combobox_falls_through_to_next_selector_on_first_miss():
+    page = _StubPage({
+        "combo-a": {"visible": False},
+    })
+    ok = select_combobox(page, ["combo-a", "combo-b"], "ignored")
+    assert ok is False
+    # combo-a's top-doc miss triggers the frame-aware fallback probe before
+    # moving on to combo-b — matches every other primitive's convention.
+    assert page.locator_calls == ["combo-a", "iframe", "combo-b", "iframe"]
 
 
 # ── load_cover_letter ──────────────────────────────────────────────────────
@@ -622,9 +913,12 @@ def test_fill_text_falls_through_from_top_document_into_iframe():
 
 
 def test_upload_file_falls_through_from_top_document_into_iframe():
-    page = _StubPage({}, iframe_behaviors={0: {"sel-a": {"count": 1}}})
-    ok = upload_file(page, ["sel-a"], "/tmp/resume.pdf")
-    assert ok is True
+    page = _StubPage(
+        {}, iframe_behaviors={0: {"sel-a": {"count": 1}, "text=resume.pdf": {"count": 1}}},
+    )
+    matched, confirmed = upload_file(page, ["sel-a"], "/tmp/resume.pdf")
+    assert matched is True
+    assert confirmed is True
     assert page.uploads == [("iframe[0] sel-a", "/tmp/resume.pdf")]
 
 

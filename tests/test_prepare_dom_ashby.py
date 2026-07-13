@@ -278,6 +278,9 @@ def test_ashby_fills_via_label_and_fuzzy_fallbacks(monkeypatch, tmp_path):
         'input[aria-label="Email"]': {"visible": True},
         'input[type="tel"]:visible': {"visible": True},
         'input[type="file"]': {"count": 1},
+        # upload-completion evidence (Task 2) — present immediately so the
+        # upload confirms on the first poll instead of the default timeout.
+        "text=r.pdf": {"count": 1},
         'textarea[name*="cover" i]': {"visible": True},
     })
     job = {"id": "ash-1", "form_answers": {

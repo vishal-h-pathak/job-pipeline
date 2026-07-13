@@ -254,6 +254,9 @@ def test_lever_fills_single_name_field_with_full_name(monkeypatch, tmp_path):
         'input[name="email"]': {"visible": True},
         'input[type="tel"]:visible': {"visible": True},
         'input[type="file"][name="resume"]': {"count": 1},
+        # upload-completion evidence (Task 2) — present immediately so the
+        # upload confirms on the first poll instead of the default timeout.
+        "text=r.pdf": {"count": 1},
         'textarea[name="comments"]': {"visible": True},
     })
     job = {"id": "lev-1", "form_answers": {

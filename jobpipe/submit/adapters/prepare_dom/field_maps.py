@@ -17,7 +17,12 @@ Spec schema (one entry per field, ordered — fill order is list order):
     name       canonical input ``name`` attribute, if the ATS has one. Builds
                ``input[name="..."]`` + ``textarea[name="..."]`` selectors
                (the old ``name_attr_selectors`` pair).
-    type       text | file | textarea | select. Default "text".
+    type       text | file | textarea | select | combobox. Default "text".
+               ``combobox`` is a react-select / ``role="combobox"`` div-based
+               field (Task 2) — its selector chain is built the same way as
+               file/textarea/select (explicit ``selectors`` + name pair,
+               no label-selector fallback, since ``label_selectors`` only
+               ever targets real ``<input>`` elements).
     required   bool. Required fields left empty (no value, or a value that no
                selector matched) are reported in ``required_empty``.
     selectors  explicit ordered selector lead. For text it goes BEFORE the
@@ -51,6 +56,7 @@ from ._common import (
     paste_textarea,
     read_value,
     scan_required_fields,
+    select_combobox,
     select_option,
     upload_file,
 )
@@ -114,8 +120,10 @@ def _selectors_for(spec: dict, label: str, ftype: str) -> list[str]:
         the old ``name_attr_selectors``;
       - for TEXT only: the four ``label_selectors`` fallbacks, then (if
         flagged) the two ``input[name*=...]`` fuzzy selectors (old
-        ``_ashby_field_selectors``). file / textarea / select use the explicit
-        list (+ name pair) ONLY — they never fell back to label selectors.
+        ``_ashby_field_selectors``). file / textarea / select / combobox use
+        the explicit list (+ name pair) ONLY — they never fell back to label
+        selectors (``label_selectors`` only ever targets real ``<input>``
+        elements, which is meaningless for a div-based combobox container).
     """
     chain: list[str] = list(spec.get("selectors") or [])
     name = spec.get("name")
@@ -142,17 +150,24 @@ def apply_field_map(
     """Fill ``page`` from an ordered list of declarative field specs.
 
     Dispatches each spec to the matching ``_common`` primitive
-    (``fill_text`` / ``upload_file`` / ``paste_textarea`` / ``select_option``)
-    using the value at ``values[spec["key"]]``. Specs whose value is empty are
-    skipped (mirrors the old ``if not value: continue``).
+    (``fill_text`` / ``upload_file`` / ``paste_textarea`` / ``select_option``
+    / ``select_combobox``) using the value at ``values[spec["key"]]``. Specs
+    whose value is empty are skipped (mirrors the old ``if not value:
+    continue``).
 
     Returns ``{"filled": [labels], "required_empty": [labels]}``:
       - ``filled``  — labels whose primitive returned True AND whose value
         stuck on a DOM re-read (honest fill verification, #2 — a fill that
         matched a selector but didn't stick, e.g. a React form discarding
-        ``.fill()``, no longer counts as filled). File uploads are exempt:
-        Playwright can't read an ``input[type=file]``'s value back, so they
-        keep the selector-matched contract ``upload_file`` already applies.
+        ``.fill()``, no longer counts as filled). File uploads don't get a
+        DOM value re-read (Playwright can't read an ``input[type=file]``'s
+        value back) — instead ``upload_file`` runs its own upload-completion
+        wait (Task 2) and a field only counts as filled once that confirms
+        the ATS actually accepted the file, not merely that
+        ``set_input_files`` didn't raise. Comboboxes don't get a re-read
+        either — ``select_combobox`` already verifies its own selection
+        stuck by reading back the container's display text before returning
+        True.
       - ``required_empty`` — labels of ``required`` specs that ended up empty
         on the form (no value, no matching selector, or a fill that didn't
         stick). This is what the verification pass (#4 / Part B) reads.
@@ -175,7 +190,13 @@ def apply_field_map(
 
         chain = _selectors_for(spec, label, ftype)
         if ftype == "file":
-            ok = upload_file(page, chain, value, log=log)
+            # ``matched`` (selector found + set_input_files didn't raise) is
+            # NOT sufficient — only an upload the completion wait actually
+            # confirmed counts as filled (Task 2 honesty fix).
+            _matched, confirmed = upload_file(page, chain, value, log=log)
+            ok = confirmed
+        elif ftype == "combobox":
+            ok = select_combobox(page, chain, value, log=log)
         elif ftype == "textarea":
             ok = paste_textarea(page, chain, value, log=log)
             if ok:

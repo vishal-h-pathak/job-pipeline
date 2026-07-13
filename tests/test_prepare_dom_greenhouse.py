@@ -108,6 +108,9 @@ def _all_canonical_visible() -> dict:
         'input[name="job_application[company]"]': {"visible": True},
         'input[name="job_application[title]"]': {"visible": True},
         'input[type="file"][name="job_application[resume]"]': {"count": 1},
+        # upload-completion evidence (Task 2) — present immediately so the
+        # upload confirms on the first poll instead of the default timeout.
+        "text=resume.pdf": {"count": 1},
         'textarea[name="job_application[cover_letter]"]': {"visible": True},
     }
 

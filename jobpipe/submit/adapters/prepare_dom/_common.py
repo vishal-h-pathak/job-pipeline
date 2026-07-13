@@ -26,6 +26,7 @@ helper with a stub Page object and no real Playwright install.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -132,23 +133,96 @@ def fill_text(page: Any, selectors: list[str], value: str,
     return False
 
 
-def upload_file(page: Any, selectors: list[str], file_path: str,
-                *, log: logging.Logger | None = None) -> bool:
+def _wait_for_upload_confirmation(
+    page: Any, filename: str, *,
+    timeout_s: float, poll_interval_s: float,
+    log: logging.Logger | None = None,
+) -> bool:
+    """Poll for evidence the ATS actually accepted the just-uploaded file —
+    the filename rendering somewhere in the DOM (a sibling/parent element's
+    text updating to show it) — bounded by ``timeout_s``.
+
+    ``set_input_files`` not raising only proves Playwright handed the browser
+    a file; it says nothing about the ATS's own async upload/parse step ever
+    completing (P0 review item 9 — the review that also produced
+    submit-truth-gate). Checks the top document then every iframe on each
+    pass, the same frame-aware resolution every other primitive in this
+    module uses (a company embed could render the upload widget inside a
+    frame). Every failure — a filename that breaks the ``text=`` selector
+    syntax, a detached node, an inaccessible frame — is swallowed; a timeout
+    with no evidence returns ``False`` rather than raising, and NEVER treats
+    "no evidence yet" as success.
+    """
+    log = log or logger
+    confirm_selector = f"text={filename}"
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            if page.locator(confirm_selector).count() > 0:
+                return True
+        except Exception:
+            pass
+        for frame_loc in _iter_frame_locators(page, confirm_selector):
+            try:
+                if frame_loc.count() > 0:
+                    return True
+            except Exception:
+                continue
+        if time.monotonic() >= deadline:
+            log.debug(f"No upload-completion evidence for {filename!r} within {timeout_s}s")
+            return False
+        time.sleep(poll_interval_s)
+
+
+def upload_file(
+    page: Any, selectors: list[str], file_path: str,
+    *, log: logging.Logger | None = None,
+    confirm_timeout_s: float = 3.0,
+    confirm_poll_interval_s: float = 0.1,
+) -> tuple[bool, bool]:
     """Upload ``file_path`` into the first matching ``input[type=file]``
-    (top document, then each iframe).
+    (top document, then each iframe), then wait for evidence the ATS
+    actually accepted it before calling the upload confirmed.
 
     Uses ``count() > 0`` rather than ``is_visible()`` because file inputs are
     frequently visually hidden behind a styled drop zone — they exist in the
     DOM but never report as visible.
+
+    Returns ``(matched, confirmed)``:
+      - ``matched`` — a selector resolved to a file input and
+        ``set_input_files`` didn't raise. This was the ENTIRE old contract
+        (a bare bool) — kept as the first tuple element so a caller that
+        only cares "did we even find the input" doesn't regress.
+      - ``confirmed`` — within ``confirm_timeout_s`` (default a few seconds,
+        deliberately NOT the old 15s ``networkidle`` scale), evidence
+        appeared that the ATS accepted the file (see
+        ``_wait_for_upload_confirmation``). ``False`` on timeout even when
+        ``matched`` is ``True`` — a selector match and a non-raising
+        Playwright call are not proof the ATS's async upload/parse ever
+        completed, and a timed-out upload must be reported as NOT filled,
+        not silently counted as a success (P0 review item 9).
+      - ``matched`` is always ``False`` when no selector matched at all —
+        ``confirmed`` is then also ``False`` (there was nothing to confirm).
     """
     log = log or logger
+    filename = Path(file_path).name
     for selector in selectors:
         try:
             file_input = page.locator(selector).first
             if file_input.count() > 0:
                 file_input.set_input_files(file_path)
                 log.info(f"Uploaded via {selector}")
-                return True
+                confirmed = _wait_for_upload_confirmation(
+                    page, filename, log=log,
+                    timeout_s=confirm_timeout_s,
+                    poll_interval_s=confirm_poll_interval_s,
+                )
+                if not confirmed:
+                    log.warning(
+                        f"Upload via {selector} not confirmed within "
+                        f"{confirm_timeout_s}s - ATS may not have accepted the file"
+                    )
+                return True, confirmed
         except Exception:
             pass
         for frame_loc in _iter_frame_locators(page, selector):
@@ -157,10 +231,20 @@ def upload_file(page: Any, selectors: list[str], file_path: str,
                 if file_input.count() > 0:
                     file_input.set_input_files(file_path)
                     log.info(f"Uploaded via {selector} (iframe)")
-                    return True
+                    confirmed = _wait_for_upload_confirmation(
+                        page, filename, log=log,
+                        timeout_s=confirm_timeout_s,
+                        poll_interval_s=confirm_poll_interval_s,
+                    )
+                    if not confirmed:
+                        log.warning(
+                            f"Upload via {selector} (iframe) not confirmed within "
+                            f"{confirm_timeout_s}s - ATS may not have accepted the file"
+                        )
+                    return True, confirmed
             except Exception:
                 continue
-    return False
+    return False, False
 
 
 def paste_textarea(page: Any, selectors: list[str], text: str,
@@ -223,6 +307,198 @@ def select_option(page: Any, selectors: list[str], value: str,
                     return True
             except Exception:
                 continue
+    return False
+
+
+# ── Combobox primitive (react-select / role="combobox" div fields, Task 2) ─
+#
+# ``fill_text`` / ``select_option`` only understand real ``<input>`` /
+# ``<select>`` elements. A react-select-style widget (or any ARIA 1.2
+# combobox pattern) is a click-to-open div/input pair with a synthetic
+# listbox popup — the demographic, work-authorization, and location
+# autocomplete fields Ashby and Greenhouse render this way silently get
+# skipped by every primitive above and never even show up in
+# ``required_empty`` (nothing tried to fill them, so nothing failed either).
+#
+# NOTE: the listbox-options search below is intentionally top-document-only
+# (no iframe fan-out) — react-select-style listboxes are commonly rendered
+# via a portal appended to ``document.body`` rather than as a DOM descendant
+# of the combobox container, which usually breaks any attempt to scope the
+# search inside a same-origin iframe's own document anyway. The combobox
+# CONTAINER itself still gets the full frame-aware search every other
+# primitive here uses; only the popup-options lookup is top-document-only.
+# This is a known, documented limitation, not an oversight — accepted per
+# the task brief (no iframe-embedded ATS combobox is in scope for this pass).
+
+def _wait_for_listbox_options(
+    page: Any, *, timeout_s: float, poll_interval_s: float,
+    option_selector: str = '[role="option"]',
+) -> list[dict]:
+    """Poll (bounded by ``timeout_s``) for the combobox's listbox options to
+    render, returning ``[{"locator": <option>, "text": str}, ...]`` once at
+    least one option is found, or ``[]`` on timeout.
+
+    A fresh click frequently opens the popup a beat before React finishes
+    rendering its contents, so a single immediate ``count()`` check would
+    miss options that appear a moment later. Every per-poll failure (bad
+    selector, detached popup) is swallowed and just contributes another
+    empty poll rather than raising.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            loc = page.locator(option_selector)
+            count = loc.count()
+        except Exception:
+            count = 0
+        if count:
+            options: list[dict] = []
+            for i in range(count):
+                try:
+                    opt = loc.nth(i)
+                    text = opt.text_content() or ""
+                except Exception:
+                    continue
+                options.append({"locator": opt, "text": text})
+            if options:
+                return options
+        if time.monotonic() >= deadline:
+            return []
+        time.sleep(poll_interval_s)
+
+
+def _best_matching_combobox_option(options: list[dict], value: str) -> dict | None:
+    """Pick the option whose text best matches ``value``: an exact
+    (case-insensitive, whitespace-trimmed) match wins first; otherwise the
+    first option whose text contains ``value`` as a case-insensitive
+    substring. Returns ``None`` when nothing matches at all."""
+    target = (value or "").strip().lower()
+    if not target:
+        return None
+    for opt in options:
+        if opt["text"].strip().lower() == target:
+            return opt
+    for opt in options:
+        if target in opt["text"].strip().lower():
+            return opt
+    return None
+
+
+def _combobox_selection_confirmed(display: str, value: str, chosen_text: str) -> bool:
+    """Verify the click stuck by comparing the container's post-selection
+    display text (its chip/selected-value text) against what we typed and
+    what we clicked. A plain ``input_value()`` doesn't work on a div, so
+    this reads back ``text_content()`` instead."""
+    d = (display or "").strip().lower()
+    if not d:
+        return False
+    return d == (value or "").strip().lower() or chosen_text.strip().lower() in d
+
+
+def _fill_combobox(
+    page: Any, container: Any, value: str, *,
+    log: logging.Logger,
+    listbox_timeout_s: float,
+    listbox_poll_interval_s: float,
+) -> bool:
+    """Open ``container``, type ``value`` into it (or a nested input if the
+    container itself rejects ``.fill()``), wait for the listbox to render,
+    click the best-matching option, and verify the selection stuck. Returns
+    False (never raises) at any step that fails, letting the caller fall
+    through to the next candidate selector/frame."""
+    try:
+        container.click()
+    except Exception:
+        return False
+
+    typed = False
+    try:
+        container.fill(value)
+        typed = True
+    except Exception:
+        pass
+    if not typed:
+        try:
+            container.locator("input").first.fill(value)
+            typed = True
+        except Exception:
+            pass
+    if not typed:
+        return False
+
+    options = _wait_for_listbox_options(
+        page, timeout_s=listbox_timeout_s, poll_interval_s=listbox_poll_interval_s,
+    )
+    if not options:
+        log.debug("Combobox listbox never rendered any options")
+        return False
+
+    best = _best_matching_combobox_option(options, value)
+    if best is None:
+        log.debug(f"No combobox option matched {value!r}")
+        return False
+
+    try:
+        best["locator"].click()
+    except Exception:
+        return False
+
+    try:
+        display = container.text_content() or ""
+    except Exception:
+        display = ""
+    return _combobox_selection_confirmed(display, value, best["text"])
+
+
+def select_combobox(
+    page: Any, selectors: list[str], value: str,
+    *, log: logging.Logger | None = None,
+    listbox_timeout_s: float = 2.0,
+    listbox_poll_interval_s: float = 0.1,
+) -> bool:
+    """Fill a react-select / ``role="combobox"`` div-based field (top
+    document, then each iframe for the container itself).
+
+    Pattern per candidate selector: click the combobox container to open it;
+    type ``value`` into it (or into a nested ``input`` if the container
+    itself isn't fillable — see ``_fill_combobox``); poll for the rendered
+    listbox's options (``_wait_for_listbox_options``); pick the
+    exact-match-preferred / substring-fallback option
+    (``_best_matching_combobox_option``); click it; and verify the selection
+    stuck by reading back the container's own display text
+    (``_combobox_selection_confirmed`` — a plain ``input_value()`` doesn't
+    work on a div). Same per-selector exception-swallowing contract as every
+    other primitive in this module: any failure at any step just moves on to
+    the next candidate rather than raising.
+    """
+    log = log or logger
+    for selector in selectors:
+        try:
+            el = page.locator(selector).first
+            if el.is_visible(timeout=1000):
+                if _fill_combobox(
+                    page, el, value, log=log,
+                    listbox_timeout_s=listbox_timeout_s,
+                    listbox_poll_interval_s=listbox_poll_interval_s,
+                ):
+                    log.info(f"Selected combobox option via {selector}")
+                    return True
+        except Exception:
+            pass
+        for frame_loc in _iter_frame_locators(page, selector):
+            try:
+                el = frame_loc.first
+                if el.is_visible(timeout=1000):
+                    if _fill_combobox(
+                        page, el, value, log=log,
+                        listbox_timeout_s=listbox_timeout_s,
+                        listbox_poll_interval_s=listbox_poll_interval_s,
+                    ):
+                        log.info(f"Selected combobox option via {selector} (iframe)")
+                        return True
+            except Exception:
+                continue
+    log.debug("No selector matched for select_combobox")
     return False
 
 

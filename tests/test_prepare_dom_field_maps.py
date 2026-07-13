@@ -158,7 +158,13 @@ def test_apply_field_map_fills_text_via_fill_text():
 
 
 def test_apply_field_map_uploads_file_via_upload_file():
-    page = _StubPage({'input[type="file"]': {"count": 1}})
+    # "text=resume.pdf" is the upload-completion evidence upload_file polls
+    # for (Task 2) — registering it with count:1 means the very first check
+    # confirms immediately, so this test stays instant.
+    page = _StubPage({
+        'input[type="file"]': {"count": 1},
+        "text=resume.pdf": {"count": 1},
+    })
     specs = [{
         "key": "__resume__", "label": "Resume", "type": "file",
         "required": True, "selectors": ['input[type="file"]'],
@@ -166,6 +172,35 @@ def test_apply_field_map_uploads_file_via_upload_file():
     result = apply_field_map(page, specs, {"__resume__": "/tmp/resume.pdf"})
     assert page.uploads == [('input[type="file"]', "/tmp/resume.pdf")]
     assert result["filled"] == ["Resume"]
+
+
+def test_apply_field_map_uploads_file_matched_but_not_confirmed_is_not_filled():
+    """A selector matched and ``set_input_files`` didn't raise, but the ATS's
+    async accept never showed up in the DOM within the (tiny, test-scale)
+    confirm window — Task 2's honesty fix. Uses ``run_field_map_fill``'s
+    plain ``apply_field_map`` path directly with the default confirm timeout
+    would be correct in production, but a 3s real sleep is too slow for this
+    suite — the field spec still exercises the exact same code path
+    (``upload_file`` -> ``confirmed=False`` -> not filled); the timeout
+    itself is already covered directly against ``upload_file`` in
+    ``test_prepare_dom_common.py``, so this test only needs to confirm
+    ``apply_field_map`` treats an unconfirmed upload as NOT filled and
+    reports the required field as still empty."""
+    import jobpipe.submit.adapters.prepare_dom.field_maps as field_maps_module
+
+    original = field_maps_module.upload_file
+    try:
+        field_maps_module.upload_file = lambda *a, **k: (True, False)  # matched, unconfirmed
+        page = _StubPage({'input[type="file"]': {"count": 1}})
+        specs = [{
+            "key": "__resume__", "label": "Resume", "type": "file",
+            "required": True, "selectors": ['input[type="file"]'],
+        }]
+        result = apply_field_map(page, specs, {"__resume__": "/tmp/resume.pdf"})
+        assert result["filled"] == []
+        assert result["required_empty"] == ["Resume"]
+    finally:
+        field_maps_module.upload_file = original
 
 
 def test_apply_field_map_pastes_textarea_via_paste_textarea():
@@ -190,6 +225,54 @@ def test_apply_field_map_selects_option_via_select_handler():
     result = apply_field_map(page, specs, {"Source": "LinkedIn"})
     assert page.selects == [('select[name="src"]', "LinkedIn")]
     assert result["filled"] == ["How did you hear"]
+
+
+def test_apply_field_map_dispatches_combobox_type_to_select_combobox():
+    """The ``combobox`` type spec dispatches to ``select_combobox`` —
+    verified by monkeypatching it, since the full click-open-type-pick
+    interaction already has dedicated stub-Page coverage in
+    ``test_prepare_dom_common.py``. This test's only job is the wiring:
+    right primitive, right selector chain, right value, and a True return
+    counts as filled."""
+    import jobpipe.submit.adapters.prepare_dom.field_maps as field_maps_module
+
+    calls = []
+    original = field_maps_module.select_combobox
+
+    def fake_select_combobox(page, selectors, value, *, log=None):
+        calls.append((selectors, value))
+        return True
+
+    try:
+        field_maps_module.select_combobox = fake_select_combobox
+        page = _StubPage()
+        specs = [{
+            "key": "Work Authorization", "label": "Work Authorization",
+            "type": "combobox", "required": True,
+            "selectors": ['[role="combobox"][name="work_auth"]'],
+        }]
+        result = apply_field_map(page, specs, {"Work Authorization": "U.S. Citizen"})
+        assert result["filled"] == ["Work Authorization"]
+        assert result["required_empty"] == []
+        assert calls == [(['[role="combobox"][name="work_auth"]'], "U.S. Citizen")]
+    finally:
+        field_maps_module.select_combobox = original
+
+
+def test_apply_field_map_combobox_required_and_unfilled_reports_empty():
+    """No stubbing of ``select_combobox`` here — the plain ``_StubPage``'s
+    locators all default to invisible, so the real primitive correctly finds
+    no visible container and returns False; the required field must show up
+    in ``required_empty``."""
+    page = _StubPage()
+    specs = [{
+        "key": "Work Authorization", "label": "Work Authorization",
+        "type": "combobox", "required": True,
+        "selectors": ['[role="combobox"][name="work_auth"]'],
+    }]
+    result = apply_field_map(page, specs, {"Work Authorization": "U.S. Citizen"})
+    assert result["filled"] == []
+    assert result["required_empty"] == ["Work Authorization"]
 
 
 # ── apply_field_map: required-empty tracking ───────────────────────────────
@@ -407,6 +490,10 @@ def test_run_field_map_fill_reports_required_total_from_yaml_when_dom_scan_empty
         'input[name="job_application[email]"]': {"visible": True},
         'input[type="tel"]:visible': {"visible": True},
         'input[type="file"][name="job_application[resume]"]': {"count": 1},
+        # upload-completion evidence (Task 2) — present immediately so the
+        # upload confirms on the first poll instead of running out the
+        # (production-scale) default confirm timeout.
+        "text=resume.pdf": {"count": 1},
     }
     page = _StubPage(behaviors)
     job = {"id": "gh-clean", "form_answers": {
@@ -443,6 +530,7 @@ def test_run_field_map_fill_widens_required_set_with_dom_scanned_custom_question
         'input[name="job_application[email]"]': {"visible": True},
         'input[type="tel"]:visible': {"visible": True},
         'input[type="file"][name="job_application[resume]"]': {"count": 1},
+        "text=resume.pdf": {"count": 1},  # upload-completion evidence (Task 2)
         '[required], [aria-required="true"]': {
             "count": 1,
             "attrs": {"aria-label": "Are you authorized to work in the US?"},
@@ -465,9 +553,15 @@ def test_run_field_map_fill_widens_required_set_with_dom_scanned_custom_question
 
 
 def test_apply_field_map_file_upload_is_exempt_from_dom_reread():
-    """File inputs never get a DOM value re-read (Playwright can't read one
-    back) — ``upload_file``'s own count()-based success stands alone."""
-    page = _StubPage({'input[type="file"]': {"count": 1}})
+    """File inputs never get a DOM value re-read via ``read_value``
+    (Playwright can't read an ``input[type=file]``'s value back) — instead
+    ``upload_file``'s own upload-completion wait (Task 2) stands in as the
+    honesty check. Registering the completion evidence up front means it
+    confirms on the very first poll."""
+    page = _StubPage({
+        'input[type="file"]': {"count": 1},
+        "text=r.pdf": {"count": 1},
+    })
     specs = [{
         "key": "__resume__", "label": "Resume", "type": "file", "required": True,
         "selectors": ['input[type="file"]'],

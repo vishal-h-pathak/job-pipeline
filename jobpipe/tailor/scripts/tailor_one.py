@@ -201,7 +201,7 @@ def main() -> None:
         supabase_client.table("jobs").update(
             {"form_answers": form_answers}
         ).eq("id", job["id"]).execute()
-        print(f"persisted form_answers to jobs.form_answers")
+        print("persisted form_answers to jobs.form_answers")
 
     # ── 8. Mark ready_for_review ─────────────────────────────────────────
     resolved_ats = detect_ats(resolved_url)

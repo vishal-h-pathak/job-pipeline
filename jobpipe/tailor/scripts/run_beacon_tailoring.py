@@ -107,7 +107,7 @@ def main():
         "cover_letter_path": cover.get("output_path"),
         "cover_letter_text": cover.get("cover_letter"),
     }
-    summary_path = out_dir / f"beacon_application_bundle.json"
+    summary_path = out_dir / "beacon_application_bundle.json"
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"\n>> bundle written: {summary_path}")

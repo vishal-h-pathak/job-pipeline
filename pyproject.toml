@@ -140,4 +140,33 @@ markers = [
 [tool.ruff]
 target-version = "py39"
 line-length = 100
-extend-exclude = ["jobpipe/hunt", "jobpipe/tailor", "jobpipe/submit"]
+# Local-Playwright consolidation: the Path-B (Browserbase + Stagehand)
+# scaffold tests live under tests/legacy/ and are frozen historical
+# reference (see CLAUDE.md "Path B ... do not extend") — excluded from
+# ruff's default gate the same way they're excluded from pytest's
+# default run (`addopts = "-m 'not legacy'"` above). This used to also
+# blanket-exclude jobpipe/hunt, jobpipe/tailor, and jobpipe/submit — the
+# three live pipeline subtrees — which meant `ruff check .` never
+# actually linted most of the codebase. Fix 6 (feat/submit-fill-
+# robustness) brought them into the default gate and added targeted
+# per-file-ignores below for the handful of files with a legitimate
+# sys.path/dotenv bootstrap-before-import pattern.
+extend-exclude = ["tests/legacy"]
+
+[tool.ruff.lint.per-file-ignores]
+# Each of these files does real work (sys.path insertion, dotenv
+# loading, or an early-exit validation check) before its remaining
+# imports — E402 ("module level import not at top of file") is the
+# expected shape of that pattern, not a bug. jobpipe/tailor/pipeline.py
+# is the model this convention was copied from.
+"jobpipe/hunt/agent.py" = ["E402"]
+"jobpipe/hunt/test_scorer.py" = ["E402"]
+"jobpipe/tailor/pipeline.py" = ["E402"]
+"jobpipe/tailor/scripts/migrate_supabase.py" = ["E402"]
+"jobpipe/tailor/scripts/run_beacon_cover.py" = ["E402"]
+"jobpipe/tailor/scripts/run_beacon_tailoring.py" = ["E402"]
+"jobpipe/tailor/scripts/submit_one.py" = ["E402"]
+"jobpipe/tailor/scripts/test_beacon.py" = ["E402"]
+"jobpipe/tailor/scripts/test_local_form.py" = ["E402"]
+"jobpipe/tailor/scripts/verify_prompt_cache.py" = ["E402"]
+"scripts/send_morning_digest.py" = ["E402"]

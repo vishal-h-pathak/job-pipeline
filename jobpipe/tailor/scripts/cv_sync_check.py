@@ -38,7 +38,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 # `_PKG_ROOT` is the tailor package root (`jobpipe/tailor/`); kept on
 # sys.path so `from tailor.latex_resume import BASE_RESUME` resolves

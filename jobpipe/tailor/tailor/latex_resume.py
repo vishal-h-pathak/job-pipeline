@@ -10,17 +10,14 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import os
 import re
 import subprocess
 import tempfile
-from datetime import datetime
 from pathlib import Path
 
 from jobpipe.config import TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
 from jobpipe.profile_loader import load_resume_source
 from jobpipe.shared import llm
-from jobpipe.tailor.paths import CANDIDATE_PROFILE_PATH
 from prompts import cached_system_blocks, load_task_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 from tailor.normalize import normalize_for_ats
@@ -432,7 +429,7 @@ def _decide_skills_layout(
     # Auto: include the literal "Education" row label in the measurement
     # since it sits in the same column.
     labels = ["Education"] + list((skills or {}).keys())
-    needed = max((_measure_label_cm(l) for l in labels), default=4.5)
+    needed = max((_measure_label_cm(label) for label in labels), default=4.5)
     if needed > _MAX_LABEL_CM:
         return ("stacked", 0.0, 0.0)
     left = max(_MIN_LABEL_CM, min(_MAX_LABEL_CM, round(needed, 1)))

@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
-from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from supabase import create_client
 from jobpipe.config import SUPABASE_URL

@@ -7,11 +7,9 @@ that emphasizes relevant experience and skills.
 
 import json
 import logging
-from datetime import datetime
 
 from jobpipe.config import TAILOR_CLAUDE_MODEL as CLAUDE_MODEL
 from jobpipe.shared import llm
-from jobpipe.tailor.paths import CANDIDATE_PROFILE_PATH
 from prompts import cached_system_blocks, load_task_prompt
 from tailor.archetype import classify_archetype, render_archetype_block
 

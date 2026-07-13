@@ -53,15 +53,14 @@ if _TAILOR_DIR not in _sys.path:
 del _sys, _Path, _TAILOR_DIR
 # ──────────────────────────────────────────────────────────────────────────
 
-import argparse  # noqa: E402
-import logging  # noqa: E402
-import os  # noqa: E402
-import sys  # noqa: E402
-import time  # noqa: E402
-from datetime import datetime  # noqa: E402
-from pathlib import Path  # noqa: E402
+import argparse
+import logging
+import os
+import time
+from datetime import datetime
+from pathlib import Path
 
-from jobpipe.config import (  # noqa: E402
+from jobpipe.config import (
     POLL_INTERVAL_MINUTES,
     HUMAN_APPROVAL_REQUIRED,
     JOBPIPE_DECISION_TIMEOUT_MINUTES,
@@ -74,7 +73,7 @@ from jobpipe.config import (  # noqa: E402
     WATCH_RECONNECT_MAX_SECONDS,
     JOBPIPE_WATCHER_ID,
 )
-from jobpipe.db import (  # noqa: E402
+from jobpipe.db import (
     get_approved_jobs,
     get_active_watcher_id,
     get_job,
@@ -86,9 +85,7 @@ from jobpipe.db import (  # noqa: E402
     mark_prefilling,
     mark_ready_for_review,
     mark_awaiting_submit,
-    mark_applied,
     mark_tailor_failed,
-    mark_skipped,
     get_job_counts_by_status,
     next_attempt_n,
     count_attempts_toward_cap,
@@ -99,28 +96,28 @@ from jobpipe.db import (  # noqa: E402
     mark_attempt_timeout,
     verify_materials_hash,
 )
-from tailor.resume import tailor_resume  # noqa: E402
-from tailor.cover_letter import generate_cover_letter  # noqa: E402
-from tailor.cover_letter_pdf import render_cover_letter_pdf  # noqa: E402
-from tailor.latex_resume import generate_tailored_latex  # noqa: E402
-from tailor.form_answers import generate_form_answers  # noqa: E402
-from tailor.ats_qa import resume_text_from_tailored, run_ats_qa  # noqa: E402
-from jobpipe.shared.ats_detect import detect_ats, get_applicant  # noqa: E402
-from jobpipe.shared import cost  # noqa: E402  (cost-event attribution context)
-from interview_prep.generator import generate_stories  # noqa: E402
-from interview_prep.bank import save_stories  # noqa: E402
-from jobpipe.notify import (  # noqa: E402  PR-8: canonical send_* names
+from tailor.resume import tailor_resume
+from tailor.cover_letter import generate_cover_letter
+from tailor.cover_letter_pdf import render_cover_letter_pdf
+from tailor.latex_resume import generate_tailored_latex
+from tailor.form_answers import generate_form_answers
+from tailor.ats_qa import resume_text_from_tailored, run_ats_qa
+from jobpipe.shared.ats_detect import detect_ats, get_applicant
+from jobpipe.shared import cost
+from interview_prep.generator import generate_stories
+from interview_prep.bank import save_stories
+from jobpipe.notify import (
     send_awaiting_review,
     send_awaiting_submit,
     send_decision_timeout,
     send_failed,
     send_truth_mismatch,
 )
-from jobpipe.shared.storage import download_to_tmp  # noqa: E402
-from jobpipe.submit import page_truth  # noqa: E402  browser-truth probes (P0 #1)
-from jobpipe.submit.handoff import assisted_manual_handoff  # noqa: E402
-from jobpipe.submit.verify import build_prefill_verification  # noqa: E402
-from storage import (  # noqa: E402
+from jobpipe.shared.storage import download_to_tmp
+from jobpipe.submit import page_truth
+from jobpipe.submit.handoff import assisted_manual_handoff
+from jobpipe.submit.verify import build_prefill_verification
+from storage import (
     upload_final_screenshot,
     upload_pdf,
     upload_prefill_screenshot,
@@ -205,7 +202,7 @@ def _process_one_approved_job(job_id: str) -> None:
     # ── Check ATS type ───────────────────────────────────────────────
     ats = detect_ats(url)
     if ats == "linkedin":
-        logger.info(f"LinkedIn detected — flagging for manual application")
+        logger.info("LinkedIn detected — flagging for manual application")
         mark_ready_for_review(
             job_id,
             application_notes="LinkedIn: human-only application required",
@@ -1016,7 +1013,6 @@ def test_tailor(job_id: str):
     and prints everything to stdout for review.
     """
     from jobpipe.db import client as supabase_client
-    import json
 
     print(f"\n{'='*60}")
     print(f"  TEST TAILOR — job_id: {job_id}")

@@ -22,15 +22,13 @@ needs to be invokable from the repo root with the standard env loaded.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import os
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable
 
 # Allow `python -m scripts.analyze_patterns` from the repo root.
 _REPO_ROOT = Path(__file__).parent.parent

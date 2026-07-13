@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import random
 import sys
 import time
@@ -51,8 +50,8 @@ from jobpipe.db import _client as get_client  # noqa: E402
 # discovery gate so the cron and the live hunt can't drift. The phrase /
 # URL-substring lists live in jobpipe.shared.liveness.
 from jobpipe.shared.liveness import (  # noqa: E402
-    DEAD_BODY_PHRASES,  # re-exported for back-compat
-    DEAD_URL_SUBSTRINGS,  # re-exported for back-compat
+    DEAD_BODY_PHRASES,  # noqa: F401  re-exported for back-compat
+    DEAD_URL_SUBSTRINGS,  # noqa: F401  re-exported for back-compat
     classify_posting,
 )
 

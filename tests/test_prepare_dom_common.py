@@ -944,16 +944,31 @@ class _ReqLocator:
         return self._nodes[0].get("text", "")
 
 
-class _ReqPage:
-    """Page stand-in for the DOM-required scan: the combined
-    ``[required], [aria-required="true"]`` query returns a fixed node list;
-    ``label[for=id]`` queries resolve against a separate id->text map."""
+class _ReqFrameRoot:
+    """Stand-in for a Playwright ``FrameLocator`` scoped to one iframe —
+    supports the subset ``scan_required_fields`` needs when it walks into a
+    frame: ``.locator(selector)`` for both the required-elements query and
+    the ``label[for=id]`` lookup ``_resolve_dom_label`` makes when given
+    ``label_root=<this frame's root>``.
 
-    def __init__(self, required_nodes: list[dict], label_by_id: Optional[dict] = None):
+    ``raise_on_query=True`` simulates a frame that IS known to exist (the
+    outer ``page.locator("iframe").count()`` succeeded) but whose own
+    content can't be reached — a cross-origin restriction, a detached
+    iframe, whatever — the exact "genuine incomplete scan" case the BLOCKER
+    fix must surface via ``scan_incomplete``, as opposed to a frame that
+    scans cleanly and simply has zero required elements."""
+
+    def __init__(
+        self, required_nodes: list[dict], label_by_id: Optional[dict] = None,
+        *, raise_on_query: bool = False,
+    ):
         self._required_nodes = required_nodes
         self._label_by_id = label_by_id or {}
+        self._raise_on_query = raise_on_query
 
     def locator(self, selector: str) -> _ReqLocator:
+        if self._raise_on_query:
+            raise RuntimeError("stub: frame content is inaccessible")
         if selector == '[required], [aria-required="true"]':
             return _ReqLocator(self._required_nodes)
         if selector.startswith('label[for="'):
@@ -965,15 +980,66 @@ class _ReqPage:
         return _ReqLocator([])
 
 
+class _ReqFrameLocator:
+    """Stand-in for ``page.frame_locator("iframe")`` — ``.nth(i)`` resolves
+    to that frame's own ``_ReqFrameRoot``, mirroring ``_StubFrameLocator``
+    elsewhere in this file but shaped for ``_ReqPage``'s node-list model
+    rather than ``_StubPage``'s selector/kwargs behavior dicts."""
+
+    def __init__(self, frames: list[_ReqFrameRoot]):
+        self._frames = frames
+
+    def nth(self, i: int) -> _ReqFrameRoot:
+        return self._frames[i]
+
+
+class _ReqPage:
+    """Page stand-in for the DOM-required scan: the combined
+    ``[required], [aria-required="true"]`` query returns a fixed node list;
+    ``label[for=id]`` queries resolve against a separate id->text map.
+
+    ``iframes`` (frame-aware ``scan_required_fields``, BLOCKER fix) is an
+    optional list of ``_ReqFrameRoot`` instances — when given, ``locator
+    ("iframe")`` reports ``count() == len(iframes)`` and
+    ``frame_locator("iframe").nth(i)`` resolves to ``iframes[i]``. Tests
+    that never pass ``iframes`` get ``count() == 0`` — no frames walked,
+    byte-identical to the pre-fix, top-document-only behavior."""
+
+    def __init__(
+        self, required_nodes: list[dict], label_by_id: Optional[dict] = None,
+        *, iframes: Optional[list[_ReqFrameRoot]] = None,
+    ):
+        self._required_nodes = required_nodes
+        self._label_by_id = label_by_id or {}
+        self._iframes = iframes or []
+
+    def locator(self, selector: str) -> _ReqLocator:
+        if selector == "iframe":
+            return _ReqLocator([{}] * len(self._iframes))
+        if selector == '[required], [aria-required="true"]':
+            return _ReqLocator(self._required_nodes)
+        if selector.startswith('label[for="'):
+            el_id = selector.split('"')[1]
+            text = self._label_by_id.get(el_id)
+            if text is None:
+                return _ReqLocator([])
+            return _ReqLocator([{"attrs": {}, "text": text}])
+        return _ReqLocator([])
+
+    def frame_locator(self, selector: str) -> _ReqFrameLocator:
+        return _ReqFrameLocator(self._iframes)
+
+
 def test_scan_required_fields_resolves_label_via_aria_label():
     page = _ReqPage([{"attrs": {"aria-label": "Willing to relocate?", "id": "q1"}}])
-    result = scan_required_fields(page)
+    result, incomplete = scan_required_fields(page)
     # "kind" (Task 6 finding fix): "value" for a plain text-like element —
     # only radio/checkbox inputs get "checked" (see _resolve_dom_kind).
     assert result == [{
         "label": "Willing to relocate?", "selectors": ['[id="q1"]'],
         "kind": "value",
     }]
+    assert incomplete is False
 
 
 def test_scan_required_fields_falls_back_to_associated_label_element():
@@ -981,20 +1047,22 @@ def test_scan_required_fields_falls_back_to_associated_label_element():
         [{"attrs": {"id": "q2"}}],
         label_by_id={"q2": "How did you hear about us?"},
     )
-    result = scan_required_fields(page)
+    result, incomplete = scan_required_fields(page)
     assert result == [{
         "label": "How did you hear about us?", "selectors": ['[id="q2"]'],
         "kind": "value",
     }]
+    assert incomplete is False
 
 
 def test_scan_required_fields_falls_back_to_name_attribute():
     page = _ReqPage([{"attrs": {"name": "custom_question_1"}}])
-    result = scan_required_fields(page)
+    result, incomplete = scan_required_fields(page)
     assert result == [{
         "label": "custom_question_1", "selectors": ['[name="custom_question_1"]'],
         "kind": "value",
     }]
+    assert incomplete is False
 
 
 def test_scan_required_fields_marks_radio_input_as_checked_kind():
@@ -1008,19 +1076,21 @@ def test_scan_required_fields_marks_radio_input_as_checked_kind():
             "type": "radio", "aria-label": "Authorized to work?", "id": "q1",
         },
     }])
-    result = scan_required_fields(page)
+    result, incomplete = scan_required_fields(page)
     assert result == [{
         "label": "Authorized to work?", "selectors": ['[id="q1"]'],
         "kind": "checked",
     }]
+    assert incomplete is False
 
 
 def test_scan_required_fields_marks_checkbox_input_as_checked_kind():
     page = _ReqPage([{
         "attrs": {"type": "checkbox", "aria-label": "I agree", "id": "q1"},
     }])
-    result = scan_required_fields(page)
+    result, incomplete = scan_required_fields(page)
     assert result[0]["kind"] == "checked"
+    assert incomplete is False
 
 
 # ── dom_field_has_value (Task 6 finding fix) ────────────────────────────────
@@ -1057,12 +1127,16 @@ def test_scan_required_fields_dedupes_by_resolved_label():
         {"attrs": {"aria-label": "Phone", "id": "a"}},
         {"attrs": {"aria-label": "Phone", "id": "b"}},
     ])
-    assert len(scan_required_fields(page)) == 1
+    entries, incomplete = scan_required_fields(page)
+    assert len(entries) == 1
+    assert incomplete is False
 
 
 def test_scan_required_fields_skips_element_with_no_resolvable_label():
     page = _ReqPage([{"attrs": {}}])
-    assert scan_required_fields(page) == []
+    entries, incomplete = scan_required_fields(page)
+    assert entries == []
+    assert incomplete is False
 
 
 def test_scan_required_fields_degrades_to_empty_on_scan_failure():
@@ -1070,7 +1144,79 @@ def test_scan_required_fields_degrades_to_empty_on_scan_failure():
         def locator(self, selector):
             raise RuntimeError("selector engine blew up")
 
-    assert scan_required_fields(_BoomPage()) == []
+    entries, incomplete = scan_required_fields(_BoomPage())
+    assert entries == []
+    # A page with zero scanning capability at all (every locator() call
+    # raises, including the outer iframe-count probe) reports "no frames
+    # known to exist," not "found a frame and couldn't trust it" — see
+    # scan_required_fields's own docstring for why these are deliberately
+    # distinct.
+    assert incomplete is False
+
+
+# ── scan_required_fields: frame-aware discovery (BLOCKER fix) ──────────────
+
+def test_scan_required_fields_discovers_field_inside_accessible_iframe():
+    """A required field that lives ONLY inside a same-origin-accessible
+    iframe (never in the top document) must still be discovered, with its
+    label resolved via THAT frame's own ``label[for=id]`` — not the top
+    page's (which would always find zero matches for an iframe-scoped id)."""
+    frame = _ReqFrameRoot(
+        [{"attrs": {"id": "q3"}}],
+        label_by_id={"q3": "Are you legally authorized to work in the US?"},
+    )
+    page = _ReqPage([], iframes=[frame])
+    entries, incomplete = scan_required_fields(page)
+    assert entries == [{
+        "label": "Are you legally authorized to work in the US?",
+        "selectors": ['[id="q3"]'],
+        "kind": "value",
+    }]
+    assert incomplete is False
+
+
+def test_scan_required_fields_marks_incomplete_when_frame_inaccessible():
+    """An iframe is known to exist (the outer count succeeded) but its
+    content can't be queried — this MUST surface as scan_incomplete=True so
+    the caller refuses to treat the attempt as clean, rather than silently
+    reading "found nothing in there" as "nothing required in there.\""""
+    frame = _ReqFrameRoot([], raise_on_query=True)
+    page = _ReqPage([], iframes=[frame])
+    entries, incomplete = scan_required_fields(page)
+    assert incomplete is True
+    # Whatever this scan did or didn't find inside the inaccessible frame is
+    # not the point of this test (the caller-side refusal is) — but it must
+    # not have silently fabricated an entry either.
+    assert entries == []
+
+
+def test_scan_required_fields_zero_iframes_reports_scan_complete():
+    """No iframes on the page at all (today's pre-fix baseline case) must
+    still report scan_incomplete=False with entries unchanged — proves the
+    frame-aware rewrite is a strict superset of the old top-document-only
+    behavior, not a regression for the common (no-iframe) case."""
+    page = _ReqPage([{"attrs": {"aria-label": "Phone", "id": "p1"}}])
+    entries, incomplete = scan_required_fields(page)
+    assert incomplete is False
+    assert entries == [{
+        "label": "Phone", "selectors": ['[id="p1"]'], "kind": "value",
+    }]
+
+
+def test_scan_required_fields_combines_top_document_and_iframe_entries():
+    """A required field on the top document AND a distinct one inside an
+    accessible iframe must BOTH show up — proves the two scopes are
+    additive, not either/or."""
+    frame = _ReqFrameRoot(
+        [{"attrs": {"aria-label": "Work authorization?", "id": "wa"}}],
+    )
+    page = _ReqPage(
+        [{"attrs": {"aria-label": "Phone", "id": "p1"}}], iframes=[frame],
+    )
+    entries, incomplete = scan_required_fields(page)
+    labels = {e["label"] for e in entries}
+    assert labels == {"Phone", "Work authorization?"}
+    assert incomplete is False
 
 
 # ── Frame-aware resolution (frame + shadow-DOM piercing, Task 1) ───────────

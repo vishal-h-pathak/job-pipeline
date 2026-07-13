@@ -901,14 +901,14 @@ def _resolve_dom_label(page: Any, el: Any, *, label_root: Any = None) -> str:
     ``label_root`` is the object whose ``.locator()`` reaches the SAME
     document ``el`` lives in — ``page`` for a top-document element, or the
     owning ``FrameLocator`` for an element found inside an iframe (see
-    ``_iter_frame_roots``). Defaults to ``page`` (the pre-Task-6 behavior,
-    correct for every top-document caller — ``scan_required_fields`` is
-    still top-document-only and unaffected). Querying ``page.locator(...)``
-    for a ``<label for=id>`` that only exists inside an iframe's own
-    document would always find zero matches — this is what let a
-    frame-embedded, ``label[for]``-only-resolvable textarea silently fail
-    the scoped cover-letter match despite being genuinely reachable via
-    Task 1's frame-piercing.
+    ``_iter_frame_roots``). Defaults to ``page`` (correct for every
+    top-document caller). Querying ``page.locator(...)`` for a
+    ``<label for=id>`` that only exists inside an iframe's own document
+    would always find zero matches — this is what let a frame-embedded,
+    ``label[for]``-only-resolvable textarea silently fail the scoped
+    cover-letter match despite being genuinely reachable via Task 1's
+    frame-piercing, and (BLOCKER fix) is exactly why ``scan_required_fields``
+    now passes its own per-frame root here too instead of always ``page``.
     """
     for attr in ("aria-label", "placeholder", "name"):
         try:
@@ -1006,46 +1006,113 @@ def _resolve_dom_kind(el: Any) -> str:
 
 
 def scan_required_fields(page: Any, *,
-                         log: logging.Logger | None = None) -> list[dict]:
+                         log: logging.Logger | None = None,
+                         ) -> tuple[list[dict], bool]:
     """Scan the LIVE DOM for every element flagged required (the
     ``required`` attribute or ``aria-required="true"``), deduped by
-    resolved label.
+    resolved label — top document AND every same-origin-accessible iframe
+    (BLOCKER fix: this used to be top-document-only, which meant a
+    required custom question rendered ONLY inside a company's embedded
+    ATS iframe was never discovered at all — not "seen and thought
+    answered," genuinely invisible to this scan, so ``required_empty``
+    stayed clean and the row went to ``awaiting_human_submit`` with a
+    real required question never even considered).
 
     This is what lets the verification pass build the required-set from
     the form itself instead of the ~5 hardcoded ``field_maps.yml`` labels
     — custom / role-specific questions the ATS marks required show up here
-    even though the declarative field map never heard of them. Best-effort
-    throughout: a single element's read failing is skipped, and a total
-    scan failure (unsupported selector, detached page) degrades to "no
-    DOM-required fields found" rather than raising.
+    even though the declarative field map never heard of them.
 
-    Returns ``[{"label": str, "selectors": [selector], "kind": "value" |
-    "checked"}, ...]`` — see :func:`_resolve_dom_kind` and
-    :func:`dom_field_has_value` for what ``kind`` controls.
+    Returns ``(entries, scan_incomplete)``:
+      - ``entries`` — ``[{"label": str, "selectors": [selector], "kind":
+        "value" | "checked"}, ...]``, same shape as before this fix (see
+        :func:`_resolve_dom_kind` / :func:`dom_field_has_value` for what
+        ``kind`` controls).
+      - ``scan_incomplete`` — ``True`` iff at least one iframe was known to
+        exist (the outer ``page.locator("iframe").count()`` call
+        succeeded) but this function could not get that specific frame's
+        own root or enumerate its required elements (a cross-origin
+        restriction, a detached iframe, or anything else raising). A frame
+        that scans cleanly and simply has zero required elements does NOT
+        set this. The caller (``run_field_map_fill``) MUST treat
+        ``scan_incomplete is True`` as "this scan cannot be trusted as a
+        clean required-set" and refuse to report the attempt as clean —
+        silently degrading to "found nothing in there" is exactly the bug
+        this fix closes.
+
+    Exception handling, deliberately asymmetric between the two document
+    scopes:
+      - Top document: unchanged best-effort contract from before this fix
+        — a single element's read failing is skipped, and the top-level
+        ``[required], [aria-required="true"]`` query itself raising
+        degrades to "no top-document required fields found" (NOT
+        ``scan_incomplete`` — this mirrors the pre-existing top-document
+        degrade-to-empty behavior, unchanged by this fix).
+      - Per iframe: getting the frame's own root
+        (``page.frame_locator("iframe").nth(i)``) or enumerating its
+        required elements (``.locator(selector).count()``) raising IS a
+        ``scan_incomplete`` event — we now know a frame exists and could
+        not confirm whether it holds any required, unanswered field. An
+        individual element's attribute read failing once we're already
+        enumerating a successfully-counted frame is still just skipped
+        (same per-element best-effort as the top document), not itself
+        incomplete.
+      - The OUTER ``page.locator("iframe").count()`` call raising (e.g. a
+        stub Page with no iframe support at all, as used throughout the
+        pre-frame-aware unit tests) is treated as "zero iframes on this
+        page," NOT incomplete — there is a real difference between "this
+        page object can't tell me about frames" (nothing to distrust) and
+        "there IS a frame here and I can't see into it" (untrustworthy).
     """
     log = log or logger
     selector = '[required], [aria-required="true"]'
-    try:
-        count = page.locator(selector).count()
-    except Exception:
-        return []
-
     found: dict[str, tuple[str, str]] = {}
-    for i in range(count):
-        try:
-            el = page.locator(selector).nth(i)
-            label = _resolve_dom_label(page, el)
-            el_selector = _resolve_dom_selector(el)
-            kind = _resolve_dom_kind(el)
-        except Exception:
-            continue
-        if label and label not in found:
-            found[label] = (el_selector, kind)
 
-    return [
+    try:
+        top_count = page.locator(selector).count()
+    except Exception:
+        top_count = 0
+    else:
+        for i in range(top_count):
+            try:
+                el = page.locator(selector).nth(i)
+                label = _resolve_dom_label(page, el)
+                el_selector = _resolve_dom_selector(el)
+                kind = _resolve_dom_kind(el)
+            except Exception:
+                continue
+            if label and label not in found:
+                found[label] = (el_selector, kind)
+
+    scan_incomplete = False
+    try:
+        frame_count = page.locator("iframe").count()
+    except Exception:
+        frame_count = 0
+
+    for i in range(frame_count):
+        try:
+            frame_root = page.frame_locator("iframe").nth(i)
+            frame_required_count = frame_root.locator(selector).count()
+        except Exception:
+            scan_incomplete = True
+            continue
+        for j in range(frame_required_count):
+            try:
+                el = frame_root.locator(selector).nth(j)
+                label = _resolve_dom_label(page, el, label_root=frame_root)
+                el_selector = _resolve_dom_selector(el)
+                kind = _resolve_dom_kind(el)
+            except Exception:
+                continue
+            if label and label not in found:
+                found[label] = (el_selector, kind)
+
+    entries = [
         {"label": label, "selectors": [sel] if sel else [], "kind": kind}
         for label, (sel, kind) in found.items()
     ]
+    return entries, scan_incomplete
 
 
 def dom_field_has_value(page: Any, entry: dict, *,

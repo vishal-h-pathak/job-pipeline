@@ -595,6 +595,63 @@ def test_run_field_map_fill_widens_required_set_with_dom_scanned_custom_question
     assert result["success"] is False
 
 
+def test_run_field_map_fill_forces_failure_when_dom_scan_incomplete(tmp_path, monkeypatch):
+    """BLOCKER fix: when ``scan_required_fields`` reports it could not fully
+    scan an iframe it knew existed (a cross-origin restriction, a detached
+    frame, whatever), ``run_field_map_fill`` must NEVER report the attempt
+    as clean — this is the actual fix for the reported bug (an inaccessible
+    frame silently reading as "nothing required in there" instead of "I
+    could not verify this").
+
+    This file's ``_StubPage`` has no iframe support at all (unknown
+    selectors, including "iframe", resolve to count==0 / invisible), so
+    there is no way to make a REAL ``scan_required_fields`` call report
+    ``scan_incomplete`` through this stub — monkeypatching
+    ``field_maps.scan_required_fields`` directly is the cleaner way to
+    exercise the caller-side refusal-to-report-clean in isolation from
+    frame-simulation plumbing that already has thorough direct coverage in
+    ``test_prepare_dom_common.py``."""
+    import jobpipe.submit.adapters.prepare_dom.field_maps as field_maps_mod
+
+    class _FakeApplicant:
+        def take_screenshot(self, page, label="form"):
+            return f"/tmp/{label}.png"
+
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 fake")
+
+    behaviors = {
+        'input[name="job_application[first_name]"]': {"visible": True},
+        'input[name="job_application[last_name]"]': {"visible": True},
+        'input[name="job_application[email]"]': {"visible": True},
+        'input[type="tel"]:visible': {"visible": True},
+        'input[type="file"][name="job_application[resume]"]': {"count": 1},
+        "text=resume.pdf": {"count": 1},
+    }
+    page = _StubPage(behaviors)
+    job = {"id": "gh-incomplete", "form_answers": {
+        "first_name": "Test", "last_name": "Applicant",
+        "email": "t@e.invalid", "phone": "+1-555-0100",
+    }}
+
+    monkeypatch.setattr(
+        field_maps_mod, "scan_required_fields",
+        lambda page, log=None: ([], True),
+    )
+
+    result = run_field_map_fill(
+        _FakeApplicant(), page, job, "greenhouse",
+        screenshot_label="gh_incomplete", resume_path=str(resume),
+    )
+
+    # Every YAML-declared required field filled cleanly (proves the forced
+    # failure comes from the incomplete-scan signal, not a real fill gap).
+    assert result["success"] is False
+    assert any(
+        "unscannable" in label.lower() for label in result["required_empty"]
+    )
+
+
 def test_apply_field_map_file_upload_is_exempt_from_dom_reread():
     """File inputs never get a DOM value re-read via ``read_value``
     (Playwright can't read an ``input[type=file]``'s value back) — instead

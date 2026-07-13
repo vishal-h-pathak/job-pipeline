@@ -314,9 +314,14 @@ def run_field_map_fill(
     question(s) NOT auto-filled" note (Greenhouse / Lever emit it, Ashby did
     not). ``success`` is the honest cleanliness gate (#2): the DOM's own
     required-set (YAML-declared fields UNION whatever ``scan_required_fields``
-    finds live on the page, custom/role-specific questions included) has
-    zero entries left empty. Any required gap — YAML or DOM-only — routes to
-    the assisted-manual hand-off instead of ``awaiting_human_submit``.
+    finds live on the page — top document AND every same-origin-accessible
+    iframe, custom/role-specific questions included) has zero entries left
+    empty. Any required gap — YAML or DOM-only — routes to the
+    assisted-manual hand-off instead of ``awaiting_human_submit``. When
+    ``scan_required_fields`` reports it could not fully scan an iframe it
+    knew existed (``scan_incomplete``), ``success`` is forced ``False``
+    unconditionally (BLOCKER fix) — an inaccessible frame must never be
+    misread as "nothing required in there."
 
     ``readiness_timeout`` (Task 3 / #4) is threaded straight through from the
     caller's own ``_common.wait_for_form_ready`` call — it did NOT block the
@@ -372,7 +377,7 @@ def run_field_map_fill(
     yaml_required_labels = [
         s.get("label") or s.get("key") for s in specs if s.get("required")
     ]
-    dom_required = scan_required_fields(page, log=log)
+    dom_required, scan_incomplete = scan_required_fields(page, log=log)
     tracked = set(yaml_required_labels)
     all_required_labels = list(yaml_required_labels)
     for entry in dom_required:
@@ -385,11 +390,33 @@ def run_field_map_fill(
         if not has_value and label not in required_empty:
             required_empty.append(label)
 
+    # BLOCKER fix: an iframe scan_required_fields could not fully scan (a
+    # cross-origin restriction, a detached frame, whatever) must NEVER be
+    # read as "nothing required in there" — that is exactly the false-clean
+    # result the source review flagged. Inject a distinguishable sentinel
+    # label into the required-set so this attempt can never look clean and
+    # so the handoff notes tell the human WHY, instead of looking like a
+    # real form field silently went unanswered.
+    if scan_incomplete:
+        incomplete_label = "Unscannable embedded content — verify required fields manually"
+        if incomplete_label not in tracked:
+            tracked.add(incomplete_label)
+            all_required_labels.append(incomplete_label)
+        if incomplete_label not in required_empty:
+            required_empty.append(incomplete_label)
+
     screenshot_path = applicant.take_screenshot(page, label=screenshot_label)
     notes_parts.append(f"Screenshot: {screenshot_path}")
 
+    # ``required_empty`` already carries the incomplete-scan sentinel above
+    # when applicable, which alone forces this False — the explicit
+    # ``and not scan_incomplete`` is a belt-and-suspenders guarantee that
+    # holds even if some future change ever cleared required_empty after
+    # this point without knowing about the sentinel.
+    success = len(required_empty) == 0 and not scan_incomplete
+
     return {
-        "success": len(required_empty) == 0,
+        "success": success,
         "screenshot_path": screenshot_path,
         "notes": "\n".join(notes_parts),
         "fields_filled": std_filled,

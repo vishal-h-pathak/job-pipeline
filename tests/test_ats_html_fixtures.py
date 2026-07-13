@@ -123,16 +123,22 @@ def _fill_report_by_label(result: dict) -> dict[str, dict]:
 
 def _expected_required_empty(variant: str, standard_expected: set[str]) -> set[str]:
     """The DOM-required-set widening (``scan_required_fields`` /
-    ``dom_field_has_value``) only ever inspects the TOP document — it is
-    not frame-aware, a gap Task 1's review explicitly scoped out (same
-    boundary as ``wait_for_form_ready``, see ``_run``'s embed branch
-    above). On the ``embed`` variant, the custom required question lives
-    entirely inside the iframe, so the widening pass never sees it at all
-    — not "sees it and thinks it's answered," genuinely never discovers
-    it — and ``required_empty`` is empty. On ``standard`` the question is
-    on the top document and DOES get caught, per ``standard_expected``.
+    ``dom_field_has_value``) used to inspect the TOP document only — a gap
+    Task 1's review explicitly scoped out (same boundary as
+    ``wait_for_form_ready``, see ``_run``'s embed branch above). The BLOCKER
+    fix closed that gap: ``scan_required_fields`` now also scans every
+    same-origin-accessible iframe. The embed fixtures' iframe is
+    same-origin-equivalent (``about:srcdoc``, see this module's own header
+    comment), which Playwright's ``frame_locator()`` reaches identically to
+    a same-origin cross-domain iframe — so the ``embed`` variant now
+    discovers the exact same DOM-required custom question ``standard``
+    does, and both variants assert the SAME ``required_empty`` set.
+
+    ``variant`` is intentionally unused now (kept so callers don't need to
+    change) — the whole point of the fix is that it no longer matters.
     """
-    return standard_expected if variant == "standard" else set()
+    del variant
+    return standard_expected
 
 
 def _run(page, ats: str, variant: str, job: dict, resume_path: str, *,

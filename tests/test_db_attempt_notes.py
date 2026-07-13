@@ -160,3 +160,127 @@ def test_record_attempt_truth_swallows_client_exception(patch_db_client):
 
     patch_db_client(_BoomClient())
     db.record_attempt_truth(7, {"final_url": "https://x"})
+
+
+# ── mark_attempt_timeout: merge a `timeout` key onto attempts.notes ───────
+# (Task 5 — P0 follow-up: timeout cycles must not burn the attempt budget)
+
+def test_mark_attempt_timeout_adds_timeout_key_to_existing_notes(patch_db_client):
+    fake = _FakeClient(attempts={
+        7: {"notes": {"filled_fields": ["First Name"], "notes": "Filled 1 field"}},
+    })
+    patch_db_client(fake)
+
+    db.mark_attempt_timeout(7)
+
+    notes = fake._tables["application_attempts"]._rows[7]["notes"]
+    assert notes["filled_fields"] == ["First Name"]
+    assert notes["notes"] == "Filled 1 field"
+    assert notes["timeout"] is True
+
+
+def test_mark_attempt_timeout_handles_missing_notes(patch_db_client):
+    fake = _FakeClient(attempts={7: {"notes": None}})
+    patch_db_client(fake)
+
+    db.mark_attempt_timeout(7)
+
+    notes = fake._tables["application_attempts"]._rows[7]["notes"]
+    assert notes == {"timeout": True}
+
+
+def test_mark_attempt_timeout_does_not_clobber_truth_key(patch_db_client):
+    """Mirrors the ordering in _wait_for_human_decision's finally block:
+    record_attempt_truth runs first, mark_attempt_timeout runs second —
+    neither should clobber the other's key."""
+    fake = _FakeClient(attempts={7: {"notes": None}})
+    patch_db_client(fake)
+
+    db.record_attempt_truth(7, {"final_url": "https://x"})
+    db.mark_attempt_timeout(7)
+
+    notes = fake._tables["application_attempts"]._rows[7]["notes"]
+    assert notes["truth"] == {"final_url": "https://x"}
+    assert notes["timeout"] is True
+
+
+def test_mark_attempt_timeout_swallows_client_exception(patch_db_client):
+    class _BoomClient:
+        def table(self, _name):
+            raise RuntimeError("supabase is down")
+
+    patch_db_client(_BoomClient())
+    db.mark_attempt_timeout(7)
+
+
+# ── count_attempts_toward_cap: excludes timeout-marked rows ────────────────
+
+
+class _FakeSelectTable:
+    """Fake table supporting select().eq().execute() for a row list."""
+
+    def __init__(self, rows: list[dict]):
+        self._rows = rows
+
+    def select(self, *_a, **_kw):
+        return self
+
+    def eq(self, _col, value):
+        return self
+
+    def execute(self):
+        class _Result:
+            data = self._rows
+
+        return _Result()
+
+
+class _FakeSelectClient:
+    def __init__(self, attempts_rows: list[dict]):
+        self._table = _FakeSelectTable(attempts_rows)
+
+    def table(self, name):
+        assert name == "application_attempts"
+        return self._table
+
+
+def test_count_attempts_toward_cap_excludes_timeout_rows(patch_db_client):
+    fake = _FakeSelectClient([
+        {"notes": {"timeout": True}},
+        {"notes": {"timeout": True}},
+        {"notes": None},
+        {"notes": {"error": "boom"}},
+        {"notes": {"prefill_screenshot_path": "x"}},
+    ])
+    patch_db_client(fake)
+
+    assert db.count_attempts_toward_cap("job-1") == 3
+
+
+def test_count_attempts_toward_cap_all_timeouts_counts_zero(patch_db_client):
+    fake = _FakeSelectClient([
+        {"notes": {"timeout": True}},
+        {"notes": {"timeout": True}},
+        {"notes": {"timeout": True}},
+        {"notes": {"timeout": True}},
+        {"notes": {"timeout": True}},
+    ])
+    patch_db_client(fake)
+
+    assert db.count_attempts_toward_cap("job-1") == 0
+
+
+def test_count_attempts_toward_cap_no_rows(patch_db_client):
+    fake = _FakeSelectClient([])
+    patch_db_client(fake)
+
+    assert db.count_attempts_toward_cap("job-1") == 0
+
+
+def test_count_attempts_toward_cap_swallows_client_exception(patch_db_client):
+    class _BoomClient:
+        def table(self, _name):
+            raise RuntimeError("supabase is down")
+
+    patch_db_client(_BoomClient())
+    assert db.count_attempts_toward_cap("job-1") == 0

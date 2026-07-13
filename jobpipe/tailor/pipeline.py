@@ -91,10 +91,12 @@ from jobpipe.db import (  # noqa: E402
     mark_skipped,
     get_job_counts_by_status,
     next_attempt_n,
+    count_attempts_toward_cap,
     open_attempt,
     close_attempt,
     record_prefill_verification,
     record_attempt_truth,
+    mark_attempt_timeout,
     verify_materials_hash,
 )
 from tailor.resume import tailor_resume  # noqa: E402
@@ -566,8 +568,13 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
     # ── Pre-browser preconditions (hard-fail: no open tab to hand off) ──
     # Max-attempts ceiling — mirrors the runner.py check so the local path
     # enforces the same per-job retry budget. Pre-attempt-row exit.
+    # Task 5 (P0 follow-up): the cap comparison reads count_attempts_toward_cap
+    # (excludes decision-wait-timeout rows) rather than the raw next_attempt_n
+    # numbering, so unattended tab timeouts don't burn a human-never-saw-it
+    # job's real retry budget. next_attempt_n still supplies the row's own
+    # monotonic attempt_n for open_attempt below.
     attempt_n = next_attempt_n(job_id)
-    if attempt_n > MAX_ATTEMPTS_PER_JOB:
+    if count_attempts_toward_cap(job_id) >= MAX_ATTEMPTS_PER_JOB:
         mark_tailor_failed(
             job_id,
             f"exceeded max attempts ({MAX_ATTEMPTS_PER_JOB})",
@@ -858,8 +865,12 @@ def _wait_for_human_decision(page, job_id: str, *,
         authoritative.
       - **Decision timeout (hygiene #3).** Past ``timeout_minutes`` (default
         :data:`jobpipe.config.JOBPIPE_DECISION_TIMEOUT_MINUTES`) with no
-        terminal decision, stop waiting, notify, and return the row to
-        ``prefilling`` so a forgotten tab doesn't serialize the whole queue
+        terminal decision, stop waiting, notify, flag the attempt row
+        (:func:`jobpipe.db.mark_attempt_timeout` — Task 5, so the next
+        cycle's cap check via ``count_attempts_toward_cap`` doesn't count
+        an unattended timeout against the job's real retry budget), and
+        return the row to ``prefilling`` so a forgotten tab doesn't
+        serialize the whole queue
         behind it forever. The watcher's in-flight dedup set is keyed to
         this call returning (see ``watch.py::_handle_item``'s ``finally``),
         so the next catch-up / realtime event re-picks the row up cleanly.
@@ -931,6 +942,13 @@ def _wait_for_human_decision(page, job_id: str, *,
             send_decision_timeout(job or {"id": job_id})
         except Exception:
             logger.exception("send_decision_timeout failed for %s", job_id)
+        if attempt_id is not None:
+            try:
+                mark_attempt_timeout(attempt_id)
+            except Exception:
+                logger.exception(
+                    "mark_attempt_timeout failed for attempt %s", attempt_id,
+                )
         try:
             mark_prefilling(job_id)
         except Exception:

@@ -503,6 +503,38 @@ def record_attempt_truth(attempt_id: int, truth: dict) -> None:
         )
 
 
+def mark_attempt_timeout(attempt_id: int) -> None:
+    """Flag an ``application_attempts`` row as a decision-wait timeout
+    (Task 5 — P0 follow-up: timeout cycles must not burn the attempt
+    budget).
+
+    Same read-merge-write pattern as :func:`record_attempt_truth` — must
+    not clobber whatever ``close_attempt`` (or ``record_attempt_truth``,
+    called just before this in ``_wait_for_human_decision``'s ``finally``
+    block) already wrote to ``notes``. Sets ``notes["timeout"] = True`` so
+    :func:`count_attempts_toward_cap` can exclude the row from the
+    per-job attempt budget: a human who never looked at the tab shouldn't
+    burn a real retry. Best-effort — never raises out of the wait loop.
+    """
+    try:
+        client = _get_client()
+        existing = (
+            client.table("application_attempts").select("notes")
+            .eq("id", attempt_id).execute().data or []
+        )
+        current_notes = (existing[0].get("notes") if existing else None) or {}
+        if not isinstance(current_notes, dict):
+            current_notes = {}
+        current_notes["timeout"] = True
+        client.table("application_attempts").update(
+            {"notes": current_notes}
+        ).eq("id", attempt_id).execute()
+    except Exception as exc:  # noqa: BLE001 — never raise out of the wait loop
+        logger.warning(
+            "mark_attempt_timeout failed for attempt %s: %s", attempt_id, exc,
+        )
+
+
 def mark_skipped(job_id: str, reason: str = None) -> dict:
     """User opted out of submitting this row from the cockpit."""
     extras: dict[str, Any] = {}
@@ -663,6 +695,46 @@ def next_attempt_n(job_id: str) -> int:
     )
     rows = result.data or []
     return (rows[0]["attempt_n"] + 1) if rows else 1
+
+
+def count_attempts_toward_cap(job_id: str) -> int:
+    """Count ``application_attempts`` rows that should count against
+    ``MAX_ATTEMPTS_PER_JOB`` (Task 5 — P0 follow-up).
+
+    Excludes rows marked ``notes.timeout = True`` by
+    :func:`mark_attempt_timeout`: a decision-wait timeout means the human
+    never actually looked at the tab, so it shouldn't burn a real retry.
+    Every other outcome — real fill failures, clean pre-fills, assisted-
+    manual hand-offs — still counts. ``next_attempt_n`` is untouched by
+    this function; it keeps numbering rows monotonically for
+    ``open_attempt`` regardless of the cap.
+
+    Best-effort: a read failure returns 0 rather than raising, matching
+    this file's existing defensive style for attempt-row helpers. Note
+    the tradeoff — under-counting on a flaky DB means the cap can't
+    protect against a runaway retry burst in that window — but that's
+    preferable to crashing the pre-fill loop over a transient read error.
+    """
+    try:
+        result = (
+            _get_client().table("application_attempts")
+            .select("notes")
+            .eq("job_id", job_id)
+            .execute()
+        )
+    except Exception as exc:  # noqa: BLE001 — see docstring tradeoff note
+        logger.warning(
+            "count_attempts_toward_cap failed for job %s: %s", job_id, exc,
+        )
+        return 0
+    rows = result.data or []
+    count = 0
+    for row in rows:
+        notes = row.get("notes")
+        if isinstance(notes, dict) and notes.get("timeout") is True:
+            continue
+        count += 1
+    return count
 
 
 def mark_submitting(job_id: str) -> None:

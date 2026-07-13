@@ -462,9 +462,19 @@ def test_select_option_swallows_per_selector_exceptions():
 # few polls.
 
 class _ComboOptionLocator:
-    """One resolved ``[role="option"]`` node — supports ``click()``
-    (tracked, and updates the container's own display text, mirroring a
-    react-select chip re-rendering post-selection) and ``text_content()``."""
+    """One resolved ``[role="option"]`` node — supports ``click()`` (tracked,
+    and updates the post-selection value on the container) and
+    ``text_content()``.
+
+    Which container attribute gets updated on click depends on which ARIA
+    shape ``page.container_accepts_fill`` is modeling (see
+    ``_ComboContainerLocator``): the input-direct shape updates
+    ``container_value`` (read back via ``input_value()``); the div-wrapper
+    shape updates ``container_text`` (read back via ``text_content()``) —
+    mirroring real DOM semantics where a real ``<input>``'s ``textContent``
+    never changes but its ``.value`` does, and a div wrapper has the
+    opposite: no ``.value``/``input_value()`` support, but a chip/display
+    text that does change."""
 
     def __init__(self, text: str, page: "_ComboPage"):
         self.text = text
@@ -472,7 +482,10 @@ class _ComboOptionLocator:
 
     def click(self) -> None:
         self.page.clicked_options.append(self.text)
-        self.page.container_text = self.text
+        if self.page.container_accepts_fill:
+            self.page.container_value = self.text
+        else:
+            self.page.container_text = self.text
 
     def text_content(self) -> str:
         return self.text
@@ -503,8 +516,18 @@ class _ComboContainerLocator:
     """The combobox container itself — clickable, optionally fillable
     (some ARIA-1.2 comboboxes put ``role="combobox"`` directly on the real
     ``<input>``; others put it on a div wrapper and need a nested
-    ``input``), and readable back via ``text_content()`` once a selection
-    has landed."""
+    ``input``).
+
+    Models real DOM semantics for the readback split ``select_combobox``
+    relies on: a real ``<input>``'s ``textContent`` is ALWAYS the empty
+    string regardless of ``.value`` (verified against a real headless
+    Playwright browser — see the P0 finding this stub was fixed for), so
+    when ``container_accepts_fill`` is True (the input-direct shape)
+    ``text_content()`` unconditionally returns ``""`` and ``input_value()``
+    reflects the actually-set value. When it's False (the div-wrapper
+    shape), it's the other way around: ``input_value()`` raises (a div
+    doesn't support it) and ``text_content()`` carries the chip/display
+    text."""
 
     def __init__(self, page: "_ComboPage"):
         self.page = page
@@ -525,7 +548,18 @@ class _ComboContainerLocator:
         self.page.typed_value = value
 
     def text_content(self) -> str:
+        if self.page.container_accepts_fill:
+            # Real <input>: textContent is always "" per the DOM spec,
+            # never the chip text, regardless of .value.
+            return ""
         return self.page.container_text
+
+    def input_value(self) -> str:
+        if not self.page.container_accepts_fill:
+            raise RuntimeError(
+                "Node is not an <input>, <textarea> or <select> element"
+            )
+        return self.page.container_value
 
     def locator(self, selector: str):
         if selector == "input" and not self.page.container_accepts_fill:
@@ -564,6 +598,7 @@ class _ComboPage:
         self.reveal_after = reveal_after
         self.container_accepts_fill = container_accepts_fill
         self.container_text = ""
+        self.container_value = ""
         self.clicked_container = False
         self.typed_value = None
         self.clicked_options: list = []
@@ -584,6 +619,13 @@ class _ComboPage:
 
 
 def test_select_combobox_exact_match_selects_and_verifies():
+    # container_accepts_fill defaults to True: this is the ARIA shape where
+    # role="combobox" sits directly on the real <input>. Per the DOM spec
+    # (and the P0 finding this test was fixed for) a real <input>'s
+    # text_content() is ALWAYS "" regardless of .value — the stub models
+    # that, so the only way this test can pass is if select_combobox's
+    # readback actually uses input_value() for this shape, not
+    # text_content().
     page = _ComboPage(
         "div[data-testid=combo]",
         ["United States", "United Kingdom", "United Arab Emirates"],
@@ -593,7 +635,8 @@ def test_select_combobox_exact_match_selects_and_verifies():
     assert page.clicked_container is True
     assert page.typed_value == "United States"
     assert page.clicked_options == ["United States"]
-    assert page.container_text == "United States"
+    assert page.container_value == "United States"
+    assert page.container_text == ""
 
 
 def test_select_combobox_substring_case_insensitive_match():
@@ -604,6 +647,19 @@ def test_select_combobox_substring_case_insensitive_match():
     ok = select_combobox(page, ["div[data-testid=combo]"], "authorized")
     assert ok is True
     assert page.clicked_options == ["Yes, I am authorized to work in the US"]
+
+
+def test_select_combobox_ambiguous_substring_match_picks_first_list_order_option():
+    # Two options both substring-match "United" — _best_matching_combobox_option
+    # has no exact match to prefer, so it must resolve deterministically to
+    # the first option in list order rather than raising or picking randomly.
+    page = _ComboPage(
+        "div[data-testid=combo]",
+        ["United Kingdom", "United States", "United Arab Emirates"],
+    )
+    ok = select_combobox(page, ["div[data-testid=combo]"], "United")
+    assert ok is True
+    assert page.clicked_options == ["United Kingdom"]
 
 
 def test_select_combobox_no_match_returns_false():

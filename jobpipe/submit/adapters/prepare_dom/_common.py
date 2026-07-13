@@ -385,10 +385,10 @@ def _best_matching_combobox_option(options: list[dict], value: str) -> dict | No
 
 
 def _combobox_selection_confirmed(display: str, value: str, chosen_text: str) -> bool:
-    """Verify the click stuck by comparing the container's post-selection
-    display text (its chip/selected-value text) against what we typed and
-    what we clicked. A plain ``input_value()`` doesn't work on a div, so
-    this reads back ``text_content()`` instead."""
+    """Verify the click stuck by comparing the post-selection display value
+    (``input_value()`` for a real ``<input>``, or ``text_content()``/chip
+    text for a div-wrapper widget — see ``_fill_combobox``) against what we
+    typed and what we clicked."""
     d = (display or "").strip().lower()
     if not d:
         return False
@@ -443,10 +443,31 @@ def _fill_combobox(
     except Exception:
         return False
 
+    # Read back whichever signal actually reflects the post-selection value.
+    # Two ARIA-1.2 combobox shapes are in scope (see the module note above):
+    #   - ``role="combobox"`` directly on the real ``<input>`` — its
+    #     ``.value`` is what changes on selection, and per the DOM spec
+    #     ``textContent`` on an ``<input>`` is ALWAYS the empty string
+    #     regardless of ``.value`` (verified against real headless
+    #     Playwright). ``input_value()`` is the only signal that works here.
+    #   - a div/container wrapper around a nested input — the container
+    #     itself has no ``.value`` (``input_value()`` raises: "Node is not
+    #     an <input>, <textarea> or <select> element"), and the chip/
+    #     selected-value text lives in the container's ``text_content()``.
+    # Try ``input_value()`` first since it's the correct signal for the
+    # input-direct shape and simply isn't supported on a div; fall back to
+    # ``text_content()`` for the wrapper shape (or if the input reads back
+    # empty for some other reason).
+    display = ""
     try:
-        display = container.text_content() or ""
+        display = container.input_value() or ""
     except Exception:
         display = ""
+    if not display:
+        try:
+            display = container.text_content() or ""
+        except Exception:
+            pass
     return _combobox_selection_confirmed(display, value, best["text"])
 
 
@@ -465,11 +486,14 @@ def select_combobox(
     listbox's options (``_wait_for_listbox_options``); pick the
     exact-match-preferred / substring-fallback option
     (``_best_matching_combobox_option``); click it; and verify the selection
-    stuck by reading back the container's own display text
-    (``_combobox_selection_confirmed`` — a plain ``input_value()`` doesn't
-    work on a div). Same per-selector exception-swallowing contract as every
-    other primitive in this module: any failure at any step just moves on to
-    the next candidate rather than raising.
+    stuck by reading back the post-selection value — ``input_value()`` for
+    the ARIA shape where ``role="combobox"`` sits directly on the real
+    ``<input>``, falling back to ``text_content()`` for the div-wrapper
+    shape (see ``_fill_combobox``'s in-line comment for why one signal alone
+    can't cover both shapes; ``_combobox_selection_confirmed`` does the
+    actual comparison). Same per-selector exception-swallowing contract as
+    every other primitive in this module: any failure at any step just moves
+    on to the next candidate rather than raising.
     """
     log = log or logger
     for selector in selectors:

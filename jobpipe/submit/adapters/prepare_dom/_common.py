@@ -816,7 +816,7 @@ def _read_first_scoped_textarea_value(
             el = locator.nth(i)
             if not _label_matches_any(page, el, needles, label_root=label_root):
                 continue
-            value = el.input_value() or ""
+            value = el.input_value(timeout=1000) or ""
         except Exception:
             continue
         if value:
@@ -982,6 +982,21 @@ def _resolve_dom_kind(el: Any) -> str:
     "already answered" even when nothing was ever selected. ``"checked"``
     tells the caller to test for a checked match (``{selector}:checked``)
     instead of reading a value back.
+
+    Known residual gap: ``scan_required_fields`` dedups a group by its
+    resolved LABEL and keeps whichever option's selector it saw first —
+    if that option has its own ``id`` (``_resolve_dom_selector`` prefers
+    ``[id=...]`` over the shared ``[name=...]``), the ``:checked`` probe
+    only covers that one option, so a group answered via a DIFFERENT,
+    non-first option with its own id would still read back as unanswered.
+    Harmless in the live pre-fill flow today (custom radio questions are
+    never auto-answered by any adapter, so a required group is always
+    genuinely empty when this gate runs) and fails safe (an unnecessary
+    assisted-manual hand-off, never a false "already answered") — but
+    would matter for a form that pre-checks a non-first option by
+    default. The shared ``[name=...]`` selector is the one that actually
+    covers every option in a group; prefer wiring a group-aware selector
+    here over an id-scoped one if this ever needs tightening.
     """
     try:
         input_type = (el.get_attribute("type") or "").lower()

@@ -105,7 +105,7 @@ class _StubLocator:
         if not self.discard_fill:
             self.page.values[self.selector] = value
 
-    def input_value(self) -> str:
+    def input_value(self, timeout: int = 1000) -> str:
         return self.page.values.get(self.selector, "")
 
     def get_attribute(self, name: str) -> Optional[str]:

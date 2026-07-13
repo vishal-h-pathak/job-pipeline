@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<!--
+  Sanitized lever-shaped application form EMBEDDED in an iframe — a
+  company's own careers page hosting the ATS's form via a widget/embed,
+  rather than the form rendering directly on the top document. The
+  fill_text / upload_file / paste_textarea / select_option / read_value /
+  scan_required_fields primitives all fall through top-document -> each
+  same-origin iframe (Task 1's frame-piercing) — this fixture is what
+  proves that fallback actually reaches a real iframe's srcdoc document
+  under real Chromium, not just a stub Page.
+
+  The top document deliberately has NO matching form fields of its own —
+  every fill in this fixture MUST resolve via the iframe fallback path or
+  the test fails. The iframe's inner markup is byte-identical to
+  tests/fixtures/ats_html/lever/standard.html's <form>...</form> block
+  (see the generator invocation in the Task 6 report for how this file was
+  produced) — same selector surface, same deliberate label/aria/placeholder
+  fallback shapes, same intentionally-unmapped required custom question.
+-->
+<html>
+<head><title>Careers — Field Robotics Technician at Acme Robotics (fixture, embed)</title></head>
+<body>
+  <h1>Field Robotics Technician — Acme Robotics</h1>
+  <p>This position is hosted through our embedded application widget below.</p>
+
+  <iframe id="ats-embed" title="Application form" width="100%" height="900" srcdoc="&lt;html&gt;&lt;body&gt;
+&lt;form id=&quot;application-form&quot; action=&quot;javascript:void(0)&quot; method=&quot;post&quot;&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;lv_name&quot;&gt;Full Name*&lt;/label&gt;
+      &lt;input id=&quot;lv_name&quot; name=&quot;name&quot; type=&quot;text&quot; required&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;lv_email&quot;&gt;Email*&lt;/label&gt;
+      &lt;input id=&quot;lv_email&quot; name=&quot;email&quot; type=&quot;email&quot; required&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;lv_phone&quot;&gt;Phone*&lt;/label&gt;
+      &lt;input id=&quot;lv_phone&quot; type=&quot;tel&quot; required&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;lv_linkedin&quot;&gt;LinkedIn URL&lt;/label&gt;
+      &lt;input id=&quot;lv_linkedin&quot; name=&quot;urls[LinkedIn]&quot; type=&quot;url&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;lv_location&quot;&gt;Current Location&lt;/label&gt;
+      &lt;input id=&quot;lv_location&quot; name=&quot;location&quot; type=&quot;text&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;lv_org&quot;&gt;Current Company&lt;/label&gt;
+      &lt;input id=&quot;lv_org&quot; name=&quot;org&quot; type=&quot;text&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;lv_title&quot;&gt;Current Title&lt;/label&gt;
+      &lt;input id=&quot;lv_title&quot; name=&quot;title&quot; type=&quot;text&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;lv_resume&quot;&gt;Resume*&lt;/label&gt;
+      &lt;input id=&quot;lv_resume&quot; name=&quot;resume&quot; type=&quot;file&quot; accept=&quot;.pdf,.doc,.docx&quot; required&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;lv_comments&quot;&gt;Additional Information&lt;/label&gt;
+      &lt;textarea id=&quot;lv_comments&quot; name=&quot;comments&quot; rows=&quot;6&quot; cols=&quot;60&quot;&gt;&lt;/textarea&gt;
+    &lt;/p&gt;
+
+    &lt;fieldset&gt;
+      &lt;legend&gt;What is your desired start date?*&lt;/legend&gt;
+      &lt;input type=&quot;text&quot; name=&quot;cards[9f2c-4a11][field0]&quot; aria-required=&quot;true&quot;
+             aria-label=&quot;What is your desired start date?&quot;&gt;
+    &lt;/fieldset&gt;
+
+    &lt;p&gt;&lt;button type=&quot;submit&quot; id=&quot;lv-submit&quot;&gt;Submit Application&lt;/button&gt;&lt;/p&gt;
+
+    &lt;!-- Mimics a real ATS&#x27;s own frontend JS: render the selected
+         filename into the DOM on the file input&#x27;s change event, so
+         _wait_for_upload_confirmation&#x27;s `text={filename}` poll has
+         something to find. --&gt;
+    &lt;script&gt;
+      document.querySelectorAll(&#x27;input[type=&quot;file&quot;]&#x27;).forEach(function (inp) {
+        inp.addEventListener(&#x27;change&#x27;, function () {
+          if (inp.files &amp;&amp; inp.files.length &gt; 0) {
+            var span = document.createElement(&#x27;span&#x27;);
+            span.className = &#x27;selected-file-name&#x27;;
+            span.textContent = &#x27;Selected file: &#x27; + inp.files[0].name;
+            inp.insertAdjacentElement(&#x27;afterend&#x27;, span);
+          }
+        });
+      });
+    &lt;/script&gt;
+  &lt;/form&gt;
+&lt;/body&gt;&lt;/html&gt;"></iframe>
+</body>
+</html>

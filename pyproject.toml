@@ -134,6 +134,7 @@ python_functions = ["test_*"]
 addopts = "-m 'not legacy'"
 markers = [
     "legacy: Forensic-only tests for the retired Browserbase + Stagehand path. Excluded by default; run with `pytest -m legacy`.",
+    "ats_fixtures: Recorded-HTML regression tests that drive real headless Chromium (Playwright) against sanitized ATS form fixtures under tests/fixtures/ats_html/. Organizational marker only — NOT excluded by `addopts`, runs by default (run `pytest -m ats_fixtures` to isolate them).",
 ]
 
 [tool.ruff]

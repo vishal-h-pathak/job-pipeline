@@ -24,6 +24,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e '.[dev]'
+      - name: Install Playwright Chromium
+        # tests/test_ats_html_fixtures.py (Task 6) drives real headless
+        # Chromium against static, sanitized ATS HTML fixtures
+        # (set_content() / iframe srcdoc — no live network navigation, no
+        # bot-detection to defeat), so plain --with-deps Chromium is
+        # sufficient in CI; no other browser engines are exercised anywhere
+        # in this suite.
+        run: playwright install --with-deps chromium
       - name: Collect tests
         run: pytest --collect-only
       - name: Run tests

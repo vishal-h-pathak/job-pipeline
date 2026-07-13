@@ -49,6 +49,7 @@ from typing import Any, Optional
 
 from ._common import (
     build_field_map,
+    dom_field_has_value,
     fill_text,
     label_selectors,
     load_cover_letter,
@@ -380,11 +381,8 @@ def run_field_map_fill(
             continue
         tracked.add(label)
         all_required_labels.append(label)
-        value = (
-            read_value(page, entry["selectors"], log=log)
-            if entry["selectors"] else ""
-        )
-        if not value and label not in required_empty:
+        has_value = dom_field_has_value(page, entry, log=log)
+        if not has_value and label not in required_empty:
             required_empty.append(label)
 
     screenshot_path = applicant.take_screenshot(page, label=screenshot_label)

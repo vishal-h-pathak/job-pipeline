@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<!--
+  Sanitized greenhouse-shaped application form EMBEDDED in an iframe — a
+  company's own careers page hosting the ATS's form via a widget/embed,
+  rather than the form rendering directly on the top document. The
+  fill_text / upload_file / paste_textarea / select_option / read_value /
+  scan_required_fields primitives all fall through top-document -> each
+  same-origin iframe (Task 1's frame-piercing) — this fixture is what
+  proves that fallback actually reaches a real iframe's srcdoc document
+  under real Chromium, not just a stub Page.
+
+  The top document deliberately has NO matching form fields of its own —
+  every fill in this fixture MUST resolve via the iframe fallback path or
+  the test fails. The iframe's inner markup is byte-identical to
+  tests/fixtures/ats_html/greenhouse/standard.html's <form>...</form> block
+  (see the generator invocation in the Task 6 report for how this file was
+  produced) — same selector surface, same deliberate label/aria/placeholder
+  fallback shapes, same intentionally-unmapped required custom question.
+-->
+<html>
+<head><title>Careers — Robotics Engineer at Acme Robotics (fixture, embed)</title></head>
+<body>
+  <h1>Robotics Engineer — Acme Robotics</h1>
+  <p>This position is hosted through our embedded application widget below.</p>
+
+  <iframe id="ats-embed" title="Application form" width="100%" height="900" srcdoc="&lt;html&gt;&lt;body&gt;
+&lt;form id=&quot;application-form&quot; action=&quot;javascript:void(0)&quot; method=&quot;post&quot;&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;gh_first_name&quot;&gt;First Name*&lt;/label&gt;
+      &lt;input id=&quot;gh_first_name&quot; name=&quot;job_application[first_name]&quot; type=&quot;text&quot; required&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;gh_last_name&quot;&gt;Last Name*&lt;/label&gt;
+      &lt;input id=&quot;gh_last_name&quot; name=&quot;job_application[last_name]&quot; type=&quot;text&quot; required&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;gh_email&quot;&gt;Email*&lt;/label&gt;
+      &lt;input id=&quot;gh_email&quot; name=&quot;job_application[email]&quot; type=&quot;email&quot; required&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;gh_phone&quot;&gt;Phone*&lt;/label&gt;
+      &lt;!-- intl-tel-input style: no job_application[phone] name at all --&gt;
+      &lt;input id=&quot;gh_phone&quot; type=&quot;tel&quot; required&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;gh_linkedin&quot;&gt;LinkedIn URL&lt;/label&gt;
+      &lt;input id=&quot;gh_linkedin&quot; name=&quot;job_application[urls][LinkedIn]&quot; type=&quot;url&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;gh_location&quot;&gt;Location&lt;/label&gt;
+      &lt;input id=&quot;gh_location&quot; name=&quot;job_application[location]&quot; type=&quot;text&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;gh_company&quot;&gt;Current Company&lt;/label&gt;
+      &lt;input id=&quot;gh_company&quot; name=&quot;job_application[company]&quot; type=&quot;text&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;gh_title&quot;&gt;Current Title&lt;/label&gt;
+      &lt;input id=&quot;gh_title&quot; name=&quot;job_application[title]&quot; type=&quot;text&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;gh_resume&quot;&gt;Resume/CV*&lt;/label&gt;
+      &lt;input id=&quot;gh_resume&quot; name=&quot;job_application[resume]&quot; type=&quot;file&quot; accept=&quot;.pdf,.doc,.docx&quot; required&gt;
+    &lt;/p&gt;
+
+    &lt;!-- Custom question textarea rendered BEFORE the cover letter box —
+         mislabeled relative to &quot;cover&quot;/&quot;letter&quot;, proves the scoped
+         catch-all does not stop at the first textarea it sees. --&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;gh_custom_q&quot;&gt;Why are you interested in robotics?&lt;/label&gt;
+      &lt;textarea id=&quot;gh_custom_q&quot; name=&quot;job_application[answers_attributes][1][text_value]&quot; rows=&quot;4&quot; cols=&quot;60&quot;&gt;&lt;/textarea&gt;
+    &lt;/p&gt;
+
+    &lt;!-- Cover letter box: no name/aria-label/placeholder mentioning
+         cover/letter at all — only the associated &lt;label&gt; resolves it,
+         via the scoped bare &quot;textarea&quot; catch-all. --&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;gh_cover&quot;&gt;Cover letter (optional)&lt;/label&gt;
+      &lt;textarea id=&quot;gh_cover&quot; rows=&quot;6&quot; cols=&quot;60&quot;&gt;&lt;/textarea&gt;
+    &lt;/p&gt;
+
+    &lt;fieldset&gt;
+      &lt;legend&gt;Are you legally authorized to work in the US?*&lt;/legend&gt;
+      &lt;label&gt;
+        &lt;input type=&quot;radio&quot; name=&quot;job_application[answers_attributes][0][text_value]&quot;
+               value=&quot;Yes&quot; aria-required=&quot;true&quot;
+               aria-label=&quot;Are you legally authorized to work in the US?&quot;&gt; Yes
+      &lt;/label&gt;
+      &lt;label&gt;
+        &lt;input type=&quot;radio&quot; name=&quot;job_application[answers_attributes][0][text_value]&quot;
+               value=&quot;No&quot;&gt; No
+      &lt;/label&gt;
+    &lt;/fieldset&gt;
+
+    &lt;p&gt;&lt;button type=&quot;submit&quot; id=&quot;gh-submit&quot;&gt;Submit Application&lt;/button&gt;&lt;/p&gt;
+
+    &lt;!-- Mimics a real ATS&#x27;s own frontend JS: render the selected
+         filename into the DOM on the file input&#x27;s change event, so
+         _wait_for_upload_confirmation&#x27;s `text={filename}` poll has
+         something to find. --&gt;
+    &lt;script&gt;
+      document.querySelectorAll(&#x27;input[type=&quot;file&quot;]&#x27;).forEach(function (inp) {
+        inp.addEventListener(&#x27;change&#x27;, function () {
+          if (inp.files &amp;&amp; inp.files.length &gt; 0) {
+            var span = document.createElement(&#x27;span&#x27;);
+            span.className = &#x27;selected-file-name&#x27;;
+            span.textContent = &#x27;Selected file: &#x27; + inp.files[0].name;
+            inp.insertAdjacentElement(&#x27;afterend&#x27;, span);
+          }
+        });
+      });
+    &lt;/script&gt;
+  &lt;/form&gt;
+&lt;/body&gt;&lt;/html&gt;"></iframe>
+</body>
+</html>

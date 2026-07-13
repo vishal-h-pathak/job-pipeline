@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<!--
+  Sanitized ashby-shaped application form EMBEDDED in an iframe — a
+  company's own careers page hosting the ATS's form via a widget/embed,
+  rather than the form rendering directly on the top document. The
+  fill_text / upload_file / paste_textarea / select_option / read_value /
+  scan_required_fields primitives all fall through top-document -> each
+  same-origin iframe (Task 1's frame-piercing) — this fixture is what
+  proves that fallback actually reaches a real iframe's srcdoc document
+  under real Chromium, not just a stub Page.
+
+  The top document deliberately has NO matching form fields of its own —
+  every fill in this fixture MUST resolve via the iframe fallback path or
+  the test fails. The iframe's inner markup is byte-identical to
+  tests/fixtures/ats_html/ashby/standard.html's <form>...</form> block
+  (see the generator invocation in the Task 6 report for how this file was
+  produced) — same selector surface, same deliberate label/aria/placeholder
+  fallback shapes, same intentionally-unmapped required custom question.
+-->
+<html>
+<head><title>Careers — Embedded Systems Intern at Acme Robotics (fixture, embed)</title></head>
+<body>
+  <h1>Embedded Systems Intern — Acme Robotics</h1>
+  <p>This position is hosted through our embedded application widget below.</p>
+
+  <iframe id="ats-embed" title="Application form" width="100%" height="900" srcdoc="&lt;html&gt;&lt;body&gt;
+&lt;form id=&quot;application-form&quot; action=&quot;javascript:void(0)&quot; method=&quot;post&quot;&gt;
+    &lt;p&gt;
+      &lt;label&gt;First Name
+        &lt;input type=&quot;text&quot; required&gt;
+      &lt;/label&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;input type=&quot;text&quot; aria-label=&quot;Last Name&quot; required&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;input type=&quot;email&quot; placeholder=&quot;Email&quot; required&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;ab_phone&quot;&gt;Phone&lt;/label&gt;
+      &lt;input id=&quot;ab_phone&quot; type=&quot;tel&quot; required&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;!-- No label, no aria-label, no placeholder — only the fuzzy
+           input[name*=&quot;linkedin_url&quot;] selector reaches this field. --&gt;
+      &lt;input name=&quot;linkedin_url&quot; type=&quot;url&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;ab_location&quot;&gt;Current Location&lt;/label&gt;
+      &lt;input id=&quot;ab_location&quot; type=&quot;text&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;ab_company&quot;&gt;Current Company&lt;/label&gt;
+      &lt;input id=&quot;ab_company&quot; type=&quot;text&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;ab_title&quot;&gt;Current Title&lt;/label&gt;
+      &lt;input id=&quot;ab_title&quot; type=&quot;text&quot;&gt;
+    &lt;/p&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;ab_resume&quot;&gt;Resume&lt;/label&gt;
+      &lt;input id=&quot;ab_resume&quot; type=&quot;file&quot; accept=&quot;application/pdf&quot; required&gt;
+    &lt;/p&gt;
+
+    &lt;!-- Custom question textarea BEFORE the cover-letter box, mislabeled
+         relative to &quot;cover&quot;/&quot;letter&quot;. --&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;ab_custom_q&quot;&gt;What excites you about embedded systems?&lt;/label&gt;
+      &lt;textarea id=&quot;ab_custom_q&quot; rows=&quot;4&quot; cols=&quot;60&quot;&gt;&lt;/textarea&gt;
+    &lt;/p&gt;
+
+    &lt;!-- Cover letter box: only the associated &lt;label&gt; resolves it, via
+         the scoped bare &quot;textarea&quot; catch-all. --&gt;
+    &lt;p&gt;
+      &lt;label for=&quot;ab_cover&quot;&gt;Cover letter — anything else you&#x27;d like to share?&lt;/label&gt;
+      &lt;textarea id=&quot;ab_cover&quot; rows=&quot;6&quot; cols=&quot;60&quot;&gt;&lt;/textarea&gt;
+    &lt;/p&gt;
+
+    &lt;p&gt;
+      &lt;label for=&quot;ab_work_auth&quot;&gt;Are you authorized to work in this country?&lt;/label&gt;
+      &lt;select id=&quot;ab_work_auth&quot; aria-required=&quot;true&quot; aria-label=&quot;Are you authorized to work in this country?&quot; required&gt;
+        &lt;option value=&quot;&quot;&gt;Select...&lt;/option&gt;
+        &lt;option value=&quot;yes&quot;&gt;Yes&lt;/option&gt;
+        &lt;option value=&quot;no&quot;&gt;No&lt;/option&gt;
+      &lt;/select&gt;
+    &lt;/p&gt;
+
+    &lt;p&gt;&lt;button type=&quot;submit&quot; id=&quot;ab-submit&quot;&gt;Submit Application&lt;/button&gt;&lt;/p&gt;
+
+    &lt;!-- Mimics a real ATS&#x27;s own frontend JS: render the selected
+         filename into the DOM on the file input&#x27;s change event, so
+         _wait_for_upload_confirmation&#x27;s `text={filename}` poll has
+         something to find. --&gt;
+    &lt;script&gt;
+      document.querySelectorAll(&#x27;input[type=&quot;file&quot;]&#x27;).forEach(function (inp) {
+        inp.addEventListener(&#x27;change&#x27;, function () {
+          if (inp.files &amp;&amp; inp.files.length &gt; 0) {
+            var span = document.createElement(&#x27;span&#x27;);
+            span.className = &#x27;selected-file-name&#x27;;
+            span.textContent = &#x27;Selected file: &#x27; + inp.files[0].name;
+            inp.insertAdjacentElement(&#x27;afterend&#x27;, span);
+          }
+        });
+      });
+    &lt;/script&gt;
+  &lt;/form&gt;
+&lt;/body&gt;&lt;/html&gt;"></iframe>
+</body>
+</html>

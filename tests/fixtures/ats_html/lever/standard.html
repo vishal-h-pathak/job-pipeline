@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<!--
+  Sanitized, hand-constructed Lever-shaped application form.
+
+  Structural markup mirrors field_maps.yml's "lever" spec list. No real
+  company name, no PII. Cover-letter box uses `name="comments"` — the
+  literal, direct-match selector real Lever forms use for the "Additional
+  Information" box (which the codebase treats as the cover-letter target,
+  see field_maps.yml's lever comment) — this fixture exercises the DIRECT
+  name-match branch of the textarea chain, complementing Greenhouse/Ashby's
+  scoped-fallback coverage.
+
+  Also carries one required custom "card" question (Lever's own per-card
+  question shape, `name="cards[<uuid>][field0]"`) that field_maps.yml has
+  never heard of — the DOM-required-set widening must catch it.
+
+  The inline <script> before </form> mimics real ATS frontend behavior:
+  most Greenhouse/Lever/Ashby forms render the selected filename into the
+  DOM on the file input's `change` event — this is the DOM evidence
+  `_common._wait_for_upload_confirmation` polls for (`text={filename}`)
+  to confirm an upload was actually accepted, not just that
+  `set_input_files` didn't raise.
+-->
+<html>
+<head><title>Apply — Field Robotics Technician at Acme Robotics (fixture)</title></head>
+<body>
+  <h1>Field Robotics Technician — Acme Robotics</h1>
+
+  <form id="application-form" action="javascript:void(0)" method="post">
+    <p>
+      <label for="lv_name">Full Name*</label>
+      <input id="lv_name" name="name" type="text" required>
+    </p>
+    <p>
+      <label for="lv_email">Email*</label>
+      <input id="lv_email" name="email" type="email" required>
+    </p>
+    <p>
+      <label for="lv_phone">Phone*</label>
+      <input id="lv_phone" type="tel" required>
+    </p>
+    <p>
+      <label for="lv_linkedin">LinkedIn URL</label>
+      <input id="lv_linkedin" name="urls[LinkedIn]" type="url">
+    </p>
+    <p>
+      <label for="lv_location">Current Location</label>
+      <input id="lv_location" name="location" type="text">
+    </p>
+    <p>
+      <label for="lv_org">Current Company</label>
+      <input id="lv_org" name="org" type="text">
+    </p>
+    <p>
+      <label for="lv_title">Current Title</label>
+      <input id="lv_title" name="title" type="text">
+    </p>
+    <p>
+      <label for="lv_resume">Resume*</label>
+      <input id="lv_resume" name="resume" type="file" accept=".pdf,.doc,.docx" required>
+    </p>
+    <p>
+      <label for="lv_comments">Additional Information</label>
+      <textarea id="lv_comments" name="comments" rows="6" cols="60"></textarea>
+    </p>
+
+    <fieldset>
+      <legend>What is your desired start date?*</legend>
+      <input type="text" name="cards[9f2c-4a11][field0]" aria-required="true"
+             aria-label="What is your desired start date?">
+    </fieldset>
+
+    <p><button type="submit" id="lv-submit">Submit Application</button></p>
+
+    <!-- Mimics a real ATS's own frontend JS: render the selected
+         filename into the DOM on the file input's change event, so
+         _wait_for_upload_confirmation's `text={filename}` poll has
+         something to find. -->
+    <script>
+      document.querySelectorAll('input[type="file"]').forEach(function (inp) {
+        inp.addEventListener('change', function () {
+          if (inp.files && inp.files.length > 0) {
+            var span = document.createElement('span');
+            span.className = 'selected-file-name';
+            span.textContent = 'Selected file: ' + inp.files[0].name;
+            inp.insertAdjacentElement('afterend', span);
+          }
+        });
+      });
+    </script>
+  </form>
+</body>
+</html>

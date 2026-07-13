@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<!--
+  Sanitized, hand-constructed Greenhouse-shaped application form.
+
+  Structural markup mirrors what jobpipe/submit/adapters/prepare_dom/
+  field_maps.yml's "greenhouse" spec list actually probes for — see
+  tests/test_ats_html_fixtures.py for the exact assertions this fixture is
+  meant to satisfy. No real company name, no PII: "Acme Robotics" is a
+  placeholder employer, all copy is generic.
+
+  Deliberately exercises TWO selector-chain shapes:
+    - Phone leads with the `input[type="tel"]:visible` intl-tel-input
+      anchor (no `name="job_application[phone]"` at all) — proves the
+      explicit-selectors-lead-before-name-attr chain construction.
+    - Cover letter has NO name/aria-label/placeholder mentioning
+      "cover" — it only resolves via the scoped bare `textarea` catch-all,
+      which requires the resolved DOM label (here, the associated
+      `<label for=...>` text — see `_common._resolve_dom_label` /
+      `_label_matches_any`) to itself contain "cover" or "letter" (the
+      scoped needle check). An earlier, unrelated custom-question textarea
+      sits before it in DOM order to prove the scoped multi-textarea
+      enumeration (Task 3 / #3) skips it and picks the CORRECT later
+      textarea rather than stopping at the first one.
+
+  Also carries one required custom question (radio group, aria-required)
+  that field_maps.yml has never heard of — the DOM-required-set widening
+  (scan_required_fields) must catch it and keep `success` False even
+  though every YAML-declared field fills cleanly.
+
+  The inline <script> before </form> mimics real ATS frontend behavior:
+  most Greenhouse/Lever/Ashby forms render the selected filename into the
+  DOM on the file input's `change` event (a styled "selected file" chip
+  or sibling text) — this is the DOM evidence
+  `_common._wait_for_upload_confirmation` polls for (`text={filename}`)
+  to confirm an upload was actually accepted, not just that
+  `set_input_files` didn't raise. A static fixture with no such behavior
+  would make every upload time out "unconfirmed" even though the fixture
+  intends the upload to succeed.
+-->
+<html>
+<head><title>Apply — Robotics Engineer at Acme Robotics (fixture)</title></head>
+<body>
+  <h1>Robotics Engineer — Acme Robotics</h1>
+
+  <form id="application-form" action="javascript:void(0)" method="post">
+    <p>
+      <label for="gh_first_name">First Name*</label>
+      <input id="gh_first_name" name="job_application[first_name]" type="text" required>
+    </p>
+    <p>
+      <label for="gh_last_name">Last Name*</label>
+      <input id="gh_last_name" name="job_application[last_name]" type="text" required>
+    </p>
+    <p>
+      <label for="gh_email">Email*</label>
+      <input id="gh_email" name="job_application[email]" type="email" required>
+    </p>
+    <p>
+      <label for="gh_phone">Phone*</label>
+      <!-- intl-tel-input style: no job_application[phone] name at all -->
+      <input id="gh_phone" type="tel" required>
+    </p>
+    <p>
+      <label for="gh_linkedin">LinkedIn URL</label>
+      <input id="gh_linkedin" name="job_application[urls][LinkedIn]" type="url">
+    </p>
+    <p>
+      <label for="gh_location">Location</label>
+      <input id="gh_location" name="job_application[location]" type="text">
+    </p>
+    <p>
+      <label for="gh_company">Current Company</label>
+      <input id="gh_company" name="job_application[company]" type="text">
+    </p>
+    <p>
+      <label for="gh_title">Current Title</label>
+      <input id="gh_title" name="job_application[title]" type="text">
+    </p>
+    <p>
+      <label for="gh_resume">Resume/CV*</label>
+      <input id="gh_resume" name="job_application[resume]" type="file" accept=".pdf,.doc,.docx" required>
+    </p>
+
+    <!-- Custom question textarea rendered BEFORE the cover letter box —
+         mislabeled relative to "cover"/"letter", proves the scoped
+         catch-all does not stop at the first textarea it sees. -->
+    <p>
+      <label for="gh_custom_q">Why are you interested in robotics?</label>
+      <textarea id="gh_custom_q" name="job_application[answers_attributes][1][text_value]" rows="4" cols="60"></textarea>
+    </p>
+
+    <!-- Cover letter box: no name/aria-label/placeholder mentioning
+         cover/letter at all — only the associated <label> resolves it,
+         via the scoped bare "textarea" catch-all. -->
+    <p>
+      <label for="gh_cover">Cover letter (optional)</label>
+      <textarea id="gh_cover" rows="6" cols="60"></textarea>
+    </p>
+
+    <fieldset>
+      <legend>Are you legally authorized to work in the US?*</legend>
+      <label>
+        <input type="radio" name="job_application[answers_attributes][0][text_value]"
+               value="Yes" aria-required="true"
+               aria-label="Are you legally authorized to work in the US?"> Yes
+      </label>
+      <label>
+        <input type="radio" name="job_application[answers_attributes][0][text_value]"
+               value="No"> No
+      </label>
+    </fieldset>
+
+    <p><button type="submit" id="gh-submit">Submit Application</button></p>
+
+    <!-- Mimics a real ATS's own frontend JS: render the selected
+         filename into the DOM on the file input's change event, so
+         _wait_for_upload_confirmation's `text={filename}` poll has
+         something to find. -->
+    <script>
+      document.querySelectorAll('input[type="file"]').forEach(function (inp) {
+        inp.addEventListener('change', function () {
+          if (inp.files && inp.files.length > 0) {
+            var span = document.createElement('span');
+            span.className = 'selected-file-name';
+            span.textContent = 'Selected file: ' + inp.files[0].name;
+            inp.insertAdjacentElement('afterend', span);
+          }
+        });
+      });
+    </script>
+  </form>
+</body>
+</html>

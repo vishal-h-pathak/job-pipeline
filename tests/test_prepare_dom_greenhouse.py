@@ -47,7 +47,7 @@ class _StubLocator:
     def set_input_files(self, file_path: str) -> None:
         self.page.uploads.append((self.selector, file_path))
 
-    def input_value(self) -> str:
+    def input_value(self, timeout: int = 1000) -> str:
         return self.page.values.get(self.selector, "")
 
     def get_attribute(self, name: str):

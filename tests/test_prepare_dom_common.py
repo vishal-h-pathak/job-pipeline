@@ -13,6 +13,7 @@ from typing import Optional
 
 from jobpipe.submit.adapters.prepare_dom._common import (
     build_field_map,
+    dom_field_has_value,
     fill_text,
     label_selectors,
     load_cover_letter,
@@ -108,7 +109,7 @@ class _StubLocator:
         if not self.discard_fill:
             self.page.values[self.selector] = value
 
-    def input_value(self) -> str:
+    def input_value(self, timeout: int = 1000) -> str:
         return self.page.values.get(self.selector, "")
 
     def get_attribute(self, name: str) -> Optional[str]:
@@ -573,7 +574,7 @@ class _ComboContainerLocator:
             return ""
         return self.page.container_text
 
-    def input_value(self) -> str:
+    def input_value(self, timeout: int = 1000) -> str:
         if not self.page.container_accepts_fill:
             raise RuntimeError(
                 "Node is not an <input>, <textarea> or <select> element"
@@ -860,7 +861,7 @@ def test_read_value_returns_empty_string_when_nothing_matches():
 
 def test_read_value_swallows_exceptions_per_selector():
     class _BoomLocator:
-        def input_value(self):
+        def input_value(self, timeout: int = 1000):
             raise RuntimeError("not an input element")
 
         @property
@@ -967,7 +968,12 @@ class _ReqPage:
 def test_scan_required_fields_resolves_label_via_aria_label():
     page = _ReqPage([{"attrs": {"aria-label": "Willing to relocate?", "id": "q1"}}])
     result = scan_required_fields(page)
-    assert result == [{"label": "Willing to relocate?", "selectors": ['[id="q1"]']}]
+    # "kind" (Task 6 finding fix): "value" for a plain text-like element —
+    # only radio/checkbox inputs get "checked" (see _resolve_dom_kind).
+    assert result == [{
+        "label": "Willing to relocate?", "selectors": ['[id="q1"]'],
+        "kind": "value",
+    }]
 
 
 def test_scan_required_fields_falls_back_to_associated_label_element():
@@ -976,17 +982,74 @@ def test_scan_required_fields_falls_back_to_associated_label_element():
         label_by_id={"q2": "How did you hear about us?"},
     )
     result = scan_required_fields(page)
-    assert result == [
-        {"label": "How did you hear about us?", "selectors": ['[id="q2"]']}
-    ]
+    assert result == [{
+        "label": "How did you hear about us?", "selectors": ['[id="q2"]'],
+        "kind": "value",
+    }]
 
 
 def test_scan_required_fields_falls_back_to_name_attribute():
     page = _ReqPage([{"attrs": {"name": "custom_question_1"}}])
     result = scan_required_fields(page)
-    assert result == [
-        {"label": "custom_question_1", "selectors": ['[name="custom_question_1"]']}
-    ]
+    assert result == [{
+        "label": "custom_question_1", "selectors": ['[name="custom_question_1"]'],
+        "kind": "value",
+    }]
+
+
+def test_scan_required_fields_marks_radio_input_as_checked_kind():
+    """Task 6 finding fix: a required RADIO input's ``kind`` must be
+    ``"checked"``, not ``"value"`` — its static ``value`` attribute
+    ("Yes"/"No") is present whether or not it's actually selected, so a
+    plain value re-read would always report the group as "already
+    answered" regardless of what the applicant picked."""
+    page = _ReqPage([{
+        "attrs": {
+            "type": "radio", "aria-label": "Authorized to work?", "id": "q1",
+        },
+    }])
+    result = scan_required_fields(page)
+    assert result == [{
+        "label": "Authorized to work?", "selectors": ['[id="q1"]'],
+        "kind": "checked",
+    }]
+
+
+def test_scan_required_fields_marks_checkbox_input_as_checked_kind():
+    page = _ReqPage([{
+        "attrs": {"type": "checkbox", "aria-label": "I agree", "id": "q1"},
+    }])
+    result = scan_required_fields(page)
+    assert result[0]["kind"] == "checked"
+
+
+# ── dom_field_has_value (Task 6 finding fix) ────────────────────────────────
+
+def test_dom_field_has_value_checked_kind_true_when_checked_selector_matches():
+    page = _StubPage({'[name="q"]:checked': {"count": 1}})
+    entry = {"selectors": ['[name="q"]'], "kind": "checked"}
+    assert dom_field_has_value(page, entry) is True
+
+
+def test_dom_field_has_value_checked_kind_false_when_nothing_checked():
+    """The unchecked-radio-group scenario the fix targets: a selector that
+    matches the group (some option exists) but ``:checked`` matches
+    nothing — must report "no value", not fall back to reading a static
+    value attribute off whichever option happens to be `.first`."""
+    page = _StubPage({'[name="q"]:checked': {"count": 0}})
+    entry = {"selectors": ['[name="q"]'], "kind": "checked"}
+    assert dom_field_has_value(page, entry) is False
+
+
+def test_dom_field_has_value_value_kind_delegates_to_read_value():
+    page = _StubPage({"#q": {"visible": True}})
+    page.values["#q"] = "Atlanta, GA"
+    entry = {"selectors": ["#q"], "kind": "value"}
+    assert dom_field_has_value(page, entry) is True
+
+
+def test_dom_field_has_value_no_selectors_is_false():
+    assert dom_field_has_value(_StubPage({}), {"selectors": [], "kind": "value"}) is False
 
 
 def test_scan_required_fields_dedupes_by_resolved_label():

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<!--
+  Sanitized, hand-constructed Ashby-shaped application form.
+
+  Ashby has no canonical name map (React app, no stable `name` attrs on
+  most fields) — field_maps.yml relies on label/aria/placeholder fallbacks
+  plus the two `input[name*=...]` fuzzy selectors
+  (`defaults: {fuzzy_name_fallback: true}`). ``_common.label_selectors``
+  only matches an ``<input>`` that is a DESCENDANT of a ``<label>`` (either
+  ``label:has-text(...) input`` or the ``aria-label``/``placeholder``
+  attribute selectors) — a sibling ``<label for="x">`` + ``<input id="x">``
+  pair (the pattern Greenhouse/Lever use, where the `name` attr chain link
+  matches first anyway) does NOT resolve through this chain, so this
+  fixture deliberately exercises three DIFFERENT real-world shapes per the
+  adapter's own docstring ("Most labels are explicit <label> elements;
+  some use aria-label; some use placeholders"):
+    - First Name: label WRAPS the input (`label:has-text() input`).
+    - Last Name: `aria-label` attribute, no wrapping label.
+    - Email: `placeholder` attribute, no label/aria at all.
+    - Phone: the phone-specific chain (`input[type="tel"]:visible`).
+    - LinkedIn URL: NO label/aria/placeholder at all — only the fuzzy
+      `input[name*="linkedin_url"]` fallback reaches it.
+  Location/Company/Title are left with no matchable selector on purpose
+  (structurally present, as a real form would have them, but no
+  form_answers value is supplied for them in the test — optional fields
+  with no value are simply skipped, not failures).
+
+  Cover-letter textarea and the custom question use the SAME scoped
+  bare-"textarea" catch-all shape as the Greenhouse fixture (label
+  association via `label[for=id]`, resolved by `_resolve_dom_label`, which
+  IS sibling-aware — a different resolution path than `label_selectors`).
+
+  A required native <select> "Work Authorization" question that
+  field_maps.yml has never heard of (no `combobox` specs exist in the live
+  YAML as of this task) exercises the DOM-required-set widening.
+-->
+<html>
+<head><title>Apply — Embedded Systems Intern at Acme Robotics (fixture)</title></head>
+<body>
+  <h1>Embedded Systems Intern — Acme Robotics</h1>
+
+  <form id="application-form" action="javascript:void(0)" method="post">
+    <p>
+      <label>First Name
+        <input type="text" required>
+      </label>
+    </p>
+    <p>
+      <input type="text" aria-label="Last Name" required>
+    </p>
+    <p>
+      <input type="email" placeholder="Email" required>
+    </p>
+    <p>
+      <label for="ab_phone">Phone</label>
+      <input id="ab_phone" type="tel" required>
+    </p>
+    <p>
+      <!-- No label, no aria-label, no placeholder — only the fuzzy
+           input[name*="linkedin_url"] selector reaches this field. -->
+      <input name="linkedin_url" type="url">
+    </p>
+    <p>
+      <label for="ab_location">Current Location</label>
+      <input id="ab_location" type="text">
+    </p>
+    <p>
+      <label for="ab_company">Current Company</label>
+      <input id="ab_company" type="text">
+    </p>
+    <p>
+      <label for="ab_title">Current Title</label>
+      <input id="ab_title" type="text">
+    </p>
+    <p>
+      <label for="ab_resume">Resume</label>
+      <input id="ab_resume" type="file" accept="application/pdf" required>
+    </p>
+
+    <!-- Custom question textarea BEFORE the cover-letter box, mislabeled
+         relative to "cover"/"letter". -->
+    <p>
+      <label for="ab_custom_q">What excites you about embedded systems?</label>
+      <textarea id="ab_custom_q" rows="4" cols="60"></textarea>
+    </p>
+
+    <!-- Cover letter box: only the associated <label> resolves it, via
+         the scoped bare "textarea" catch-all. -->
+    <p>
+      <label for="ab_cover">Cover letter — anything else you'd like to share?</label>
+      <textarea id="ab_cover" rows="6" cols="60"></textarea>
+    </p>
+
+    <p>
+      <label for="ab_work_auth">Are you authorized to work in this country?</label>
+      <select id="ab_work_auth" aria-required="true" aria-label="Are you authorized to work in this country?" required>
+        <option value="">Select...</option>
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+      </select>
+    </p>
+
+    <p><button type="submit" id="ab-submit">Submit Application</button></p>
+
+    <!-- Mimics a real ATS's own frontend JS: render the selected
+         filename into the DOM on the file input's change event, so
+         _wait_for_upload_confirmation's `text={filename}` poll has
+         something to find. -->
+    <script>
+      document.querySelectorAll('input[type="file"]').forEach(function (inp) {
+        inp.addEventListener('change', function () {
+          if (inp.files && inp.files.length > 0) {
+            var span = document.createElement('span');
+            span.className = 'selected-file-name';
+            span.textContent = 'Selected file: ' + inp.files[0].name;
+            inp.insertAdjacentElement('afterend', span);
+          }
+        });
+      });
+    </script>
+  </form>
+</body>
+</html>

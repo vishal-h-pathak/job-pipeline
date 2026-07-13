@@ -96,6 +96,25 @@ def _iter_frame_locators(page: Any, selector: str) -> list:
     return locators
 
 
+def _iter_frame_roots(page: Any) -> list:
+    """Return each iframe's own ``FrameLocator`` (not scoped to any
+    selector) in DOM order — the "same document as this element" root
+    ``_resolve_dom_label`` needs to find a ``<label for=id>`` that lives
+    inside the iframe rather than the top document. Same best-effort
+    swallow-and-degrade contract as ``_iter_frame_locators``."""
+    try:
+        frame_count = page.locator("iframe").count()
+    except Exception:
+        return []
+    roots = []
+    for i in range(frame_count):
+        try:
+            roots.append(page.frame_locator("iframe").nth(i))
+        except Exception:
+            continue
+    return roots
+
+
 # ── Field-fill primitives (sync, swallow Playwright exceptions per-selector) ─
 #
 # Task 3 (fill_report / #1): every primitive below gained an optional
@@ -285,7 +304,7 @@ def upload_file(
 def _fill_first_scoped_textarea(
     locator: Any, text: str, needles: tuple[str, ...], *,
     page: Any, log: logging.Logger, selector: str, frame_suffix: str,
-    misses: list | None,
+    misses: list | None, label_root: Any = None,
 ) -> bool:
     """Enumerate EVERY element behind ``locator`` — mirrors
     ``scan_required_fields``'s ``count()`` + ``nth(i)`` pattern rather than
@@ -306,6 +325,12 @@ def _fill_first_scoped_textarea(
     as every other primitive in this module. A total ``count()`` failure
     (the selector itself is invalid, or a broken locator) is likewise
     swallowed and reported as a single miss rather than propagating.
+
+    ``label_root`` — the ``page`` (top document) or that iframe's own
+    ``FrameLocator`` (see ``_iter_frame_roots``) — is forwarded to
+    ``_label_matches_any``/``_resolve_dom_label`` so a ``<label for=id>``
+    lookup for a frame-embedded candidate searches that SAME frame's
+    document, not always the top page.
     """
     try:
         count = locator.count()
@@ -318,7 +343,7 @@ def _fill_first_scoped_textarea(
             el = locator.nth(i)
             if not el.is_visible(timeout=1000):
                 continue
-            if not _label_matches_any(page, el, needles):
+            if not _label_matches_any(page, el, needles, label_root=label_root):
                 continue
             el.click()
             el.fill(text)
@@ -381,11 +406,20 @@ def paste_textarea(
                 misses=misses,
             ):
                 return True
-            for frame_loc in _iter_frame_locators(page, selector):
+            for frame_root in _iter_frame_roots(page):
+                try:
+                    frame_loc = frame_root.locator(selector)
+                except Exception as exc:
+                    if misses is not None:
+                        misses.append(
+                            {"selector": selector, "error": type(exc).__name__}
+                        )
+                    continue
                 if _fill_first_scoped_textarea(
                     frame_loc, text, scoped_needles,
                     page=page, log=log, selector=selector,
                     frame_suffix=" (iframe)", misses=misses,
+                    label_root=frame_root,
                 ):
                     return True
             continue
@@ -749,7 +783,8 @@ def wait_for_form_ready(
 # demoted back to unfilled.
 
 def _read_first_scoped_textarea_value(
-    locator: Any, page: Any, needles: tuple[str, ...],
+    locator: Any, page: Any, needles: tuple[str, ...], *,
+    label_root: Any = None,
 ) -> str:
     """Re-read the value of the first candidate behind ``locator`` — via
     ``count()`` + ``nth(i)``, the SAME enumeration
@@ -766,6 +801,11 @@ def _read_first_scoped_textarea_value(
     ``input_value()`` raising for a non-input element) is swallowed and the
     next candidate is tried; a total ``count()`` failure or no match at all
     returns ``""``, same as the rest of this module's exception contract.
+
+    ``label_root`` is forwarded to ``_label_matches_any`` — see
+    ``_fill_first_scoped_textarea``'s docstring for why a frame-embedded
+    candidate needs its OWN frame as the label-resolution root, not always
+    the top page.
     """
     try:
         count = locator.count()
@@ -774,7 +814,7 @@ def _read_first_scoped_textarea_value(
     for i in range(count):
         try:
             el = locator.nth(i)
-            if not _label_matches_any(page, el, needles):
+            if not _label_matches_any(page, el, needles, label_root=label_root):
                 continue
             value = el.input_value() or ""
         except Exception:
@@ -826,22 +866,26 @@ def read_value(page: Any, selectors: list[str],
             )
             if value:
                 return value
-            for frame_loc in _iter_frame_locators(page, selector):
+            for frame_root in _iter_frame_roots(page):
+                try:
+                    frame_loc = frame_root.locator(selector)
+                except Exception:
+                    continue
                 value = _read_first_scoped_textarea_value(
-                    frame_loc, page, scoped_needles,
+                    frame_loc, page, scoped_needles, label_root=frame_root,
                 )
                 if value:
                     return value
             continue
         try:
-            value = page.locator(selector).first.input_value()
+            value = page.locator(selector).first.input_value(timeout=1000)
         except Exception:
             value = ""
         if value:
             return value
         for frame_loc in _iter_frame_locators(page, selector):
             try:
-                value = frame_loc.first.input_value()
+                value = frame_loc.first.input_value(timeout=1000)
             except Exception:
                 continue
             if value:
@@ -849,10 +893,23 @@ def read_value(page: Any, selectors: list[str],
     return ""
 
 
-def _resolve_dom_label(page: Any, el: Any) -> str:
+def _resolve_dom_label(page: Any, el: Any, *, label_root: Any = None) -> str:
     """Best-effort human label for a required-flagged DOM element: prefer
     ``aria-label`` / ``placeholder`` / ``name``, then fall back to the text
-    of an associated ``<label for=id>``."""
+    of an associated ``<label for=id>``.
+
+    ``label_root`` is the object whose ``.locator()`` reaches the SAME
+    document ``el`` lives in — ``page`` for a top-document element, or the
+    owning ``FrameLocator`` for an element found inside an iframe (see
+    ``_iter_frame_roots``). Defaults to ``page`` (the pre-Task-6 behavior,
+    correct for every top-document caller — ``scan_required_fields`` is
+    still top-document-only and unaffected). Querying ``page.locator(...)``
+    for a ``<label for=id>`` that only exists inside an iframe's own
+    document would always find zero matches — this is what let a
+    frame-embedded, ``label[for]``-only-resolvable textarea silently fail
+    the scoped cover-letter match despite being genuinely reachable via
+    Task 1's frame-piercing.
+    """
     for attr in ("aria-label", "placeholder", "name"):
         try:
             value = el.get_attribute(attr)
@@ -866,7 +923,8 @@ def _resolve_dom_label(page: Any, el: Any) -> str:
         el_id = None
     if el_id:
         try:
-            lbl = page.locator(f'label[for="{el_id}"]').first
+            root = label_root if label_root is not None else page
+            lbl = root.locator(f'label[for="{el_id}"]').first
             if lbl.count() > 0:
                 text = lbl.text_content()
                 if text and text.strip():
@@ -876,15 +934,17 @@ def _resolve_dom_label(page: Any, el: Any) -> str:
     return ""
 
 
-def _label_matches_any(page: Any, el: Any, needles: tuple[str, ...]) -> bool:
+def _label_matches_any(page: Any, el: Any, needles: tuple[str, ...], *,
+                       label_root: Any = None) -> bool:
     """True if ``el``'s resolved label (``_resolve_dom_label`` — reused
     as-is, not re-implemented) contains at least one of ``needles``,
     case-insensitively. Used by ``paste_textarea``'s ``scoped_needles`` to
     stop a bare catch-all ``"textarea"`` selector from grabbing the wrong
     (unlabeled or custom-question) textarea on a form with no properly
     labeled cover-letter box. An unresolvable label (``""``) never matches
-    — no label text means no needle can be found in it."""
-    label = _resolve_dom_label(page, el)
+    — no label text means no needle can be found in it. ``label_root`` is
+    forwarded to ``_resolve_dom_label`` — see its docstring."""
+    label = _resolve_dom_label(page, el, label_root=label_root)
     if not label:
         return False
     low = label.lower()
@@ -910,6 +970,26 @@ def _resolve_dom_selector(el: Any) -> str:
     return ""
 
 
+def _resolve_dom_kind(el: Any) -> str:
+    """``"checked"`` for a radio/checkbox input, else ``"value"``.
+
+    Radio-group required questions share one ``name`` attribute across
+    every option — ``_resolve_dom_selector`` necessarily builds a selector
+    that matches ALL of them, not just the one the applicant picked. A
+    radio/checkbox's ``value`` attribute is a static label ("Yes"/"No"/
+    "on"), present whether or not the input is checked — reading it back
+    via ``input_value()`` would report a required radio question as
+    "already answered" even when nothing was ever selected. ``"checked"``
+    tells the caller to test for a checked match (``{selector}:checked``)
+    instead of reading a value back.
+    """
+    try:
+        input_type = (el.get_attribute("type") or "").lower()
+    except Exception:
+        input_type = ""
+    return "checked" if input_type in ("radio", "checkbox") else "value"
+
+
 def scan_required_fields(page: Any, *,
                          log: logging.Logger | None = None) -> list[dict]:
     """Scan the LIVE DOM for every element flagged required (the
@@ -924,7 +1004,9 @@ def scan_required_fields(page: Any, *,
     scan failure (unsupported selector, detached page) degrades to "no
     DOM-required fields found" rather than raising.
 
-    Returns ``[{"label": str, "selectors": [selector]}, ...]``.
+    Returns ``[{"label": str, "selectors": [selector], "kind": "value" |
+    "checked"}, ...]`` — see :func:`_resolve_dom_kind` and
+    :func:`dom_field_has_value` for what ``kind`` controls.
     """
     log = log or logger
     selector = '[required], [aria-required="true"]'
@@ -933,21 +1015,57 @@ def scan_required_fields(page: Any, *,
     except Exception:
         return []
 
-    found: dict[str, str] = {}
+    found: dict[str, tuple[str, str]] = {}
     for i in range(count):
         try:
             el = page.locator(selector).nth(i)
             label = _resolve_dom_label(page, el)
             el_selector = _resolve_dom_selector(el)
+            kind = _resolve_dom_kind(el)
         except Exception:
             continue
         if label and label not in found:
-            found[label] = el_selector
+            found[label] = (el_selector, kind)
 
     return [
-        {"label": label, "selectors": [sel] if sel else []}
-        for label, sel in found.items()
+        {"label": label, "selectors": [sel] if sel else [], "kind": kind}
+        for label, (sel, kind) in found.items()
     ]
+
+
+def dom_field_has_value(page: Any, entry: dict, *,
+                        log: logging.Logger | None = None) -> bool:
+    """Does the DOM-discovered required field (a ``scan_required_fields``
+    entry) already have a value on the live page?
+
+    Branches on ``entry["kind"]`` (see :func:`_resolve_dom_kind`):
+      - ``"checked"`` — a radio/checkbox group; true iff ``{selector}:checked``
+        matches at least one element (native CSS pseudo-class, not a
+        Playwright extension — works identically to any other selector
+        here). ``count()`` on a selector with no match returns 0
+        immediately, no actionability wait, so this is never a hang risk.
+      - ``"value"`` (default, back-compat for any caller not setting
+        ``kind``) — the existing ``read_value`` re-read.
+    """
+    log = log or logger
+    selectors = entry.get("selectors") or []
+    if not selectors:
+        return False
+    if entry.get("kind") == "checked":
+        for selector in selectors:
+            try:
+                if page.locator(f"{selector}:checked").count() > 0:
+                    return True
+            except Exception:
+                continue
+            for frame_loc_page in _iter_frame_locators(page, f"{selector}:checked"):
+                try:
+                    if frame_loc_page.count() > 0:
+                        return True
+                except Exception:
+                    continue
+        return False
+    return bool(read_value(page, selectors, log=log))
 
 
 # ── Cover-letter source resolution ─────────────────────────────────────────

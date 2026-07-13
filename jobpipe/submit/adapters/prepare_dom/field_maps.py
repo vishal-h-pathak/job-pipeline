@@ -49,6 +49,8 @@ from ._common import (
     load_cover_letter,
     note_unfilled_custom_questions,
     paste_textarea,
+    read_value,
+    scan_required_fields,
     select_option,
     upload_file,
 )
@@ -145,10 +147,15 @@ def apply_field_map(
     skipped (mirrors the old ``if not value: continue``).
 
     Returns ``{"filled": [labels], "required_empty": [labels]}``:
-      - ``filled``  — labels whose primitive returned True, in fill order.
+      - ``filled``  — labels whose primitive returned True AND whose value
+        stuck on a DOM re-read (honest fill verification, #2 — a fill that
+        matched a selector but didn't stick, e.g. a React form discarding
+        ``.fill()``, no longer counts as filled). File uploads are exempt:
+        Playwright can't read an ``input[type=file]``'s value back, so they
+        keep the selector-matched contract ``upload_file`` already applies.
       - ``required_empty`` — labels of ``required`` specs that ended up empty
-        on the form (no value, or a value that matched no selector). This is
-        what the verification pass (#4 / Part B) reads.
+        on the form (no value, no matching selector, or a fill that didn't
+        stick). This is what the verification pass (#4 / Part B) reads.
     """
     log = log or logger
     filled: list[str] = []
@@ -171,10 +178,16 @@ def apply_field_map(
             ok = upload_file(page, chain, value, log=log)
         elif ftype == "textarea":
             ok = paste_textarea(page, chain, value, log=log)
+            if ok:
+                ok = bool(read_value(page, chain, log=log))
         elif ftype == "select":
             ok = select_option(page, chain, value, log=log)
+            if ok:
+                ok = bool(read_value(page, chain, log=log))
         else:  # text (default)
             ok = fill_text(page, chain, value, log=log)
+            if ok:
+                ok = bool(read_value(page, chain, log=log))
 
         if ok:
             filled.append(label)
@@ -207,8 +220,11 @@ def run_field_map_fill(
     ``value_overrides`` lets Lever force the full name into the Name / Full
     Name keys; ``note_custom_questions`` toggles the "N role-specific
     question(s) NOT auto-filled" note (Greenhouse / Lever emit it, Ashby did
-    not). ``success`` mirrors the old contract: at least one *standard* field
-    filled (resume / cover-letter fills don't count toward it).
+    not). ``success`` is the honest cleanliness gate (#2): the DOM's own
+    required-set (YAML-declared fields UNION whatever ``scan_required_fields``
+    finds live on the page, custom/role-specific questions included) has
+    zero entries left empty. Any required gap — YAML or DOM-only — routes to
+    the assisted-manual hand-off instead of ``awaiting_human_submit``.
     """
     log = log or logger
     notes_parts: list[str] = []
@@ -249,13 +265,39 @@ def run_field_map_fill(
     if note_custom_questions:
         note_unfilled_custom_questions(job, notes_parts)
 
+    # ── Form-derived required-set (honest verification, #2) ──────────────
+    # The YAML map only declares ~5 canonical identity fields required;
+    # scan the LIVE DOM for anything else the form itself flags required
+    # (aria-required, custom/role-specific questions) so "filled 5 of 5"
+    # can't render next to 10 unanswered required questions the field map
+    # never heard of.
+    yaml_required_labels = [
+        s.get("label") or s.get("key") for s in specs if s.get("required")
+    ]
+    dom_required = scan_required_fields(page, log=log)
+    tracked = set(yaml_required_labels)
+    all_required_labels = list(yaml_required_labels)
+    for entry in dom_required:
+        label = entry["label"]
+        if label in tracked:
+            continue
+        tracked.add(label)
+        all_required_labels.append(label)
+        value = (
+            read_value(page, entry["selectors"], log=log)
+            if entry["selectors"] else ""
+        )
+        if not value and label not in required_empty:
+            required_empty.append(label)
+
     screenshot_path = applicant.take_screenshot(page, label=screenshot_label)
     notes_parts.append(f"Screenshot: {screenshot_path}")
 
     return {
-        "success": len(std_filled) > 0,
+        "success": len(required_empty) == 0,
         "screenshot_path": screenshot_path,
         "notes": "\n".join(notes_parts),
         "fields_filled": std_filled,
         "required_empty": required_empty,
+        "required_total": len(all_required_labels),
     }

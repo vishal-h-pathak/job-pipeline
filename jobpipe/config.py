@@ -156,6 +156,15 @@ SUBMIT_POLL_INTERVAL_SECONDS: Final[int] = int(
     os.environ.get("SUBMIT_POLL_INTERVAL_SECONDS", "5")
 )
 
+# Decision-wait timeout (P0 hygiene #3): a forgotten pre-filled tab used to
+# serialize the whole prefilling queue behind it forever. Past this many
+# minutes with no terminal decision, ``_wait_for_human_decision`` screenshots,
+# notifies, closes the tab, and returns the row to ``prefilling`` so the queue
+# unblocks (the next catch-up / realtime event re-picks it up).
+JOBPIPE_DECISION_TIMEOUT_MINUTES: Final[float] = float(
+    os.environ.get("JOBPIPE_DECISION_TIMEOUT_MINUTES", "45")
+)
+
 
 # ── Submitter policy knobs ────────────────────────────────────────────────
 MAX_CONCURRENT_SUBMISSIONS: Final[int] = int(os.environ.get("MAX_CONCURRENT_SUBMISSIONS", "1"))

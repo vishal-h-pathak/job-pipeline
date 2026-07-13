@@ -377,10 +377,23 @@ def mark_awaiting_submit(job_id: str, screenshot_path: str = None,
     return update_job_status(job_id, "awaiting_human_submit", **extras)
 
 
-def record_prefill_verification(job_id: str, verification: dict) -> None:
+def record_prefill_verification(
+    job_id: str, verification: dict, attempt_n: int | None = None,
+) -> None:
     """Persist the Part B post-fill verification count to ``jobs.submission_log``
     (existing jsonb column) so the cockpit can render "filled X of Y" as a
     structured value, not just the free-text ``application_notes`` summary.
+
+    Hygiene #3: append/merge instead of clobber. The column used to be
+    overwritten wholesale on every call (``{"verification": verification}``),
+    which silently destroyed a prior attempt's verification the moment a
+    retry re-filled the same job. Now the latest verification still lives at
+    the top-level ``verification`` key (cockpit back-compat — it always
+    wants "the current state"), but each call additionally appends under
+    ``attempts.<attempt_n>`` so the history survives across retries. Any
+    other top-level keys already on the column are left untouched — the
+    browser-truth capture (:func:`record_attempt_truth`) writes to
+    ``application_attempts.notes`` instead, a different row entirely.
 
     Deliberately does NOT touch status or application_notes — those are written
     by ``mark_awaiting_submit`` (success) / ``assisted_manual_handoff``
@@ -388,11 +401,54 @@ def record_prefill_verification(job_id: str, verification: dict) -> None:
     has already left a reviewable tab open.
     """
     try:
-        _get_client().table("jobs").update(
-            {"submission_log": {"verification": verification}}
-        ).eq("id", job_id).execute()
+        client = _get_client()
+        existing = (
+            client.table("jobs").select("submission_log")
+            .eq("id", job_id).execute().data or []
+        )
+        current = (existing[0].get("submission_log") if existing else None) or {}
+        if not isinstance(current, dict):
+            current = {}
+        attempts_log = current.get("attempts")
+        if not isinstance(attempts_log, dict):
+            attempts_log = {}
+        key = str(attempt_n) if attempt_n is not None else "latest"
+        attempts_log[key] = verification
+        merged = {**current, "attempts": attempts_log, "verification": verification}
+        client.table("jobs").update({"submission_log": merged}).eq("id", job_id).execute()
     except Exception as exc:  # noqa: BLE001 — never raise out of the prefill path
         logger.warning("record_prefill_verification failed for %s: %s", job_id, exc)
+
+
+def record_attempt_truth(attempt_id: int, truth: dict) -> None:
+    """Append a ``truth`` key to an ``application_attempts`` row's notes
+    (P0 #1 — browser-truth capture: final URL, success/error signals,
+    screenshot key).
+
+    The truth capture happens AFTER ``close_attempt`` already closed the
+    row (the human's decision, and the evidence for it, only exist once
+    they've reached a terminal state), so this is a separate read-merge-write
+    rather than a field on ``close_attempt`` — it must not clobber whatever
+    ``close_attempt`` already wrote to ``notes``. Best-effort: never raises
+    out of the wait loop.
+    """
+    try:
+        client = _get_client()
+        existing = (
+            client.table("application_attempts").select("notes")
+            .eq("id", attempt_id).execute().data or []
+        )
+        current_notes = (existing[0].get("notes") if existing else None) or {}
+        if not isinstance(current_notes, dict):
+            current_notes = {}
+        current_notes["truth"] = truth
+        client.table("application_attempts").update(
+            {"notes": current_notes}
+        ).eq("id", attempt_id).execute()
+    except Exception as exc:  # noqa: BLE001 — never raise out of the wait loop
+        logger.warning(
+            "record_attempt_truth failed for attempt %s: %s", attempt_id, exc,
+        )
 
 
 def mark_skipped(job_id: str, reason: str = None) -> dict:

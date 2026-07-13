@@ -34,14 +34,24 @@ class _StubLocator:
     def count(self) -> int:
         return self._count
 
+    def nth(self, i: int) -> "_StubLocator":
+        return self
+
     def click(self) -> None:
         pass
 
     def fill(self, value: str) -> None:
         self.page.fills.append((self.selector, value))
+        self.page.values[self.selector] = value
 
     def set_input_files(self, file_path: str) -> None:
         self.page.uploads.append((self.selector, file_path))
+
+    def input_value(self) -> str:
+        return self.page.values.get(self.selector, "")
+
+    def get_attribute(self, name: str):
+        return None
 
 
 class _StubPage:
@@ -49,6 +59,7 @@ class _StubPage:
         self.behaviors = behaviors
         self.fills: list[tuple[str, str]] = []
         self.uploads: list[tuple[str, str]] = []
+        self.values: dict[str, str] = {}
 
     def locator(self, selector: str) -> _StubLocator:
         return _StubLocator(selector, self, **self.behaviors.get(selector, {}))

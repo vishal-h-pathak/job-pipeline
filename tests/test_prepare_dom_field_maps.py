@@ -23,6 +23,7 @@ from typing import Optional
 from jobpipe.submit.adapters.prepare_dom.field_maps import (
     apply_field_map,
     load_field_map,
+    run_field_map_fill,
 )
 
 
@@ -36,11 +37,20 @@ class _StubLocator:
         *,
         visible: bool = False,
         count: int = 0,
+        discard_fill: bool = False,
+        attrs: Optional[dict] = None,
     ):
         self.selector = selector
         self.page = page
         self.visible = visible
         self._count = count
+        # honest-fill-verification hook (P0 #2): when True, ``fill`` /
+        # ``select_option`` record the attempt but do NOT persist the value
+        # on the page — simulating a React form that silently discards a
+        # ``.fill()`` call. ``input_value()`` then reads back empty, which
+        # is exactly the "didn't stick" case the DOM re-read must catch.
+        self.discard_fill = discard_fill
+        self._attrs = attrs or {}
 
     @property
     def first(self):
@@ -52,17 +62,33 @@ class _StubLocator:
     def count(self) -> int:
         return self._count
 
+    def nth(self, i: int) -> "_StubLocator":
+        return self
+
     def click(self) -> None:
         pass
 
     def fill(self, value: str) -> None:
         self.page.fills.append((self.selector, value))
+        if not self.discard_fill:
+            self.page.values[self.selector] = value
 
     def set_input_files(self, file_path: str) -> None:
         self.page.uploads.append((self.selector, file_path))
 
     def select_option(self, value: str) -> None:
         self.page.selects.append((self.selector, value))
+        if not self.discard_fill:
+            self.page.values[self.selector] = value
+
+    def input_value(self) -> str:
+        return self.page.values.get(self.selector, "")
+
+    def get_attribute(self, name: str) -> Optional[str]:
+        return self._attrs.get(name)
+
+    def text_content(self) -> str:
+        return self._attrs.get("_text", "")
 
 
 class _StubPage:
@@ -75,6 +101,10 @@ class _StubPage:
         self.uploads: list[tuple[str, str]] = []
         self.selects: list[tuple[str, str]] = []
         self.locator_calls: list[str] = []
+        # Persists across separately-constructed _StubLocator instances for
+        # the same selector, so a later ``read_value`` call (a fresh
+        # ``page.locator(...)``) sees what an earlier ``fill()`` set.
+        self.values: dict[str, str] = {}
 
     def locator(self, selector: str) -> _StubLocator:
         self.locator_calls.append(selector)
@@ -284,3 +314,148 @@ def test_file_field_chain_is_explicit_selectors_only_no_label_fallback():
         'input[type="file"][name="resume"]',
         'input[type="file"]',
     ]
+
+
+# ── apply_field_map: honest fill verification (DOM re-read, P0 #2) ─────────
+
+def test_apply_field_map_counts_a_stuck_fill_as_filled():
+    """A fill that matched a selector AND persisted on the DOM re-read
+    counts as filled — the common (non-broken) case."""
+    page = _StubPage({'input[name="email"]': {"visible": True}})
+    specs = [{"key": "Email", "name": "email", "type": "text", "required": True}]
+    result = apply_field_map(page, specs, {"Email": "a@b.invalid"})
+    assert result["filled"] == ["Email"]
+    assert result["required_empty"] == []
+
+
+def test_apply_field_map_demotes_a_discarded_text_fill_to_required_empty():
+    """A React-style form that silently discards ``.fill()`` — the selector
+    matched and ``fill()`` didn't raise, but the DOM value never actually
+    changed. The old contract (selector matched => filled) would report
+    this as filled; the DOM re-read must catch it and report the required
+    field as still empty."""
+    page = _StubPage({
+        'input[name="email"]': {"visible": True, "discard_fill": True},
+    })
+    specs = [{"key": "Email", "name": "email", "type": "text", "required": True}]
+    result = apply_field_map(page, specs, {"Email": "a@b.invalid"})
+    assert result["filled"] == []
+    assert result["required_empty"] == ["Email"]
+
+
+def test_apply_field_map_demotes_a_discarded_optional_fill_silently():
+    """A discarded fill on an OPTIONAL field just drops out of ``filled`` —
+    it must not show up in ``required_empty`` (only required gaps do)."""
+    page = _StubPage({
+        'input[name="gh"]': {"visible": True, "discard_fill": True},
+    })
+    specs = [{"key": "GitHub", "name": "gh", "type": "text", "required": False}]
+    result = apply_field_map(page, specs, {"GitHub": "github.example/x"})
+    assert result["filled"] == []
+    assert result["required_empty"] == []
+
+
+def test_apply_field_map_demotes_a_discarded_textarea_and_select_fill():
+    page = _StubPage({
+        "textarea": {"visible": True, "discard_fill": True},
+        "select-a": {"visible": True, "discard_fill": True},
+    })
+    specs = [
+        {"key": "__cover_letter__", "label": "Cover Letter", "type": "textarea",
+         "selectors": ["textarea"]},
+        {"key": "Source", "label": "How did you hear", "type": "select",
+         "required": True, "selectors": ["select-a"]},
+    ]
+    result = apply_field_map(
+        page, specs, {"__cover_letter__": "Dear team, ...", "Source": "LinkedIn"},
+    )
+    assert result["filled"] == []
+    assert result["required_empty"] == ["How did you hear"]
+
+
+def test_run_field_map_fill_reports_required_total_from_yaml_when_dom_scan_empty(tmp_path):
+    """When the DOM scan finds nothing (the stub page doesn't recognize the
+    generic ``[required], [aria-required=...]`` selector), the denominator
+    falls back to exactly the YAML-declared required count — no behaviour
+    change for ATSes/pages the scan can't see into."""
+    class _FakeApplicant:
+        def take_screenshot(self, page, label="form"):
+            return f"/tmp/{label}.png"
+
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 fake")
+
+    behaviors = {
+        'input[name="job_application[first_name]"]': {"visible": True},
+        'input[name="job_application[last_name]"]': {"visible": True},
+        'input[name="job_application[email]"]': {"visible": True},
+        'input[type="tel"]:visible': {"visible": True},
+        'input[type="file"][name="job_application[resume]"]': {"count": 1},
+    }
+    page = _StubPage(behaviors)
+    job = {"id": "gh-clean", "form_answers": {
+        "first_name": "Test", "last_name": "Applicant",
+        "email": "t@e.invalid", "phone": "+1-555-0100",
+    }}
+
+    result = run_field_map_fill(
+        _FakeApplicant(), page, job, "greenhouse",
+        screenshot_label="gh_clean", resume_path=str(resume),
+    )
+
+    assert result["required_total"] == 5  # First/Last/Email/Phone/Resume
+    assert result["required_empty"] == []
+    assert result["success"] is True
+
+
+def test_run_field_map_fill_widens_required_set_with_dom_scanned_custom_question(tmp_path):
+    """A role-specific question the ATS marks required in the live DOM (but
+    field_maps.yml has never heard of — custom questions are policy-never-
+    auto-filled) must widen the required-set denominator AND fail the
+    cleanliness gate when left empty, even though every YAML-declared field
+    filled cleanly."""
+    class _FakeApplicant:
+        def take_screenshot(self, page, label="form"):
+            return f"/tmp/{label}.png"
+
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 fake")
+
+    behaviors = {
+        'input[name="job_application[first_name]"]': {"visible": True},
+        'input[name="job_application[last_name]"]': {"visible": True},
+        'input[name="job_application[email]"]': {"visible": True},
+        'input[type="tel"]:visible': {"visible": True},
+        'input[type="file"][name="job_application[resume]"]': {"count": 1},
+        '[required], [aria-required="true"]': {
+            "count": 1,
+            "attrs": {"aria-label": "Are you authorized to work in the US?"},
+        },
+    }
+    page = _StubPage(behaviors)
+    job = {"id": "gh-custom", "form_answers": {
+        "first_name": "Test", "last_name": "Applicant",
+        "email": "t@e.invalid", "phone": "+1-555-0100",
+    }}
+
+    result = run_field_map_fill(
+        _FakeApplicant(), page, job, "greenhouse",
+        screenshot_label="gh_custom", resume_path=str(resume),
+    )
+
+    assert result["required_total"] == 6  # 5 YAML + 1 DOM-only custom question
+    assert result["required_empty"] == ["Are you authorized to work in the US?"]
+    assert result["success"] is False
+
+
+def test_apply_field_map_file_upload_is_exempt_from_dom_reread():
+    """File inputs never get a DOM value re-read (Playwright can't read one
+    back) — ``upload_file``'s own count()-based success stands alone."""
+    page = _StubPage({'input[type="file"]': {"count": 1}})
+    specs = [{
+        "key": "__resume__", "label": "Resume", "type": "file", "required": True,
+        "selectors": ['input[type="file"]'],
+    }]
+    result = apply_field_map(page, specs, {"__resume__": "/tmp/r.pdf"})
+    assert result["filled"] == ["Resume"]
+    assert result["required_empty"] == []

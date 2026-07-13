@@ -118,6 +118,43 @@ def upload_prefill_screenshot(job_id: str | int, png_bytes: bytes) -> str:
     return path
 
 
+def upload_final_screenshot(job_id: str | int, png_bytes: bytes) -> str:
+    """Upload the final browser-truth screenshot (P0 #1) captured right
+    before the tab closes, once the human reaches a terminal decision.
+
+    Distinct from ``upload_prefill_screenshot`` (the post-*fill*, pre-decision
+    image) — this one is the post-*decision* evidence: final URL state,
+    success/error signals, whatever the page looked like when the human
+    clicked "Submitted ✓ → Next" or "Skip". Returns the storage path (e.g.
+    "42/final.png").
+    """
+    client = _require_client()
+    path = f"{job_id}/final.png"
+    storage = client.storage.from_(BUCKET)
+    try:
+        storage.upload(
+            path=path,
+            file=png_bytes,
+            file_options={
+                "content-type": "image/png",
+                "upsert": "true",
+            },
+        )
+    except Exception as e:
+        logger.debug(f"final screenshot upload with upsert failed ({e!r}); retrying")
+        try:
+            storage.remove([path])
+        except Exception:
+            pass
+        storage.upload(
+            path=path,
+            file=png_bytes,
+            file_options={"content-type": "image/png"},
+        )
+    logger.info(f"Uploaded {path} ({len(png_bytes)} bytes) to bucket={BUCKET}")
+    return path
+
+
 def get_signed_url(path: str, expires_in: int = 3600) -> str:
     """
     Create a short-lived signed URL (default 1 hour) the dashboard can render.

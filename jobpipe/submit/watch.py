@@ -382,6 +382,50 @@ class PollEventSource(EventSource):
         self._stop.set()
 
 
+class RealtimeSubscriptionGuard:
+    """Runtime detection of the migration-014 realtime gap (hygiene #3).
+
+    ``public.jobs`` has to be added to the ``supabase_realtime`` publication
+    (``jobpipe/tailor/scripts/014_realtime_jobs.sql``) or the watcher's
+    websocket connects and subscribes just fine but **never receives an
+    event** — it then silently degrades to "acts only on startup/reconnect
+    catch-up, never on a dashboard click," with nothing anywhere to say so
+    (the exact footgun ``submit/README.md`` documents). The connect+subscribe
+    handshake succeeding is not proof the publication includes the table, so
+    this tracks whether the subscribe callback's ``SUBSCRIBED`` confirmation
+    itself ever fires within a bounded window; if it doesn't,
+    :meth:`should_warn` returns ``True`` exactly once so the caller can log +
+    notify a single time per process (not on every reconnect attempt).
+
+    Deliberately framed around the subscribe handshake rather than "did an
+    event ever arrive" — the latter is indistinguishable from "no one has
+    clicked Pre-fill Form yet," which is normal, not a gap.
+    """
+
+    def __init__(self, *, timeout_seconds: float = 15.0) -> None:
+        self.timeout_seconds = timeout_seconds
+        self._started_at: Optional[float] = None
+        self._subscribed_at: Optional[float] = None
+        self._warned = False
+
+    def mark_started(self, now: float) -> None:
+        self._started_at = now
+
+    def mark_subscribed(self, now: float) -> None:
+        self._subscribed_at = now
+
+    def should_warn(self, now: float) -> bool:
+        """``True`` the first time ``now`` is past the timeout window with
+        no subscribe confirmation observed yet; ``False`` on every other
+        call (already warned, already subscribed, or not started)."""
+        if self._warned or self._subscribed_at is not None or self._started_at is None:
+            return False
+        if now - self._started_at < self.timeout_seconds:
+            return False
+        self._warned = True
+        return True
+
+
 class RealtimeEventSource(EventSource):
     """Default transport: Supabase Realtime ``postgres_changes`` on ``public.jobs``.
 
@@ -405,6 +449,7 @@ class RealtimeEventSource(EventSource):
         token: str,
         reconnect_min: float = 1.0,
         reconnect_max: float = 30.0,
+        subscribe_timeout: float = 15.0,
     ) -> None:
         self._enqueue = enqueue
         self._stop = stop_event
@@ -413,12 +458,35 @@ class RealtimeEventSource(EventSource):
         self._reconnect_min = reconnect_min
         self._reconnect_max = reconnect_max
         self._thread: Optional[threading.Thread] = None
+        # Persists across reconnects within this process — "notify once",
+        # not once per reconnect attempt.
+        self._guard = RealtimeSubscriptionGuard(timeout_seconds=subscribe_timeout)
 
     def _on_change(self, payload: object) -> None:
         jid = extract_job_id(payload)
         if jid:
             logger.info("Realtime: job %s → prefilling", jid)
             self._enqueue(jid)
+
+    def _notify_realtime_gap(self) -> None:  # pragma: no cover - live notify call
+        logger.warning(
+            "Realtime subscribe handshake never confirmed within %.0fs — "
+            "public.jobs may not be in the supabase_realtime publication "
+            "(apply jobpipe/tailor/scripts/014_realtime_jobs.sql). Running "
+            "in poll-only mode: acting on startup/reconnect catch-up only, "
+            "not on dashboard clicks.",
+            self._guard.timeout_seconds,
+        )
+        try:
+            from jobpipe.notify import create_notification
+            create_notification(
+                "failed",
+                {"id": None, "company": "submit-watcher", "title": "Realtime gap"},
+                "Realtime subscribe never confirmed — running in poll-only "
+                "mode. Check that migration 014_realtime_jobs.sql is applied.",
+            )
+        except Exception:
+            logger.exception("realtime-gap notification failed")
 
     def start(self) -> None:
         logger.info("Watcher transport: Supabase Realtime on public.jobs")
@@ -459,6 +527,7 @@ class RealtimeEventSource(EventSource):
 
     async def _serve_once(self) -> None:  # pragma: no cover - requires live network
         import asyncio
+        import time as _time
 
         from realtime import AsyncRealtimeClient, RealtimeSubscribeStates
 
@@ -475,15 +544,19 @@ class RealtimeEventSource(EventSource):
 
         def _on_subscribe(state, err=None):
             if state == RealtimeSubscribeStates.SUBSCRIBED:
+                self._guard.mark_subscribed(_time.monotonic())
                 # Connected — sweep up anything queued while we were away.
                 self._enqueue(_CATCHUP)
 
+        self._guard.mark_started(_time.monotonic())
         await channel.subscribe(_on_subscribe)
         # Listen until told to stop; poll the stop flag so close() is prompt.
         listen_task = asyncio.ensure_future(client.listen())
         try:
             while not self._stop.is_set() and not listen_task.done():
                 await asyncio.sleep(0.5)
+                if self._guard.should_warn(_time.monotonic()):
+                    self._notify_realtime_gap()
         finally:
             listen_task.cancel()
             try:

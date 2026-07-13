@@ -180,6 +180,18 @@ required). Materials live in Supabase Storage (`job-materials/{job_id}/`)
 
 ## Submit subtree (`jobpipe/submit/`)
 
+**Path A is live; Path B is historical.** The only path that runs in
+production is the local-Playwright pre-fill flow driven from
+`jobpipe/tailor/pipeline.py` (`process_prefill_requested_jobs` /
+`run_submit_watch`) through the `prepare_dom` adapters. The originally
+designed Browserbase + Stagehand pipeline (`runner_legacy.py`, `router.py`,
+`confirm.py`, `adapters/deterministic/*`, `adapters/generic_stagehand.py`,
+`browser/session.py`) was retired during the local-Playwright consolidation
+and is kept only as design reference — `confirm.py`'s per-ATS success-signal
+needles and auto-submit-vs-review policy shape were the source Path A's
+`page_truth.py` / verification gate ported from (P0 submit-truth-gate).
+**Do not extend Path B.**
+
 ### Contract with the tailor (input)
 
 A job is eligible when the `jobs` row has:
@@ -187,56 +199,120 @@ A job is eligible when the `jobs` row has:
   aliases were retired by migration 011 — canonical statuses only)
 - `resume_pdf_path` + `cover_letter_pdf_path` (Storage keys)
 - `cover_letter_path` — plain-text body for form-paste fields
-- `application_url` — canonical ATS URL (aggregator-resolved)
-- `ats_kind` — one of: greenhouse, lever, ashby, workday, icims,
-  smartrecruiters, linkedin, generic
-- `materials_hash` — sha256 of resume PDF + CL text at approval time
+- `application_url` / `submission_url` — resolved ATS URL to navigate to
+- `materials_hash` — sha256 of resume PDF + CL text at approval time,
+  enforced in Path A before every fill (`db.verify_materials_hash`, called
+  from `_prefill_one_job`) — a mismatch degrades to the assisted-manual
+  hand-off instead of filling with stale materials.
 
-If any required field is missing the submitter does not proceed; it
-flips the row to `needs_review` with a reason.
+Pre-browser preconditions (no resume PDF, download failure, max attempts
+exceeded) fail the row hard (`mark_tailor_failed`) — there's no open tab yet
+to hand off. Once the tab IS open, every non-clean exit degrades to the
+assisted-manual hand-off (`submit/handoff.py`) instead of a bare failure.
 
 ### Contract with the dashboard (output)
 
 Per attempt:
-- `submission_log` (jsonb): structured events
-- `confidence` (0–1): submitter's self-assessed readiness at submit time
-- A row in `application_attempts` with outcome + Browserbase replay URL
-- `status`: `submitted`, `needs_review`, or `failed`
+- `jobs.submission_log` (jsonb): append/merge keyed by `attempt_n`, plus a
+  top-level `verification` key holding the latest fill-verification summary
+  (`db.record_prefill_verification` — no longer clobbers history on retry)
+- `jobs.prefill_screenshot_path` / `application_notes`: the post-fill
+  screenshot + "filled X of Y required field(s); still needs: ..." summary
+- A row in `application_attempts`:
+  - `outcome`: `prefilled` (clean pre-fill close — NOT a real ATS
+    submission), `needs_review` (assisted-manual hand-off), or `failed`
+  - `notes.truth` (browser-truth capture): appended once the human reaches
+    a terminal decision — `{final_url, success_signal, error_signals,
+    screenshot}` (`db.record_attempt_truth`)
+- `jobs.status = 'applied'` — set ONLY by the human clicking "Mark Applied"
+  in the cockpit. The system never auto-clicks Submit and never
+  auto-sets `applied`.
 
-### Architecture
+### Architecture (Path A — live)
 
 ```
-runner.py (poll loop)
-  └── router.py  (dispatch by ats_kind)
-        ├── adapters/deterministic/greenhouse.py    deterministic Stagehand act() sequence
-        ├── adapters/deterministic/lever.py         deterministic
-        ├── adapters/deterministic/ashby.py         deterministic
-        └── adapters/generic_stagehand.py           Stagehand Agent fallback
-              │
-              ▼
-        browser/session.py  (Browserbase + Stagehand session)
-              │
-              ▼
-        confirm.py  (decide auto-submit vs needs_review, verify success)
-              │
-              ▼
-        review_packet.py  (build review packet if needs_review)
+tailor/pipeline.py
+  ├── process_prefill_requested_jobs()   one-shot cycle over status='prefilling'
+  └── run_submit_watch()                 long-lived watcher (submit/watch.py:
+        │                                 SubmitWatcher + Realtime/poll EventSource,
+        │                                 dual-machine WatcherCoordinator)
+        ▼
+  _prefill_one_job(job, context)
+        │  ── materials_hash gate (db.verify_materials_hash) ──
+        ▼
+  adapters/prepare_dom/{greenhouse,lever,ashby}.py   declarative field_maps.yml
+    or  adapters/prepare_dom/universal.py            Claude tool-use fallback (no ATS map)
+        │  ── run_field_map_fill / apply_field_map ──
+        │     DOM re-read after every fill (a fill that didn't stick ≠ filled)
+        │     scan_required_fields() unions the DOM's own required-set
+        │     (custom/role-specific questions included) with field_maps.yml
+        ▼
+  submit/verify.py :: build_prefill_verification
+        │  "filled X of Y required field(s); still needs: ..." /
+        │  "N required custom question(s) unanswered"
+        ▼
+  required_empty == 0 ?
+    yes → mark_awaiting_submit (clean)      no → submit/handoff.py
+        │                                        assisted_manual_handoff
+        │                                        (tab open, materials staged
+        │                                         locally, checklist written)
+        └──────────────┬─────────────────────────────┘
+                        ▼
+        BOTH paths land on jobs.status = 'awaiting_human_submit' — tab
+        stays open, human reviews and clicks Submit themselves
+                        │
+                        ▼
+        _wait_for_human_decision(page, job_id, attempt_id, ats, job)
+          polls jobs.status until a terminal decision (applied / skipped /
+          failed / expired) or a JOBPIPE_DECISION_TIMEOUT_MINUTES timeout
+          (re-queues to 'prefilling' on timeout — submit/watch.py's
+          in-flight dedup clears automatically since this call returning
+          is what frees it)
+                        │
+                        ▼
+        submit/page_truth.py :: capture_truth(page, ats)
+          success-signal needles (ported from the retired confirm.py) +
+          a generic validation-error DOM scan → final URL + screenshot +
+          signals, appended to application_attempts.notes.truth
+          (db.record_attempt_truth). Mismatch (marked applied, no success
+          signal, errors visible) → notify.send_truth_mismatch — loud, but
+          jobs.status is NEVER touched here; the human stays authoritative.
 ```
 
 ### Design rules
 
-- **Adapters fill. `confirm.py` decides whether to submit.** Adapters
-  NEVER click the final submit button; they return a `SubmissionResult`
-  with evidence and a recommendation. `confirm.py` applies the uniform
-  auto-vs-review policy.
-- **One Browserbase session per attempt.** Always record. Hard-cap
-  session budget via env var.
-- **LLM use is bounded.** Only two places: (1) `confirm.py`'s
-  post-submit page analysis, (2) `adapters/generic_stagehand.py`
-  fallback. Deterministic adapters use zero LLM calls.
-- **Every state transition writes a row to `application_attempts`.**
-  Never update `jobs.status` to `submitted` without a corresponding
-  attempts row showing the evidence.
+- **Adapters fill. The human clicks Submit. Nothing auto-submits, ever.**
+  Every non-clean prepare exit degrades to the assisted-manual hand-off
+  (tab left open, materials staged, checklist written) rather than a bare
+  failure or an auto-retry.
+- **Honest verification, not adapter self-report.** A selector matching
+  and a Playwright `.fill()` call not raising is not proof a value stuck
+  (React forms silently discard fills). `apply_field_map` re-reads the DOM
+  after every fill; the required-set denominator comes from the form
+  itself (`scan_required_fields`), not just the ~5 hardcoded
+  `field_maps.yml` labels, so custom/role-specific questions the ATS marks
+  required can't hide behind "filled 5 of 5."
+- **Browser-truth capture is evidence, not a gate.** The post-decision
+  success/error DOM probe (`page_truth.py`) informs a mismatch
+  notification; it never flips `jobs.status` automatically. The human's
+  click stays the single source of truth for whether an application was
+  actually submitted.
+- **One local Playwright browser context per run/watcher lifetime**, one
+  tab per job, strictly serial (the human reviews one form at a time).
+- **LLM use is bounded** to the `universal` (no-ATS-map) prepare fallback
+  and the M-1 `form_answers` generation upstream in the tailor. The
+  deterministic `prepare_dom` adapters use zero LLM calls.
+- **Every state transition writes a row to `application_attempts`.** Never
+  mark a row `awaiting_human_submit` / `applied` without a corresponding
+  attempts row carrying the evidence.
+
+**Path B (historical — do not extend).** `runner_legacy.py`, `router.py`,
+`confirm.py`, `adapters/deterministic/*`, `adapters/generic_stagehand.py`,
+and `browser/session.py`'s Browserbase+Stagehand session were the
+originally designed remote-browser submission pipeline, retired dead code
+kept only as reference. If a future remote-browser fallback is ever built,
+start from these files' ideas; do not wire them back into the live path
+as-is.
 
 ## Where the data lives
 

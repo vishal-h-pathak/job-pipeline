@@ -16,6 +16,7 @@ from jobpipe.submit.watch import (
     SubmitWatcher,
     PollEventSource,
     RealtimeEventSource,
+    RealtimeSubscriptionGuard,
     extract_job_id,
     _CATCHUP,
 )
@@ -314,3 +315,44 @@ def test_realtime_on_change_enqueues_job_id():
     src._on_change({"data": {"record": {}}})  # no id → ignored
 
     assert got == ["rt-9"]
+
+
+# ── RealtimeSubscriptionGuard (migration-014 gap detection, hygiene #3) ──────
+
+def test_guard_does_not_warn_before_started():
+    guard = RealtimeSubscriptionGuard(timeout_seconds=15.0)
+    assert guard.should_warn(1000.0) is False
+
+
+def test_guard_does_not_warn_before_timeout_elapses():
+    guard = RealtimeSubscriptionGuard(timeout_seconds=15.0)
+    guard.mark_started(0.0)
+    assert guard.should_warn(10.0) is False
+
+
+def test_guard_warns_once_after_timeout_with_no_subscribe():
+    guard = RealtimeSubscriptionGuard(timeout_seconds=15.0)
+    guard.mark_started(0.0)
+    assert guard.should_warn(20.0) is True
+    # Second call past the same window must not re-warn.
+    assert guard.should_warn(30.0) is False
+
+
+def test_guard_never_warns_once_subscribed():
+    """The publication gap is exactly the case where subscribe would never
+    confirm — a guard that DID subscribe must never warn, even much later."""
+    guard = RealtimeSubscriptionGuard(timeout_seconds=15.0)
+    guard.mark_started(0.0)
+    guard.mark_subscribed(5.0)
+    assert guard.should_warn(1000.0) is False
+
+
+def test_guard_reconnect_after_subscribe_does_not_rewarn():
+    """A guard instance persists across reconnects (one per process) — once
+    it has ever subscribed, a later reconnect attempt's own slow handshake
+    must not trigger a fresh warning cycle within the same guard."""
+    guard = RealtimeSubscriptionGuard(timeout_seconds=15.0)
+    guard.mark_started(0.0)
+    guard.mark_subscribed(5.0)
+    guard.mark_started(100.0)  # a later reconnect attempt starts again
+    assert guard.should_warn(200.0) is False

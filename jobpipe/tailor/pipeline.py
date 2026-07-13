@@ -64,6 +64,7 @@ from pathlib import Path  # noqa: E402
 from jobpipe.config import (  # noqa: E402
     POLL_INTERVAL_MINUTES,
     HUMAN_APPROVAL_REQUIRED,
+    JOBPIPE_DECISION_TIMEOUT_MINUTES,
     MAX_ATTEMPTS_PER_JOB,
     SUBMIT_POLL_INTERVAL_SECONDS,
     SUPABASE_URL,
@@ -82,6 +83,7 @@ from jobpipe.db import (  # noqa: E402
     record_heartbeat,
     set_active_watcher_id,
     mark_preparing,
+    mark_prefilling,
     mark_ready_for_review,
     mark_awaiting_submit,
     mark_applied,
@@ -92,6 +94,8 @@ from jobpipe.db import (  # noqa: E402
     open_attempt,
     close_attempt,
     record_prefill_verification,
+    record_attempt_truth,
+    verify_materials_hash,
 )
 from tailor.resume import tailor_resume  # noqa: E402
 from tailor.cover_letter import generate_cover_letter  # noqa: E402
@@ -105,12 +109,16 @@ from interview_prep.bank import save_stories  # noqa: E402
 from jobpipe.notify import (  # noqa: E402  PR-8: canonical send_* names
     send_awaiting_review,
     send_awaiting_submit,
+    send_decision_timeout,
     send_failed,
+    send_truth_mismatch,
 )
 from jobpipe.shared.storage import download_to_tmp  # noqa: E402
+from jobpipe.submit import page_truth  # noqa: E402  browser-truth probes (P0 #1)
 from jobpipe.submit.handoff import assisted_manual_handoff  # noqa: E402
 from jobpipe.submit.verify import build_prefill_verification  # noqa: E402
 from storage import (  # noqa: E402
+    upload_final_screenshot,
     upload_pdf,
     upload_prefill_screenshot,
 )
@@ -635,7 +643,28 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
         except Exception as exc:
             # Tab is open on the (failed) URL — hand off rather than fail.
             _handoff(f"page failed to load: {exc}")
-            _wait_for_human_decision(page=page, job_id=job_id)
+            _wait_for_human_decision(
+                page=page, job_id=job_id, attempt_id=attempt_id, ats=ats, job=job,
+            )
+            return
+
+        # ── Materials integrity gate (hygiene #3) ────────────────────────
+        # Verify what's on disk still matches what was approved before
+        # committing to a fill — catches drift between approval and
+        # pre-fill (re-tailored materials, a bumped resume, an approval
+        # that's gone stale). Mismatch degrades to hand-off, not a fill.
+        try:
+            resume_bytes = Path(tmp_resume_pdf).read_bytes()
+        except Exception:
+            resume_bytes = b""
+        if not verify_materials_hash(job, resume_bytes, cover_letter_text):
+            _handoff(
+                "materials hash mismatch — resume/cover letter drifted "
+                "since approval; re-tailor before pre-filling",
+            )
+            _wait_for_human_decision(
+                page=page, job_id=job_id, attempt_id=attempt_id, ats=ats, job=job,
+            )
             return
 
         # Per-ATS handlers expose fill_form(page, job, ...).
@@ -670,6 +699,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
         verification = build_prefill_verification(result, ats)
         record_prefill_verification(
             job_id, {**verification, "screenshot": screenshot_storage_key},
+            attempt_n=attempt_n,
         )
         logger.info("Verification for %s: %s", company, verification["summary"])
 
@@ -681,12 +711,12 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                 application_notes=verification["summary"],
             )
             # Close the audit row BEFORE the wait so the dashboard sees
-            # ``outcome`` immediately. ``outcome="submitted"`` means the
+            # ``outcome`` immediately. ``outcome="prefilled"`` means the
             # adapter pre-filled cleanly — NOT that the app was submitted;
             # ``applied`` only flips when the human clicks Mark Applied.
             close_attempt(
                 attempt_id,
-                outcome="submitted",
+                outcome="prefilled",
                 notes={
                     "prefill_screenshot_path": screenshot_storage_key,
                     "filled_fields": result.get("fields_filled"),
@@ -723,7 +753,9 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                 summary=verification["summary"],
             )
 
-        _wait_for_human_decision(page=page, job_id=job_id)
+        _wait_for_human_decision(
+            page=page, job_id=job_id, attempt_id=attempt_id, ats=ats, job=job,
+        )
 
     except Exception as exc:
         # Adapter / dispatch exception — the tab is open, so hand off rather
@@ -741,7 +773,9 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                     )
                 except Exception:
                     logger.exception("close_attempt failed for %s", job_id)
-        _wait_for_human_decision(page=page, job_id=job_id)
+        _wait_for_human_decision(
+            page=page, job_id=job_id, attempt_id=attempt_id, ats=ats, job=job,
+        )
     finally:
         if tmp_resume_pdf is not None:
             try:
@@ -758,7 +792,12 @@ _DECISION_STATUSES = frozenset({"applied", "skipped", "failed", "expired"})
 
 
 def _wait_for_human_decision(page, job_id: str, *,
-                             poll_interval: int = None, sleep=None) -> str | None:
+                             attempt_id: int | None = None,
+                             ats: str | None = None,
+                             job: dict | None = None,
+                             poll_interval: int = None, sleep=None,
+                             timeout_minutes: float | None = None,
+                             now=None) -> str | None:
     """Stop-and-wait advance (Part B): keep the pre-filled tab OPEN and poll
     the jobs row until the human flips it to a terminal decision in the
     dashboard, then close the tab so the loop moves to the next job.
@@ -768,31 +807,97 @@ def _wait_for_human_decision(page, job_id: str, *,
     submitted. Now the dashboard button ("Submitted ✓ → Next" → ``applied``,
     or "Skip" → ``skipped``) is the single advance signal.
 
-    Returns the terminal status, or ``None`` if interrupted (Ctrl-C / EOF).
-    The tab is closed in all cases so the shared window doesn't accumulate
-    orphaned tabs. ``poll_interval`` / ``sleep`` are injectable for tests.
+    Two things happen right before the tab closes, whatever ended the wait
+    (terminal decision, timeout, or Ctrl-C/EOF):
+
+      - **Browser-truth capture (P0 #1).** When ``attempt_id`` is given, grab
+        the final URL + a full-page screenshot + success/error signals
+        (:mod:`jobpipe.submit.page_truth`) and append them to the attempt
+        row's notes (:func:`jobpipe.db.record_attempt_truth`). If the human
+        marked the row ``applied`` but no success signal fired and at least
+        one visible error is present, fire a loud mismatch notification —
+        ``jobs.status`` is NEVER changed automatically here; the human stays
+        authoritative.
+      - **Decision timeout (hygiene #3).** Past ``timeout_minutes`` (default
+        :data:`jobpipe.config.JOBPIPE_DECISION_TIMEOUT_MINUTES`) with no
+        terminal decision, stop waiting, notify, and return the row to
+        ``prefilling`` so a forgotten tab doesn't serialize the whole queue
+        behind it forever. The watcher's in-flight dedup set is keyed to
+        this call returning (see ``watch.py::_handle_item``'s ``finally``),
+        so the next catch-up / realtime event re-picks the row up cleanly.
+
+    Returns the terminal status, ``"timeout"`` on a decision timeout, or
+    ``None`` if interrupted (Ctrl-C / EOF). The tab is closed in all cases so
+    the shared window doesn't accumulate orphaned tabs. ``poll_interval`` /
+    ``sleep`` / ``timeout_minutes`` / ``now`` are injectable for tests.
     """
     interval = (
         poll_interval if poll_interval is not None
         else SUBMIT_POLL_INTERVAL_SECONDS
     )
     _sleep = sleep or time.sleep
+    _now = now or time.monotonic
+    timeout_seconds = (
+        timeout_minutes if timeout_minutes is not None
+        else JOBPIPE_DECISION_TIMEOUT_MINUTES
+    ) * 60
+
+    start = _now()
     decision = None
+    timed_out = False
     try:
         while True:
-            job = get_job(job_id) or {}
-            status = job.get("status")
+            job_row = get_job(job_id) or {}
+            status = job_row.get("status")
             if status in _DECISION_STATUSES:
                 decision = status
+                break
+            if _now() - start >= timeout_seconds:
+                timed_out = True
                 break
             _sleep(interval)
     except (EOFError, KeyboardInterrupt):
         decision = None
     finally:
+        if attempt_id is not None:
+            try:
+                truth = page_truth.capture_truth(page, ats or "")
+                try:
+                    png_bytes = page.screenshot(full_page=True)
+                    truth["screenshot"] = upload_final_screenshot(job_id, png_bytes)
+                except Exception as exc:
+                    logger.warning(
+                        "final screenshot capture failed for %s: %s", job_id, exc,
+                    )
+                    truth["screenshot"] = None
+                record_attempt_truth(attempt_id, truth)
+                if (
+                    decision == "applied"
+                    and not truth.get("success_signal")
+                    and truth.get("error_signals")
+                ):
+                    send_truth_mismatch(job or {"id": job_id}, truth)
+            except Exception:
+                logger.exception("browser-truth capture failed for %s", job_id)
         try:
             page.close()
         except Exception:
             pass
+
+    if timed_out:
+        logger.warning(
+            "Job %s decision-wait timed out after %.1f min — re-queuing",
+            job_id, timeout_seconds / 60,
+        )
+        try:
+            send_decision_timeout(job or {"id": job_id})
+        except Exception:
+            logger.exception("send_decision_timeout failed for %s", job_id)
+        try:
+            mark_prefilling(job_id)
+        except Exception:
+            logger.exception("mark_prefilling (re-queue) failed for %s", job_id)
+        return "timeout"
     if decision:
         logger.info("Job %s human decision: %s — advancing", job_id, decision)
     else:

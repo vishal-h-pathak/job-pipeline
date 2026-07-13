@@ -141,6 +141,26 @@ def _expected_required_empty(variant: str, standard_expected: set[str]) -> set[s
     return standard_expected
 
 
+def _expected_filled_with_work_auth(variant: str, base: set[str]) -> set[str]:
+    """Fix 3: the Work Authorization combobox widget was added ONLY to
+    each ATS's ``standard.html`` fixture, not its ``embed.html`` — hand
+    double-escaping the widget's HTML/JS into the embed fixture's
+    ``srcdoc`` attribute for a field this task does not require proving
+    inside an iframe would add real risk (an escaping mistake silently
+    breaking the widget) for no coverage gain: the combobox CONTAINER
+    selector already goes through the same frame-aware
+    ``_iter_frame_locators`` resolution every other primitive in this
+    suite does, and the one genuinely iframe-specific limitation
+    (``select_combobox``'s popup-OPTIONS search being intentionally
+    top-document-only — see ``_common.py``'s module note) is a documented,
+    accepted scope boundary, not something this fixture pair needs to
+    additionally demonstrate. So the embed variant's page genuinely has
+    no such field at all — "Work Authorization" correctly does NOT
+    appear in ``fields_filled`` there; that is the fixture being honest
+    about what it contains, not a coverage gap or an oversight."""
+    return (base | {"Work Authorization"}) if variant == "standard" else base
+
+
 def _run(page, ats: str, variant: str, job: dict, resume_path: str, *,
           value_overrides: dict | None = None) -> dict:
     """Load the fixture, run the SAME readiness-wait + fill call sequence
@@ -198,6 +218,16 @@ _GREENHOUSE_JOB = {
         "current_location": "Atlanta, GA",
         "current_company": "Prior Robotics Co",
         "current_title": "Software Engineer",
+        # Fix 3: same free-text phrase the M-1 work_auth_phrase builder
+        # (jobpipe/tailor/tailor/form_answers.py) and the (reference-only,
+        # legacy) Path B prompt already produce for this exact purpose —
+        # matches the fixture's combobox option text EXACTLY so the
+        # end-to-end proof demonstrates a real fill, not a mechanism that
+        # never matches on its own test data (see field_maps.yml's spec
+        # comment + the fixture's widget comment for why this specific
+        # phrase, and the non-vacuousness proof in the fix report for what
+        # happens when it's changed to NOT match).
+        "work_authorization": "US citizen, no sponsorship needed",
     },
 }
 
@@ -219,7 +249,10 @@ def test_greenhouse_fixture_fill_coverage(page, tmp_path, variant):
         page, "greenhouse", variant, _GREENHOUSE_JOB, _resume_path(tmp_path),
     )
 
-    assert set(result["fields_filled"]) == _GREENHOUSE_EXPECTED_FILLED
+    expected_filled = _expected_filled_with_work_auth(
+        variant, _GREENHOUSE_EXPECTED_FILLED,
+    )
+    assert set(result["fields_filled"]) == expected_filled
     # The custom work-authorization radio is a required question
     # field_maps.yml has never heard of — scan_required_fields must widen
     # the required-set to catch it on the "standard" variant (embed: the
@@ -248,6 +281,17 @@ def test_greenhouse_fixture_fill_coverage(page, tmp_path, variant):
         'input[type="file"][name="job_application[resume]"]'
     )
     assert report["Resume"]["value_verified"] is True
+    if variant == "standard":
+        # Fix 3: the Work Authorization combobox widget only exists on the
+        # standard (non-embed) fixture — see
+        # _expected_filled_with_work_auth's docstring for why. Pins the
+        # exact winning candidate (the aria-label-scoped primary
+        # selector, not either fallback) so a selector-chain regression
+        # would flip this, not just a bare "did it fill something" check.
+        assert report["Work Authorization"]["matched_selector"] == (
+            'input[role="combobox"][aria-label*="work auth" i]'
+        )
+        assert report["Work Authorization"]["value_verified"] is True
 
 
 # ── Lever ────────────────────────────────────────────────────────────────────
@@ -318,6 +362,9 @@ _ASHBY_JOB = {
         "email": "sam.okafor@example.invalid",
         "phone": "+1-555-0102",
         "linkedin_url": "https://linkedin.example/in/sam-okafor",
+        # Fix 3: same exact phrase as the Greenhouse job dict — see that
+        # dict's comment for why this exact string matters.
+        "work_authorization": "US citizen, no sponsorship needed",
     },
 }
 
@@ -333,7 +380,10 @@ _ASHBY_REQUIRED_EMPTY = {"Are you authorized to work in this country?"}
 def test_ashby_fixture_fill_coverage(page, tmp_path, variant):
     result = _run(page, "ashby", variant, _ASHBY_JOB, _resume_path(tmp_path))
 
-    assert set(result["fields_filled"]) == _ASHBY_EXPECTED_FILLED
+    expected_filled = _expected_filled_with_work_auth(
+        variant, _ASHBY_EXPECTED_FILLED,
+    )
+    assert set(result["fields_filled"]) == expected_filled
     # The native <select> "Work Authorization" question has no `combobox`
     # (or any) spec in field_maps.yml today — DOM widening must catch it on
     # "standard" (embed: see ``_expected_required_empty``).
@@ -363,6 +413,16 @@ def test_ashby_fixture_fill_coverage(page, tmp_path, variant):
     # actually matches this fixture's resume input.
     assert report["Resume"]["matched_selector"] == 'input[type="file"]'
     assert report["Resume"]["value_verified"] is True
+    if variant == "standard":
+        # Fix 3: Ashby's widget uses the "div-wrapper" ARIA shape (role=
+        # "combobox" on the container div, complementing Greenhouse's
+        # "input-direct" shape) — see _fill_combobox's in-line comment.
+        # Only exists on the standard fixture — see
+        # _expected_filled_with_work_auth's docstring.
+        assert report["Work Authorization"]["matched_selector"] == (
+            '[role="combobox"][aria-label*="work auth" i]'
+        )
+        assert report["Work Authorization"]["value_verified"] is True
 
 
 # ── Cross-ATS: embed variants actually require the iframe fallback ─────────

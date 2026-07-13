@@ -37,6 +37,27 @@ greenhouse:
     - {key: "Company"}            # not in the GH name map -> label fallback only
     - {key: "Current Title", name: "job_application[title]"}
     - {key: "Title"}
+    # Work Authorization (Fix 3): a react-select-style combobox widget —
+    # NOT required here. Real work-authorization questions ARE frequently
+    # DOM-required on Greenhouse, but scan_required_fields's frame-aware
+    # DOM widening (already in this branch) independently catches any
+    # live required combobox this spec doesn't match, so marking the spec
+    # itself required would wrongly demote an attempt to non-clean on a
+    # real form that has no such combobox at all (e.g. one that asks work
+    # auth as a radio group instead — see the existing "Are you legally
+    # authorized..." radio spec above, which this field is intentionally
+    # independent of). Selector chain is conservative and narrowly scoped
+    # (aria-label first, then a label-wrapped fallback, then a name-hint
+    # fallback) — never a bare `[role="combobox"]` alone, which would grab
+    # whichever combobox renders first on the page (a location or
+    # demographic field, not work authorization).
+    - key: "Work Authorization"
+      label: "Work Authorization"
+      type: combobox
+      selectors:
+        - 'input[role="combobox"][aria-label*="work auth" i]'
+        - 'label:has-text("Work Authorization") input[role="combobox"]'
+        - 'input[role="combobox"][name*="work_auth" i]'
     - key: "__resume__"
       label: "Resume"
       type: file
@@ -138,6 +159,20 @@ ashby:
     - {key: "Company"}
     - {key: "Current Title"}
     - {key: "Title"}
+    # Work Authorization (Fix 3): same rationale as the Greenhouse spec
+    # above (not required — DOM widening independently catches a live
+    # required combobox this spec misses; conservative aria-label-first
+    # chain, never a bare `[role="combobox"]`). Ashby's div-wrapper ARIA
+    # shape (role="combobox" on the container div, not a nested <input>)
+    # still matches the same selector shape as Greenhouse's input-direct
+    # widget — `_fill_combobox` handles both shapes transparently.
+    - key: "Work Authorization"
+      label: "Work Authorization"
+      type: combobox
+      selectors:
+        - '[role="combobox"][aria-label*="work auth" i]'
+        - 'label:has-text("Work Authorization") [role="combobox"]'
+        - '[role="combobox"][id*="work_auth" i]'
     - key: "__resume__"
       label: "Resume"
       type: file

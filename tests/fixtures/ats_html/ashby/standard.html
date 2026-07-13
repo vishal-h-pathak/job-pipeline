@@ -30,9 +30,21 @@
   association via `label[for=id]`, resolved by `_resolve_dom_label`, which
   IS sibling-aware — a different resolution path than `label_selectors`).
 
-  A required native <select> "Work Authorization" question that
-  field_maps.yml has never heard of (no `combobox` specs exist in the live
-  YAML as of this task) exercises the DOM-required-set widening.
+  A required native <select> "Are you authorized to work in this
+  country?" question (a DIFFERENT DOM element from the new combobox
+  below, deliberately unrelated) that field_maps.yml has never heard of
+  exercises the DOM-required-set widening.
+
+  Fix 3 addition: a SEPARATE "Work Authorization" combobox widget
+  (react-select / ARIA `role="combobox"` shape) proving `select_combobox`
+  is reachable end-to-end via a real `type: combobox` field_maps.yml
+  spec. Ashby's widget uses the "div-wrapper" ARIA shape (role="combobox"
+  on a container div, not a real <input>) — see the widget's own inline
+  comment for detail — complementing the Greenhouse fixture's
+  "input-direct" shape so both `_fill_combobox` code paths get exercised
+  across this suite. Deliberately NOT marked required in this fixture's
+  DOM, same rationale as the Greenhouse fixture (see field_maps.yml's
+  spec comment).
 -->
 <html>
 <head><title>Apply — Embedded Systems Intern at Acme Robotics (fixture)</title></head>
@@ -72,6 +84,52 @@
       <label for="ab_title">Current Title</label>
       <input id="ab_title" type="text">
     </p>
+
+    <!-- Work Authorization: a react-select-style combobox widget proving
+         select_combobox (Fix 3 / type: combobox field-map spec) is
+         reachable end-to-end. ARIA shape: a div WRAPS a nested <input>
+         (role="combobox" lives on the div, not the input) — the
+         "div-wrapper" shape _fill_combobox also supports; the div has
+         no .value of its own, so the post-selection readback is via
+         text_content() on a chip span (see _fill_combobox's in-line
+         comment on why one signal alone can't cover both ARIA shapes).
+         The listbox is a sibling "portal" element, not nested inside the
+         combobox div, mirroring a real react-select popup rendered
+         elsewhere in the DOM (see _common.py's module note). Option text
+         is the EXACT M-1 work_authorization phrase, matching the
+         Greenhouse fixture's rationale (see that file's comment) for why
+         an exact match is required here. This is a DIFFERENT, unrelated
+         widget from the native <select> "Are you authorized to work in
+         this country?" question below — the two intentionally coexist
+         to prove the new combobox spec doesn't interfere with the
+         pre-existing DOM-required-set widening coverage. -->
+    <p>
+      <label>Work Authorization</label>
+      <div id="ab_work_auth_container" role="combobox" aria-label="Work Authorization" aria-expanded="false"><span id="ab_work_auth_chip"></span><input type="text" id="ab_work_auth_input"></div>
+    </p>
+    <ul role="listbox" id="ab_work_auth_listbox" style="display:none; list-style:none; padding:0;">
+      <li role="option" data-value="us_citizen">US citizen, no sponsorship needed</li>
+      <li role="option" data-value="visa">Requires visa sponsorship</li>
+    </ul>
+    <script>
+      (function () {
+        var container = document.getElementById('ab_work_auth_container');
+        var chip = document.getElementById('ab_work_auth_chip');
+        var listbox = document.getElementById('ab_work_auth_listbox');
+        container.addEventListener('click', function () {
+          listbox.style.display = 'block';
+          container.setAttribute('aria-expanded', 'true');
+        });
+        listbox.querySelectorAll('[role="option"]').forEach(function (opt) {
+          opt.addEventListener('click', function () {
+            chip.textContent = opt.textContent;
+            listbox.style.display = 'none';
+            container.setAttribute('aria-expanded', 'false');
+          });
+        });
+      })();
+    </script>
+
     <p>
       <label for="ab_resume">Resume</label>
       <input id="ab_resume" type="file" accept="application/pdf" required>

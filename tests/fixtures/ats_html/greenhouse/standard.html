@@ -27,6 +27,15 @@
   (scan_required_fields) must catch it and keep `success` False even
   though every YAML-declared field fills cleanly.
 
+  Fix 3 addition: a Work Authorization combobox widget (react-select /
+  ARIA `role="combobox"` shape) proving `select_combobox` is reachable
+  end-to-end via a real `type: combobox` field_maps.yml spec, not just
+  unit-tested against a stub Page. See the widget's own inline comment
+  below for the exact ARIA shape and why its option text matches the M-1
+  work_authorization phrase exactly. Deliberately NOT marked required in
+  this fixture's DOM (no `aria-required`) — see field_maps.yml's spec
+  comment for why the YAML spec itself is also not `required: true`.
+
   The inline <script> before </form> mimics real ATS frontend behavior:
   most Greenhouse/Lever/Ashby forms render the selected filename into the
   DOM on the file input's `change` event (a styled "selected file" chip
@@ -76,6 +85,50 @@
       <label for="gh_title">Current Title</label>
       <input id="gh_title" name="job_application[title]" type="text">
     </p>
+
+    <!-- Work Authorization: a react-select-style combobox widget proving
+         select_combobox (Fix 3 / type: combobox field-map spec) is
+         actually reachable end-to-end, not just unit-tested in
+         isolation. ARIA shape: role="combobox" lives directly on the
+         real <input> (see _fill_combobox's "input-direct" shape) — its
+         .value is what changes on selection, read back via
+         input_value(). The listbox <ul> is a SIBLING of the input, not
+         nested inside it — mirroring how a real react-select widget
+         commonly portals its popup elsewhere in the DOM rather than
+         nesting it under the combobox container (see _common.py's
+         module note on this same pattern). Option text is deliberately
+         the EXACT M-1 work_authorization phrase ("US citizen, no
+         sponsorship needed") so select_combobox's exact-match path
+         succeeds — see field_maps.yml's "Work Authorization" spec
+         comment for why a terser real-ATS Yes/No-style widget would NOT
+         match this free-text phrase well (an honest, pre-existing
+         limitation of the value source, not of this primitive). -->
+    <p>
+      <label for="gh_work_auth_input">Work Authorization</label>
+      <input id="gh_work_auth_input" type="text" role="combobox" aria-label="Work Authorization" aria-expanded="false" autocomplete="off">
+    </p>
+    <ul role="listbox" id="gh_work_auth_listbox" style="display:none; list-style:none; padding:0;">
+      <li role="option" data-value="us_citizen">US citizen, no sponsorship needed</li>
+      <li role="option" data-value="visa">Requires visa sponsorship</li>
+    </ul>
+    <script>
+      (function () {
+        var input = document.getElementById('gh_work_auth_input');
+        var listbox = document.getElementById('gh_work_auth_listbox');
+        input.addEventListener('click', function () {
+          listbox.style.display = 'block';
+          input.setAttribute('aria-expanded', 'true');
+        });
+        listbox.querySelectorAll('[role="option"]').forEach(function (opt) {
+          opt.addEventListener('click', function () {
+            input.value = opt.textContent;
+            listbox.style.display = 'none';
+            input.setAttribute('aria-expanded', 'false');
+          });
+        });
+      })();
+    </script>
+
     <p>
       <label for="gh_resume">Resume/CV*</label>
       <input id="gh_resume" name="job_application[resume]" type="file" accept=".pdf,.doc,.docx" required>

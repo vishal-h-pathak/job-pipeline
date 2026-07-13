@@ -1340,6 +1340,20 @@ def build_field_map(job: dict) -> dict[str, str]:
         "Company": fa.get("current_company") or "",
         "Current Title": fa.get("current_title") or "",
         "Title": fa.get("current_title") or "",
+        # Work Authorization (Fix 3 — wires the combobox primitive into a
+        # real field-map key for the first time). Sourced from the SAME
+        # M-1 ``form_answers["work_authorization"]`` phrase the (legacy,
+        # reference-only) Path B ``generic_stagehand.py`` prompt already
+        # used this exact value for — a free-text phrase like "US citizen,
+        # no sponsorship needed" (see
+        # ``jobpipe/tailor/tailor/form_answers.py``'s ``work_auth_phrase``
+        # construction), never an LLM-guessed value. Deliberately NOT a
+        # demographic/EEOC field — see this project's policy against
+        # auto-filling those (generic_stagehand.py's prompt rule 2;
+        # note_unfilled_custom_questions never auto-fills any custom
+        # question either) — work authorization has a genuine,
+        # policy-sanctioned real value, so it is safe and useful to wire.
+        "Work Authorization": fa.get("work_authorization") or "",
     }
 
 

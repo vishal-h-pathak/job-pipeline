@@ -93,15 +93,24 @@ from jobpipe.notify import create_notification
 logger = logging.getLogger("detect_fill_drift")
 
 # The ATS names the field-map system knows how to fill deterministically
-# (jobpipe/submit/adapters/prepare_dom/field_maps.yml's top-level keys),
-# plus "universal" — the no-ATS-map Claude tool-use fallback
-# (adapters/prepare_dom/universal.py), which also writes a fill_report.
+# (jobpipe/submit/adapters/prepare_dom/field_maps.yml's top-level keys).
 # Kept as an explicit tuple (matching analyze_patterns.py's
 # DEFAULT_DIMENSIONS-style constant) rather than derived from the YAML at
 # import time, since a fully-generic "whatever adapter values happen to be
 # in the table" query would silently start tracking drift for typos/one-off
 # adapter strings too.
-KNOWN_ATS: tuple[str, ...] = ("greenhouse", "lever", "ashby", "universal")
+#
+# Deliberately does NOT include "universal" (the no-ATS-map Claude tool-use
+# fallback, adapters/prepare_dom/universal.py / prepare_loop.py) — that
+# adapter's ``apply``/``apply_with_page`` results never set a
+# ``fill_report`` key at all, so its attempts would always pool to
+# attempted=0 (``compute_window_stats``' loop would find nothing to count),
+# meaning ``rate`` would always be ``None`` and ``check_drift_for_ats``
+# would always return ``None`` (the "no attempted fill_report entries —
+# skipping" sparse-data branch) — a permanent, silent no-op that looked
+# like active monitoring but never could fire. Add it back once/if
+# ``universal`` ever gains a comparable per-field fill_report.
+KNOWN_ATS: tuple[str, ...] = ("greenhouse", "lever", "ashby")
 
 # Trailing window size, each side of the comparison (current N vs. the N
 # immediately before it). ~10 attempts is enough to smooth out one-off

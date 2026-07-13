@@ -403,3 +403,13 @@ def test_notify_drift_message_unchanged_when_no_readiness_timeouts(patch_db_clie
         "Greenhouse fill rate 52% over last 10 attempts (baseline 91%) "
         "— selectors likely drifted"
     )
+
+
+def test_known_ats_excludes_universal():
+    """"universal" (the no-ATS-map Claude tool-use fallback) never sets a
+    fill_report on its results, so drift-checking it would always pool to
+    attempted=0 -> rate=None -> check_drift_for_ats always returns None —
+    a permanent, silent no-op masquerading as active monitoring. Must not
+    be in the default sweep list."""
+    assert "universal" not in drift.KNOWN_ATS
+    assert set(drift.KNOWN_ATS) == {"greenhouse", "lever", "ashby"}

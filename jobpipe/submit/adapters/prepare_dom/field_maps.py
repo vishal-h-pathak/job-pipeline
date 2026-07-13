@@ -140,6 +140,22 @@ def _selectors_for(spec: dict, label: str, ftype: str) -> list[str]:
     return chain
 
 
+_COVER_LETTER_LABEL_NEEDLES = ("cover", "letter")
+
+
+def _matched_selector_from(misses: list[dict]) -> Optional[str]:
+    """Recover the selector a primitive actually matched from its raw
+    ``misses`` log (Task 3 / #1). Every primitive appends exactly one
+    entry per attempted candidate — failures carry an ``"error"`` key,
+    and the SINGLE success (if any) is the last entry appended before the
+    primitive returns, carrying no ``"error"`` key. So: the last entry in
+    the list, if it lacks ``"error"``, is the match; anything else (list
+    empty, or the last entry is itself a failure) means nothing matched."""
+    if misses and "error" not in misses[-1]:
+        return misses[-1]["selector"]
+    return None
+
+
 def apply_field_map(
     page: Any,
     field_specs: list[dict],
@@ -155,7 +171,8 @@ def apply_field_map(
     whose value is empty are skipped (mirrors the old ``if not value:
     continue``).
 
-    Returns ``{"filled": [labels], "required_empty": [labels]}``:
+    Returns ``{"filled": [labels], "required_empty": [labels], "fill_report":
+    [...]}``:
       - ``filled``  — labels whose primitive returned True AND whose value
         stuck on a DOM re-read (honest fill verification, #2 — a fill that
         matched a selector but didn't stick, e.g. a React form discarding
@@ -171,10 +188,21 @@ def apply_field_map(
       - ``required_empty`` — labels of ``required`` specs that ended up empty
         on the form (no value, no matching selector, or a fill that didn't
         stick). This is what the verification pass (#4 / Part B) reads.
+      - ``fill_report`` — ONE entry per spec, whether or not it had a value
+        to try (Task 3 / #1 — the old ``required_empty`` list only ever
+        recorded required misses; an optional field that silently failed
+        left no trace anywhere). Each entry:
+        ``{"key", "label", "type", "required", "attempted",
+        "matched_selector", "value_verified", "misses"}`` — ``misses`` is
+        the per-selector failure log (``[{"selector", "error"}, ...]``),
+        filtered down from the primitive's raw candidate log (which also
+        carries the one success entry, if any — see
+        ``_matched_selector_from``).
     """
     log = log or logger
     filled: list[str] = []
     required_empty: list[str] = []
+    fill_report: list[dict] = []
 
     for spec in field_specs:
         key = spec.get("key")
@@ -182,40 +210,75 @@ def apply_field_map(
         ftype = spec.get("type", "text")
         required = bool(spec.get("required"))
         value = values.get(key) or ""
+        attempted = bool(value)
 
-        if not value:
+        if not attempted:
             if required:
                 required_empty.append(label)
+            fill_report.append({
+                "key": key, "label": label, "type": ftype,
+                "required": required, "attempted": False,
+                "matched_selector": None, "value_verified": False,
+                "misses": [],
+            })
             continue
 
         chain = _selectors_for(spec, label, ftype)
+        candidates: list[dict] = []
+
         if ftype == "file":
             # ``matched`` (selector found + set_input_files didn't raise) is
             # NOT sufficient — only an upload the completion wait actually
             # confirmed counts as filled (Task 2 honesty fix).
-            _matched, confirmed = upload_file(page, chain, value, log=log)
+            _matched, confirmed = upload_file(
+                page, chain, value, log=log, misses=candidates,
+            )
             ok = confirmed
         elif ftype == "combobox":
-            ok = select_combobox(page, chain, value, log=log)
+            ok = select_combobox(page, chain, value, log=log, misses=candidates)
         elif ftype == "textarea":
-            ok = paste_textarea(page, chain, value, log=log)
+            # Scope the bare catch-all "textarea" selector to the
+            # cover-letter spec only (Task 3 / #3) — no other textarea spec
+            # exists in field_maps.yml today, but this keeps the scoping
+            # tied to the cover-letter concept rather than to "any
+            # textarea", which is what the requirement actually asks for.
+            scoped_needles = (
+                _COVER_LETTER_LABEL_NEEDLES if key == "__cover_letter__" else None
+            )
+            ok = paste_textarea(
+                page, chain, value, log=log, misses=candidates,
+                scoped_needles=scoped_needles,
+            )
             if ok:
                 ok = bool(read_value(page, chain, log=log))
         elif ftype == "select":
-            ok = select_option(page, chain, value, log=log)
+            ok = select_option(page, chain, value, log=log, misses=candidates)
             if ok:
                 ok = bool(read_value(page, chain, log=log))
         else:  # text (default)
-            ok = fill_text(page, chain, value, log=log)
+            ok = fill_text(page, chain, value, log=log, misses=candidates)
             if ok:
                 ok = bool(read_value(page, chain, log=log))
+
+        matched_selector = _matched_selector_from(candidates)
+        real_misses = [m for m in candidates if "error" in m]
+        fill_report.append({
+            "key": key, "label": label, "type": ftype,
+            "required": required, "attempted": True,
+            "matched_selector": matched_selector,
+            "value_verified": bool(ok),
+            "misses": real_misses,
+        })
 
         if ok:
             filled.append(label)
         elif required:
             required_empty.append(label)
 
-    return {"filled": filled, "required_empty": required_empty}
+    return {
+        "filled": filled, "required_empty": required_empty,
+        "fill_report": fill_report,
+    }
 
 
 def run_field_map_fill(
@@ -229,14 +292,15 @@ def run_field_map_fill(
     cover_letter_path: Optional[str] = None,
     value_overrides: Optional[dict] = None,
     note_custom_questions: bool = False,
+    readiness_timeout: bool = False,
     log: logging.Logger | None = None,
 ) -> dict:
     """The shared body the per-ATS adapters call after their own navigation /
-    load-state waits. Builds the value map (M-1 ``form_answers`` + resume /
+    readiness wait. Builds the value map (M-1 ``form_answers`` + resume /
     cover-letter sources), runs ``apply_field_map``, assembles the same
     operator notes the pre-rewrite adapters produced, screenshots, and returns
     the adapter's ``{success, screenshot_path, notes, fields_filled,
-    required_empty}`` dict.
+    required_empty, fill_report, readiness_timeout}`` dict.
 
     ``value_overrides`` lets Lever force the full name into the Name / Full
     Name keys; ``note_custom_questions`` toggles the "N role-specific
@@ -246,6 +310,12 @@ def run_field_map_fill(
     finds live on the page, custom/role-specific questions included) has
     zero entries left empty. Any required gap — YAML or DOM-only — routes to
     the assisted-manual hand-off instead of ``awaiting_human_submit``.
+
+    ``readiness_timeout`` (Task 3 / #4) is threaded straight through from the
+    caller's own ``_common.wait_for_form_ready`` call — it did NOT block the
+    fill (the adapter proceeds either way), but a caller that never saw
+    positive form evidence should be distinguishable in the attempt notes
+    from a fill that ran cleanly against a confirmed-present form.
     """
     log = log or logger
     notes_parts: list[str] = []
@@ -321,4 +391,6 @@ def run_field_map_fill(
         "fields_filled": std_filled,
         "required_empty": required_empty,
         "required_total": len(all_required_labels),
+        "fill_report": result.get("fill_report"),
+        "readiness_timeout": readiness_timeout,
     }

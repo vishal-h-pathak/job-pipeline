@@ -44,6 +44,7 @@ import logging
 import time
 
 from jobpipe.submit.adapters.applicant_base import BaseApplicant
+from ._common import wait_for_form_ready
 from .field_maps import run_field_map_fill
 
 logger = logging.getLogger("prepare_dom.greenhouse")
@@ -87,7 +88,15 @@ class GreenhouseApplicant(BaseApplicant):
         human pastes them from the cockpit.
         """
         try:
-            page.wait_for_load_state("networkidle", timeout=15000)
+            # Tolerant readiness wait (Task 3 / #4) — replaces the old
+            # ``networkidle`` wait, which analytics-heavy pages routinely
+            # never satisfy within 15s, silently degrading a healthy page
+            # into an unnecessary hand-off. See ``_common.wait_for_form_ready``.
+            readiness = wait_for_form_ready(page, log=logger)
+            if not readiness["ready"]:
+                logger.warning(
+                    "greenhouse: form-readiness check timed out - proceeding anyway"
+                )
             time.sleep(1)
 
             return run_field_map_fill(
@@ -96,6 +105,7 @@ class GreenhouseApplicant(BaseApplicant):
                 resume_path=resume_path,
                 cover_letter_path=cover_letter_path,
                 note_custom_questions=True,
+                readiness_timeout=not readiness["ready"],
                 log=logger,
             )
 

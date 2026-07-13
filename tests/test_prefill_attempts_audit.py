@@ -162,11 +162,23 @@ class _FakeApplicant:
                 "fields_filled": ["First Name", "Email"],
                 "notes": "Filled 2 fields",
                 "screenshot_path": None,
+                "fill_report": [
+                    {"key": "First Name", "label": "First Name", "type": "text",
+                     "required": True, "attempted": True,
+                     "matched_selector": 'input[name="first_name"]',
+                     "value_verified": True, "misses": []},
+                ],
             }
         return {
             "success": False,
             "notes": self._notes or "pre-fill did not complete cleanly",
             "fields_filled": [],
+            "fill_report": [
+                {"key": "Phone", "label": "Phone", "type": "text",
+                 "required": True, "attempted": False,
+                 "matched_selector": None, "value_verified": False,
+                 "misses": []},
+            ],
         }
 
 
@@ -344,6 +356,14 @@ def test_success_branch_closes_attempt_with_prefilled_before_input(
     assert notes.get("prefill_screenshot_path") == "audit-success/prefill.png"
     assert notes.get("filled_fields") == ["First Name", "Email"]
     assert notes.get("notes") == "Filled 2 fields"
+    # Task 3 / #2: the adapter's fill_report threads straight into the
+    # attempt's audit notes (Task 4's drift aggregator reads this).
+    assert notes.get("fill_report") == [
+        {"key": "First Name", "label": "First Name", "type": "text",
+         "required": True, "attempted": True,
+         "matched_selector": 'input[name="first_name"]',
+         "value_verified": True, "misses": []},
+    ]
 
     # Status transition fired; failure path did NOT fire.
     assert any(o == "mark_awaiting_submit" for o in ops)
@@ -396,6 +416,14 @@ def test_failure_branch_degrades_to_assisted_manual_handoff(
     assert notes.get("assisted_manual") is True
     assert notes.get("prefill_screenshot_path") == "audit-fail/prefill.png"
     assert notes.get("materials_dir") == "/tmp/handoff/x"
+    # Task 3 / #2: the non-success adapter result's fill_report also threads
+    # into the hand-off branch's close_attempt notes, not just the clean
+    # success branch.
+    assert notes.get("fill_report") == [
+        {"key": "Phone", "label": "Phone", "type": "text",
+         "required": True, "attempted": False,
+         "matched_selector": None, "value_verified": False, "misses": []},
+    ]
 
     # No bare failure: mark_tailor_failed must NOT fire for a non-success
     # adapter result once the tab is open.
@@ -478,6 +506,10 @@ def test_materials_hash_mismatch_routes_to_handoff_without_filling(
     close_call = next(c for c in call_log if c[0] == "close_attempt")
     _, attempt_id, outcome, kwargs = close_call
     assert outcome == "needs_review"
+    # No fill ever ran (blocked before fill_form) — fill_report is None,
+    # not a stale value from a previous attempt or a crash.
+    notes = kwargs.get("notes") or {}
+    assert notes.get("fill_report") is None
 
 
 def test_materials_hash_match_proceeds_to_fill(monkeypatch, tmp_resume_pdf):

@@ -35,6 +35,7 @@ import time
 from urllib.parse import urlparse, urlunparse
 
 from jobpipe.submit.adapters.applicant_base import BaseApplicant
+from ._common import wait_for_form_ready
 from .field_maps import run_field_map_fill
 
 logger = logging.getLogger("prepare_dom.lever")
@@ -124,7 +125,15 @@ class LeverApplicant(BaseApplicant):
                     "staying put and relying on frame-aware fill"
                 )
 
-            page.wait_for_load_state("networkidle", timeout=15000)
+            # Tolerant readiness wait (Task 3 / #4) — replaces the old
+            # ``networkidle`` wait, which analytics-heavy pages routinely
+            # never satisfy within 15s, silently degrading a healthy page
+            # into an unnecessary hand-off. See ``_common.wait_for_form_ready``.
+            readiness = wait_for_form_ready(page, log=logger)
+            if not readiness["ready"]:
+                logger.warning(
+                    "lever: form-readiness check timed out - proceeding anyway"
+                )
             time.sleep(1)
 
             # Lever wants the full name in a single field. Override the Name /
@@ -143,6 +152,7 @@ class LeverApplicant(BaseApplicant):
                 cover_letter_path=cover_letter_path,
                 value_overrides={"Name": full_name, "Full Name": full_name},
                 note_custom_questions=True,
+                readiness_timeout=not readiness["ready"],
                 log=logger,
             )
 

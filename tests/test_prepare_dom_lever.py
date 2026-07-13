@@ -23,16 +23,23 @@ from jobpipe.submit.adapters.prepare_dom.lever import LeverApplicant
 class _StubLocator:
     """Always invisible — fill_text/upload_file/paste_textarea fall through
     on every selector. The PR-22 tests only care about pre-fill navigation;
-    they don't exercise field filling."""
+    they don't exercise field filling.
 
-    def __init__(self) -> None:
+    ``count`` defaults to 0, but the ``"form"`` selector reports
+    ``count=1`` — a fast "form tag exists" signal so
+    ``wait_for_form_ready`` (Task 3 / #4) returns immediately instead of
+    really waiting out its poll timeout on every navigation-only test.
+    """
+
+    def __init__(self, count: int = 0) -> None:
         self.first = self
+        self._count = count
 
     def is_visible(self, timeout: int = 1000) -> bool:
         return False
 
     def count(self) -> int:
-        return 0
+        return self._count
 
     def click(self) -> None:  # pragma: no cover - never reached
         pass
@@ -60,7 +67,7 @@ class _StubPage:
         return None
 
     def locator(self, selector: str) -> _StubLocator:
-        return _StubLocator()
+        return _StubLocator(count=1 if selector == "form" else 0)
 
 
 @pytest.fixture
@@ -225,7 +232,12 @@ class _FillLocator:
 
 class _FillPage:
     def __init__(self, behaviors, url="https://jobs.lever.co/acme/123/apply"):
-        self.behaviors, self.url = behaviors, url
+        # Default "form" -> count=1 (unless a test overrides it) so
+        # ``wait_for_form_ready`` (Task 3 / #4) returns immediately instead
+        # of really waiting out its poll timeout on every fill-parity test
+        # here.
+        self.behaviors = {"form": {"count": 1}, **behaviors}
+        self.url = url
         self.fills: list = []
         self.uploads: list = []
         self.goto_calls: list = []
@@ -290,3 +302,31 @@ def test_lever_required_empty_when_name_field_missing(monkeypatch, tmp_path):
     # No visible name field / phone / resume -> reported in required_empty.
     assert "Name" in result["required_empty"]
     assert "Phone" in result["required_empty"]
+
+
+# ── Tolerant readiness wait wiring (Task 3 / #4) ────────────────────────────
+
+def test_lever_surfaces_readiness_timeout_when_form_never_appears(monkeypatch):
+    import jobpipe.submit.adapters.prepare_dom.lever as lever_module
+
+    _patch_screenshot(monkeypatch)
+    monkeypatch.setattr(
+        lever_module, "wait_for_form_ready",
+        lambda page, log=None: {"ready": False, "signal": None},
+    )
+    page = _FillPage({})
+    job = {"id": "lev-timeout", "form_answers": {}}
+
+    result = LeverApplicant().fill_form(page, job)
+
+    assert result["readiness_timeout"] is True
+
+
+def test_lever_readiness_timeout_false_when_form_appears(monkeypatch):
+    _patch_screenshot(monkeypatch)
+    page = _FillPage({})  # default "form": count=1 fast-path
+    job = {"id": "lev-ready", "form_answers": {}}
+
+    result = LeverApplicant().fill_form(page, job)
+
+    assert result["readiness_timeout"] is False

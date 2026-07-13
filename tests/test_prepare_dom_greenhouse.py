@@ -56,7 +56,11 @@ class _StubLocator:
 
 class _StubPage:
     def __init__(self, behaviors: dict):
-        self.behaviors = behaviors
+        # Default "form" -> count=1 (unless a test overrides it) so
+        # ``wait_for_form_ready`` (Task 3 / #4) returns immediately instead
+        # of really waiting out its poll timeout on every field-fill test
+        # here — orthogonal to what's actually being exercised.
+        self.behaviors = {"form": {"count": 1}, **behaviors}
         self.fills: list[tuple[str, str]] = []
         self.uploads: list[tuple[str, str]] = []
         self.values: dict[str, str] = {}
@@ -178,3 +182,37 @@ def test_required_empty_lists_field_with_no_value(monkeypatch, tmp_path):
     )
 
     assert "Phone" in result["required_empty"]
+
+
+# ── Tolerant readiness wait wiring (Task 3 / #4) ────────────────────────────
+
+def test_greenhouse_surfaces_readiness_timeout_when_form_never_appears(
+    monkeypatch, tmp_path,
+):
+    import jobpipe.submit.adapters.prepare_dom.greenhouse as gh_module
+
+    _patch_screenshot(monkeypatch)
+    monkeypatch.setattr(
+        gh_module, "wait_for_form_ready",
+        lambda page, log=None: {"ready": False, "signal": None},
+    )
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 fake")
+    page = _StubPage({})
+    job = {"id": "gh-timeout", "form_answers": {}}
+
+    result = GreenhouseApplicant().fill_form(page, job, resume_path=str(resume))
+
+    assert result["readiness_timeout"] is True
+
+
+def test_greenhouse_readiness_timeout_false_when_form_appears(monkeypatch, tmp_path):
+    _patch_screenshot(monkeypatch)
+    resume = tmp_path / "resume.pdf"
+    resume.write_bytes(b"%PDF-1.4 fake")
+    page = _StubPage({})  # default "form": count=1 fast-path
+    job = {"id": "gh-ready", "form_answers": {}}
+
+    result = GreenhouseApplicant().fill_form(page, job, resume_path=str(resume))
+
+    assert result["readiness_timeout"] is False

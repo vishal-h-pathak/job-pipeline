@@ -97,9 +97,29 @@ def _iter_frame_locators(page: Any, selector: str) -> list:
 
 
 # ── Field-fill primitives (sync, swallow Playwright exceptions per-selector) ─
+#
+# Task 3 (fill_report / #1): every primitive below gained an optional
+# ``misses: list | None = None`` keyword. When a caller passes a list, the
+# primitive appends one entry per selector CANDIDATE it tried:
+#   - a failure (the try/except block actually raised) appends
+#     ``{"selector": ..., "error": type(exc).__name__}`` — this is the shape
+#     ``apply_field_map``'s ``fill_report`` reports as ``misses``.
+#   - a SUCCESS also appends one entry, ``{"selector": ...}`` (no "error"
+#     key), immediately before returning — this is how ``apply_field_map``
+#     recovers ``matched_selector`` without changing any primitive's public
+#     return type (still a bare bool / the existing ``upload_file`` tuple).
+#     ``apply_field_map`` partitions the list itself: entries carrying
+#     "error" become the report's ``misses``; a trailing entry WITHOUT
+#     "error" is the match.
+# A selector that was simply never visible (no exception at all) leaves no
+# trace — exactly like before Task 3 — since there is no exception class to
+# report and "not visible yet" is not itself a failure worth an entry.
+# Default ``None`` means "don't bother": existing callers/tests that never
+# pass ``misses`` see byte-identical behavior.
 
 def fill_text(page: Any, selectors: list[str], value: str,
-              *, log: logging.Logger | None = None) -> bool:
+              *, log: logging.Logger | None = None,
+              misses: list | None = None) -> bool:
     """Try each selector in order (top document, then each iframe); click +
     fill the first visible match.
 
@@ -116,9 +136,12 @@ def fill_text(page: Any, selectors: list[str], value: str,
                 el.click()
                 el.fill(value)
                 log.info(f"Filled via {selector}")
+                if misses is not None:
+                    misses.append({"selector": selector})
                 return True
-        except Exception:
-            pass
+        except Exception as exc:
+            if misses is not None:
+                misses.append({"selector": selector, "error": type(exc).__name__})
         for frame_loc in _iter_frame_locators(page, selector):
             try:
                 el = frame_loc.first
@@ -126,8 +149,12 @@ def fill_text(page: Any, selectors: list[str], value: str,
                     el.click()
                     el.fill(value)
                     log.info(f"Filled via {selector} (iframe)")
+                    if misses is not None:
+                        misses.append({"selector": selector})
                     return True
-            except Exception:
+            except Exception as exc:
+                if misses is not None:
+                    misses.append({"selector": selector, "error": type(exc).__name__})
                 continue
     log.debug("No selector matched for fill_text")
     return False
@@ -179,6 +206,7 @@ def upload_file(
     *, log: logging.Logger | None = None,
     confirm_timeout_s: float = 3.0,
     confirm_poll_interval_s: float = 0.1,
+    misses: list | None = None,
 ) -> tuple[bool, bool]:
     """Upload ``file_path`` into the first matching ``input[type=file]``
     (top document, then each iframe), then wait for evidence the ATS
@@ -212,6 +240,8 @@ def upload_file(
             if file_input.count() > 0:
                 file_input.set_input_files(file_path)
                 log.info(f"Uploaded via {selector}")
+                if misses is not None:
+                    misses.append({"selector": selector})
                 confirmed = _wait_for_upload_confirmation(
                     page, filename, log=log,
                     timeout_s=confirm_timeout_s,
@@ -223,14 +253,17 @@ def upload_file(
                         f"{confirm_timeout_s}s - ATS may not have accepted the file"
                     )
                 return True, confirmed
-        except Exception:
-            pass
+        except Exception as exc:
+            if misses is not None:
+                misses.append({"selector": selector, "error": type(exc).__name__})
         for frame_loc in _iter_frame_locators(page, selector):
             try:
                 file_input = frame_loc.first
                 if file_input.count() > 0:
                     file_input.set_input_files(file_path)
                     log.info(f"Uploaded via {selector} (iframe)")
+                    if misses is not None:
+                        misses.append({"selector": selector})
                     confirmed = _wait_for_upload_confirmation(
                         page, filename, log=log,
                         timeout_s=confirm_timeout_s,
@@ -242,42 +275,78 @@ def upload_file(
                             f"{confirm_timeout_s}s - ATS may not have accepted the file"
                         )
                     return True, confirmed
-            except Exception:
+            except Exception as exc:
+                if misses is not None:
+                    misses.append({"selector": selector, "error": type(exc).__name__})
                 continue
     return False, False
 
 
-def paste_textarea(page: Any, selectors: list[str], text: str,
-                   *, log: logging.Logger | None = None) -> bool:
+def paste_textarea(
+    page: Any, selectors: list[str], text: str,
+    *, log: logging.Logger | None = None,
+    misses: list | None = None,
+    scoped_needles: tuple[str, ...] | None = None,
+) -> bool:
     """Paste ``text`` into the first matching textarea or contenteditable
     element (top document, then each iframe). Same iteration semantics as
-    ``fill_text``."""
+    ``fill_text``.
+
+    ``scoped_needles`` (Task 3 / #3) restricts ONLY the bare catch-all
+    ``"textarea"`` selector — every more-specific selector ahead of it in
+    the chain (``textarea[name*="cover" i]`` etc.) is tried unconditionally,
+    exactly as before. The bare catch-all is the one that used to grab
+    whichever textarea happened to render first on the page — often a
+    custom question, not the cover letter, on a form with no properly
+    labeled cover-letter box. When scoped, it is only accepted if the
+    textarea's resolved label (``_resolve_dom_label`` — aria-label /
+    placeholder / name / associated ``label[for=id]``) contains at least
+    one needle, case-insensitively. A visible-but-mislabeled bare textarea
+    is treated as a plain non-match (falls through to the next candidate /
+    frame) — not a crash, and not a per-selector ``misses`` entry either
+    (mirrors the "not visible" precedent: no exception, no entry — the
+    field-level ``fill_report`` still shows the spec unfilled).
+    """
     log = log or logger
     for selector in selectors:
+        scoped = bool(scoped_needles) and selector == "textarea"
         try:
             el = page.locator(selector).first
             if el.is_visible(timeout=1000):
-                el.click()
-                el.fill(text)
-                log.info(f"Pasted via {selector}")
-                return True
-        except Exception:
-            pass
+                if scoped and not _label_matches_any(page, el, scoped_needles):
+                    pass  # mislabeled catch-all match — fall through
+                else:
+                    el.click()
+                    el.fill(text)
+                    log.info(f"Pasted via {selector}")
+                    if misses is not None:
+                        misses.append({"selector": selector})
+                    return True
+        except Exception as exc:
+            if misses is not None:
+                misses.append({"selector": selector, "error": type(exc).__name__})
         for frame_loc in _iter_frame_locators(page, selector):
             try:
                 el = frame_loc.first
                 if el.is_visible(timeout=1000):
+                    if scoped and not _label_matches_any(page, el, scoped_needles):
+                        continue
                     el.click()
                     el.fill(text)
                     log.info(f"Pasted via {selector} (iframe)")
+                    if misses is not None:
+                        misses.append({"selector": selector})
                     return True
-            except Exception:
+            except Exception as exc:
+                if misses is not None:
+                    misses.append({"selector": selector, "error": type(exc).__name__})
                 continue
     return False
 
 
 def select_option(page: Any, selectors: list[str], value: str,
-                  *, log: logging.Logger | None = None) -> bool:
+                  *, log: logging.Logger | None = None,
+                  misses: list | None = None) -> bool:
     """Choose ``value`` in the first matching visible ``<select>`` (top
     document, then each iframe).
 
@@ -295,17 +364,24 @@ def select_option(page: Any, selectors: list[str], value: str,
             if el.is_visible(timeout=1000):
                 el.select_option(value)
                 log.info(f"Selected via {selector}")
+                if misses is not None:
+                    misses.append({"selector": selector})
                 return True
-        except Exception:
-            pass
+        except Exception as exc:
+            if misses is not None:
+                misses.append({"selector": selector, "error": type(exc).__name__})
         for frame_loc in _iter_frame_locators(page, selector):
             try:
                 el = frame_loc.first
                 if el.is_visible(timeout=1000):
                     el.select_option(value)
                     log.info(f"Selected via {selector} (iframe)")
+                    if misses is not None:
+                        misses.append({"selector": selector})
                     return True
-            except Exception:
+            except Exception as exc:
+                if misses is not None:
+                    misses.append({"selector": selector, "error": type(exc).__name__})
                 continue
     return False
 
@@ -476,6 +552,7 @@ def select_combobox(
     *, log: logging.Logger | None = None,
     listbox_timeout_s: float = 2.0,
     listbox_poll_interval_s: float = 0.1,
+    misses: list | None = None,
 ) -> bool:
     """Fill a react-select / ``role="combobox"`` div-based field (top
     document, then each iframe for the container itself).
@@ -506,9 +583,12 @@ def select_combobox(
                     listbox_poll_interval_s=listbox_poll_interval_s,
                 ):
                     log.info(f"Selected combobox option via {selector}")
+                    if misses is not None:
+                        misses.append({"selector": selector})
                     return True
-        except Exception:
-            pass
+        except Exception as exc:
+            if misses is not None:
+                misses.append({"selector": selector, "error": type(exc).__name__})
         for frame_loc in _iter_frame_locators(page, selector):
             try:
                 el = frame_loc.first
@@ -519,11 +599,70 @@ def select_combobox(
                         listbox_poll_interval_s=listbox_poll_interval_s,
                     ):
                         log.info(f"Selected combobox option via {selector} (iframe)")
+                        if misses is not None:
+                            misses.append({"selector": selector})
                         return True
-            except Exception:
+            except Exception as exc:
+                if misses is not None:
+                    misses.append({"selector": selector, "error": type(exc).__name__})
                 continue
     log.debug("No selector matched for select_combobox")
     return False
+
+
+# ── Tolerant form-readiness wait (Task 3 / #4) ─────────────────────────────
+#
+# All three prepare_dom adapters used to call
+# ``page.wait_for_load_state("networkidle", timeout=15000)`` before filling.
+# Analytics-heavy pages (the common case for a careers site) routinely never
+# go network-idle within 15s — third-party trackers keep firing requests
+# indefinitely — so a perfectly healthy, already-rendered form silently
+# degraded into an unnecessary assisted-manual hand-off. This helper waits
+# for POSITIVE evidence the form itself exists instead of network silence.
+
+def wait_for_form_ready(
+    page: Any, *, timeout_ms: int = 8000,
+    settle_s: float = 1.0,
+    poll_interval_s: float = 0.2,
+    log: logging.Logger | None = None,
+) -> dict:
+    """Poll (bounded by ``timeout_ms``) for either a required-field element
+    (``[required], [aria-required="true"]`` — the same selector
+    ``scan_required_fields`` uses) or a bare ``<form>`` tag. Returns as soon
+    as either shows up: ``{"ready": True, "signal": "required_field" |
+    "form_tag"}``.
+
+    If NEITHER appears before the deadline this is a distinct, named
+    outcome rather than a bare ``except: pass`` — falls back to a short
+    settle sleep (best-effort; the caller's own ``page.goto`` already fired
+    ``domcontentloaded`` before this was ever called) and returns
+    ``{"ready": False, "signal": None}``. This never blocks the fill: the
+    caller proceeds either way and surfaces ``ready is False`` as
+    ``result["readiness_timeout"] = True`` so it reads differently in the
+    attempt notes than "the fill ran but missed fields" — a page that never
+    renders a `<form>` still gets the same best-effort fill attempt the old
+    ``networkidle`` timeout used to fall through to, just without waiting
+    the full 15s to get there.
+    """
+    log = log or logger
+    deadline = time.monotonic() + (timeout_ms / 1000)
+    checks = (
+        ('[required], [aria-required="true"]', "required_field"),
+        ("form", "form_tag"),
+    )
+    while True:
+        for selector, signal in checks:
+            try:
+                if page.locator(selector).count() > 0:
+                    return {"ready": True, "signal": signal}
+            except Exception:
+                pass
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(poll_interval_s)
+    log.debug(f"wait_for_form_ready: no required-field/form evidence within {timeout_ms}ms")
+    time.sleep(settle_s)  # last-resort settle before proceeding anyway
+    return {"ready": False, "signal": None}
 
 
 # ── DOM re-read verification (honest fill verification, P0 #2) ────────────
@@ -597,6 +736,21 @@ def _resolve_dom_label(page: Any, el: Any) -> str:
         except Exception:
             pass
     return ""
+
+
+def _label_matches_any(page: Any, el: Any, needles: tuple[str, ...]) -> bool:
+    """True if ``el``'s resolved label (``_resolve_dom_label`` — reused
+    as-is, not re-implemented) contains at least one of ``needles``,
+    case-insensitively. Used by ``paste_textarea``'s ``scoped_needles`` to
+    stop a bare catch-all ``"textarea"`` selector from grabbing the wrong
+    (unlabeled or custom-question) textarea on a form with no properly
+    labeled cover-letter box. An unresolvable label (``""``) never matches
+    — no label text means no needle can be found in it."""
+    label = _resolve_dom_label(page, el)
+    if not label:
+        return False
+    low = label.lower()
+    return any(needle in low for needle in needles)
 
 
 def _resolve_dom_selector(el: Any) -> str:

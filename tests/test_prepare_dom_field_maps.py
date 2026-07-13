@@ -39,6 +39,7 @@ class _StubLocator:
         count: int = 0,
         discard_fill: bool = False,
         attrs: Optional[dict] = None,
+        raise_on_visible: bool = False,
     ):
         self.selector = selector
         self.page = page
@@ -51,12 +52,19 @@ class _StubLocator:
         # is exactly the "didn't stick" case the DOM re-read must catch.
         self.discard_fill = discard_fill
         self._attrs = attrs or {}
+        # fill_report / misses coverage (Task 3 / #1): simulates a selector
+        # that resolves but blows up on the visibility check (a detached
+        # node, an inaccessible frame) — the primitive must swallow it AND
+        # (when a caller passes ``misses``) record ``{"selector", "error"}``.
+        self.raise_on_visible = raise_on_visible
 
     @property
     def first(self):
         return self
 
     def is_visible(self, timeout: int = 1000) -> bool:
+        if self.raise_on_visible:
+            raise RuntimeError(f"stub: is_visible blew up for {self.selector}")
         return self.visible
 
     def count(self) -> int:
@@ -204,7 +212,13 @@ def test_apply_field_map_uploads_file_matched_but_not_confirmed_is_not_filled():
 
 
 def test_apply_field_map_pastes_textarea_via_paste_textarea():
-    page = _StubPage({"textarea": {"visible": True}})
+    # Task 3 / #3: the bare catch-all "textarea" selector is now scoped for
+    # the __cover_letter__ key — it only accepts a textarea whose resolved
+    # label contains a cover-letter needle, so this stub textarea carries
+    # one (a realistic ATS would label its lone textarea somehow).
+    page = _StubPage({
+        "textarea": {"visible": True, "attrs": {"aria-label": "Cover Letter"}},
+    })
     specs = [{
         "key": "__cover_letter__", "label": "Cover Letter",
         "type": "textarea", "selectors": ["textarea"],
@@ -239,7 +253,7 @@ def test_apply_field_map_dispatches_combobox_type_to_select_combobox():
     calls = []
     original = field_maps_module.select_combobox
 
-    def fake_select_combobox(page, selectors, value, *, log=None):
+    def fake_select_combobox(page, selectors, value, *, log=None, misses=None):
         calls.append((selectors, value))
         return True
 
@@ -455,8 +469,16 @@ def test_apply_field_map_demotes_a_discarded_optional_fill_silently():
 
 
 def test_apply_field_map_demotes_a_discarded_textarea_and_select_fill():
+    # Task 3 / #3: give the textarea a cover-letter-matching label so the
+    # NEW scoping check accepts it — this test's actual target is the P0
+    # discard_fill demotion (paste "succeeds" but the DOM re-read shows it
+    # never stuck), not the scoping check, so the label must resolve
+    # cleanly to isolate that.
     page = _StubPage({
-        "textarea": {"visible": True, "discard_fill": True},
+        "textarea": {
+            "visible": True, "discard_fill": True,
+            "attrs": {"aria-label": "Cover Letter"},
+        },
         "select-a": {"visible": True, "discard_fill": True},
     })
     specs = [
@@ -569,3 +591,181 @@ def test_apply_field_map_file_upload_is_exempt_from_dom_reread():
     result = apply_field_map(page, specs, {"__resume__": "/tmp/r.pdf"})
     assert result["filled"] == ["Resume"]
     assert result["required_empty"] == []
+
+
+# ── fill_report (Task 3 / #1) ───────────────────────────────────────────────
+#
+# Before Task 3, ``apply_field_map`` only ever recorded ``required_empty`` —
+# an OPTIONAL field that silently failed left no trace anywhere, and no per-
+# selector detail (which candidate matched, which raised what) existed at
+# all. ``fill_report`` is a new, separate record: one entry per spec,
+# whether or not it had a value, carrying ``matched_selector`` /
+# ``value_verified`` / a per-selector ``misses`` log.
+
+def test_fill_report_has_one_entry_per_spec_including_unattempted():
+    page = _StubPage({'input[name="email"]': {"visible": True}})
+    specs = [
+        {"key": "Email", "name": "email", "type": "text", "required": True},
+        {"key": "Phone", "name": "phone", "type": "text", "required": False},
+    ]
+    # No value supplied for Phone at all.
+    result = apply_field_map(page, specs, {"Email": "a@b.invalid"})
+    report = result["fill_report"]
+    assert [e["key"] for e in report] == ["Email", "Phone"]
+
+    email_entry = report[0]
+    assert email_entry["label"] == "Email"
+    assert email_entry["type"] == "text"
+    assert email_entry["required"] is True
+    assert email_entry["attempted"] is True
+    assert email_entry["matched_selector"] == 'input[name="email"]'
+    assert email_entry["value_verified"] is True
+    assert email_entry["misses"] == []
+
+    phone_entry = report[1]
+    assert phone_entry["attempted"] is False
+    assert phone_entry["matched_selector"] is None
+    assert phone_entry["value_verified"] is False
+    assert phone_entry["misses"] == []
+
+
+def test_fill_report_records_per_selector_misses_for_optional_field():
+    """An OPTIONAL field that never matches anything used to vanish
+    completely (only required fields showed up in ``required_empty``).
+    ``fill_report`` must still carry it, including the exception raised by
+    the selector that blew up along the way."""
+    page = _StubPage({
+        "sel-a": {"raise_on_visible": True},
+        "sel-b": {"visible": False},
+    })
+    specs = [{
+        "key": "GitHub", "label": "GitHub", "type": "text", "required": False,
+        "selectors": ["sel-a", "sel-b"],
+    }]
+    result = apply_field_map(page, specs, {"GitHub": "github.example/x"})
+    assert result["required_empty"] == []  # optional — old contract unchanged
+
+    entry = result["fill_report"][0]
+    assert entry["attempted"] is True
+    assert entry["matched_selector"] is None
+    assert entry["value_verified"] is False
+    assert entry["misses"] == [{"selector": "sel-a", "error": "RuntimeError"}]
+
+
+def test_fill_report_records_matched_selector_for_file_upload():
+    page = _StubPage({
+        'input[type="file"]': {"count": 1},
+        "text=r.pdf": {"count": 1},
+    })
+    specs = [{
+        "key": "__resume__", "label": "Resume", "type": "file", "required": True,
+        "selectors": ['input[type="file"]'],
+    }]
+    result = apply_field_map(page, specs, {"__resume__": "/tmp/r.pdf"})
+    entry = result["fill_report"][0]
+    assert entry["matched_selector"] == 'input[type="file"]'
+    assert entry["value_verified"] is True
+    assert entry["misses"] == []
+
+
+def test_fill_report_demoted_fill_shows_matched_selector_but_not_verified():
+    """A fill that matched a selector but didn't stick on DOM re-read (P0
+    honesty fix) still records WHICH selector matched — ``value_verified``
+    is what turns False, not ``matched_selector``."""
+    page = _StubPage({
+        'input[name="email"]': {"visible": True, "discard_fill": True},
+    })
+    specs = [{"key": "Email", "name": "email", "type": "text", "required": True}]
+    result = apply_field_map(page, specs, {"Email": "a@b.invalid"})
+    entry = result["fill_report"][0]
+    assert entry["matched_selector"] == 'input[name="email"]'
+    assert entry["value_verified"] is False
+    assert result["required_empty"] == ["Email"]
+
+
+# ── Scoped cover-letter textarea fallback (Task 3 / #3) ─────────────────────
+#
+# The bare catch-all ``'textarea'`` at the end of every ATS's cover-letter
+# selector chain used to grab whichever textarea rendered first — often a
+# custom question, not the cover letter, on a form with no properly labeled
+# cover-letter box. ``apply_field_map`` now scopes that catch-all (for the
+# ``__cover_letter__`` spec only) to a textarea whose resolved label
+# contains "cover" or "letter".
+
+def test_cover_letter_bare_textarea_skips_mislabeled_custom_question():
+    """Only one textarea on the page, and it's an unrelated custom
+    question (aria-label doesn't mention cover/letter) — the bare catch-all
+    must NOT paste the cover letter into it."""
+    page = _StubPage({
+        "textarea": {"visible": True, "attrs": {"aria-label": "Why do you want this role?"}},
+    })
+    specs = [{
+        "key": "__cover_letter__", "label": "Cover Letter",
+        "type": "textarea", "selectors": ["textarea"],
+    }]
+    result = apply_field_map(
+        page, specs, {"__cover_letter__": "Dear team, ..."}
+    )
+    assert page.fills == []
+    assert result["filled"] == []
+    entry = result["fill_report"][0]
+    assert entry["matched_selector"] is None
+    assert entry["value_verified"] is False
+
+
+def test_cover_letter_bare_textarea_accepts_properly_labeled_textarea():
+    """The bare catch-all textarea IS labeled "Cover Letter" — the scoped
+    check must still accept it (scoping isn't a blanket ban, just a label
+    requirement)."""
+    page = _StubPage({
+        "textarea": {"visible": True, "attrs": {"aria-label": "Cover Letter"}},
+    })
+    specs = [{
+        "key": "__cover_letter__", "label": "Cover Letter",
+        "type": "textarea", "selectors": ["textarea"],
+    }]
+    result = apply_field_map(
+        page, specs, {"__cover_letter__": "Dear team, ..."}
+    )
+    assert page.fills == [("textarea", "Dear team, ...")]
+    assert result["filled"] == ["Cover Letter"]
+    assert result["fill_report"][0]["matched_selector"] == "textarea"
+
+
+def test_cover_letter_more_specific_selector_ahead_of_catch_all_is_unscoped():
+    """A qualified selector (``textarea[name*="cover" i]``) ahead of the
+    bare catch-all is tried unconditionally — scoping only applies to the
+    literal bare ``"textarea"`` candidate."""
+    page = _StubPage({
+        'textarea[name*="cover" i]': {"visible": True},
+        # No attrs at all — if this were scoped it would be rejected, but
+        # it must never even reach the scoping check.
+    })
+    specs = [{
+        "key": "__cover_letter__", "label": "Cover Letter",
+        "type": "textarea",
+        "selectors": ['textarea[name*="cover" i]', "textarea"],
+    }]
+    result = apply_field_map(
+        page, specs, {"__cover_letter__": "Dear team, ..."}
+    )
+    assert result["filled"] == ["Cover Letter"]
+    assert page.fills == [('textarea[name*="cover" i]', "Dear team, ...")]
+
+
+def test_non_cover_letter_textarea_spec_is_not_scoped():
+    """Scoping is tied to the ``__cover_letter__`` key specifically — a
+    hypothetical other textarea-type spec must not be scoped (no needle
+    check applied) since ``scoped_needles`` is only ever passed for the
+    cover-letter key."""
+    page = _StubPage({
+        "textarea": {"visible": True, "attrs": {"aria-label": "Random question"}},
+    })
+    specs = [{
+        "key": "OtherTextarea", "label": "Other Textarea",
+        "type": "textarea", "selectors": ["textarea"],
+    }]
+    result = apply_field_map(
+        page, specs, {"OtherTextarea": "some answer"}
+    )
+    assert result["filled"] == ["Other Textarea"]

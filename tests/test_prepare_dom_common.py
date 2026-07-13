@@ -24,6 +24,7 @@ from jobpipe.submit.adapters.prepare_dom._common import (
     select_combobox,
     select_option,
     upload_file,
+    wait_for_form_ready,
 )
 
 
@@ -1054,6 +1055,175 @@ def test_frame_access_failure_is_swallowed_and_falls_through():
     )
     ok = fill_text(page, ["sel-a"], "value")
     assert ok is False
+
+
+# ── misses tracking (Task 3 / #1) ──────────────────────────────────────────
+#
+# Every fill primitive gained an optional ``misses: list | None = None``
+# keyword. Passing ``None`` (the default — every test above never passes it)
+# is byte-identical to pre-Task-3 behavior; these tests exercise the new
+# param directly.
+
+def test_fill_text_misses_records_error_for_failed_selector_then_match():
+    page = _StubPage({
+        "sel-a": {"raise_on_visible": True},
+        "sel-b": {"visible": True},
+    })
+    misses: list = []
+    ok = fill_text(page, ["sel-a", "sel-b"], "value", misses=misses)
+    assert ok is True
+    # sel-a's exception is recorded; sel-b's SUCCESS is also recorded (no
+    # "error" key) — apply_field_map partitions the two apart.
+    assert misses == [
+        {"selector": "sel-a", "error": "RuntimeError"},
+        {"selector": "sel-b"},
+    ]
+
+
+def test_fill_text_misses_stays_none_by_default_for_existing_callers():
+    """No ``misses`` argument passed — behavior is unchanged, nothing to
+    inspect (the param truly defaults to "don't bother")."""
+    page = _StubPage({"sel-a": {"visible": True}})
+    ok = fill_text(page, ["sel-a"], "value")
+    assert ok is True
+
+
+def test_fill_text_misses_records_nothing_when_every_selector_just_misses_silently():
+    """A selector that's simply not visible (no exception at all) leaves no
+    trace in ``misses`` — only actual exceptions get an entry."""
+    page = _StubPage({"sel-a": {"visible": False}})
+    misses: list = []
+    ok = fill_text(page, ["sel-a"], "value", misses=misses)
+    assert ok is False
+    assert misses == []
+
+
+def test_upload_file_misses_records_success_entry_on_match():
+    page = _StubPage({
+        "sel-a": {"count": 1},
+        "text=r.pdf": {"count": 1},
+    })
+    misses: list = []
+    matched, confirmed = upload_file(page, ["sel-a"], "/tmp/r.pdf", misses=misses)
+    assert matched is True and confirmed is True
+    assert misses == [{"selector": "sel-a"}]
+
+
+def test_select_option_misses_records_error_entries():
+    page = _StubPage({
+        "select-a": {"raise_on_visible": True},
+        "select-b": {"visible": True},
+    })
+    misses: list = []
+    ok = select_option(page, ["select-a", "select-b"], "X", misses=misses)
+    assert ok is True
+    assert misses == [
+        {"selector": "select-a", "error": "RuntimeError"},
+        {"selector": "select-b"},
+    ]
+
+
+def test_select_combobox_misses_records_success_entry():
+    page = _ComboPage(
+        "div[data-testid=combo]",
+        ["United States", "United Kingdom"],
+    )
+    misses: list = []
+    ok = select_combobox(page, ["div[data-testid=combo]"], "United States", misses=misses)
+    assert ok is True
+    assert misses == [{"selector": "div[data-testid=combo]"}]
+
+
+# ── Scoped cover-letter textarea fallback (Task 3 / #3) ────────────────────
+
+def test_paste_textarea_scoped_rejects_mislabeled_bare_catch_all():
+    page = _StubPage({
+        "textarea": {"visible": True, "attrs": {"aria-label": "Why this role?"}},
+    })
+    ok = paste_textarea(
+        page, ["textarea"], "Dear team, ...",
+        scoped_needles=("cover", "letter"),
+    )
+    assert ok is False
+    assert page.fills == []
+
+
+def test_paste_textarea_scoped_accepts_properly_labeled_bare_catch_all():
+    page = _StubPage({
+        "textarea": {"visible": True, "attrs": {"aria-label": "Cover Letter"}},
+    })
+    ok = paste_textarea(
+        page, ["textarea"], "Dear team, ...",
+        scoped_needles=("cover", "letter"),
+    )
+    assert ok is True
+    assert page.fills == [("textarea", "Dear team, ...")]
+
+
+def test_paste_textarea_scoping_does_not_apply_to_qualified_selectors():
+    """Only the LITERAL bare ``"textarea"`` candidate is scoped — a
+    qualified selector ahead of it (e.g. ``textarea[name*="cover" i]``) is
+    tried unconditionally, matching the requirement that more-specific
+    selectors stay untouched."""
+    page = _StubPage({
+        'textarea[name*="cover" i]': {"visible": True},  # no attrs at all
+    })
+    ok = paste_textarea(
+        page, ['textarea[name*="cover" i]', "textarea"], "Dear team, ...",
+        scoped_needles=("cover", "letter"),
+    )
+    assert ok is True
+    assert page.fills == [('textarea[name*="cover" i]', "Dear team, ...")]
+
+
+def test_paste_textarea_unscoped_when_no_needles_given():
+    """``scoped_needles=None`` (the default) — behavior identical to before
+    Task 3, bare catch-all accepted unconditionally."""
+    page = _StubPage({"textarea": {"visible": True}})
+    ok = paste_textarea(page, ["textarea"], "anything")
+    assert ok is True
+
+
+# ── wait_for_form_ready (Task 3 / #4) ──────────────────────────────────────
+#
+# Replaces the old ``page.wait_for_load_state("networkidle", timeout=15000)``
+# every adapter called before filling — analytics-heavy pages routinely
+# never go network-idle within 15s, silently degrading a healthy page into
+# an unnecessary hand-off. This waits for POSITIVE evidence a form exists.
+
+def test_wait_for_form_ready_returns_true_when_required_field_present():
+    page = _StubPage({'[required], [aria-required="true"]': {"count": 1}})
+    result = wait_for_form_ready(page, timeout_ms=500, poll_interval_s=0.01)
+    assert result == {"ready": True, "signal": "required_field"}
+
+
+def test_wait_for_form_ready_returns_true_when_form_tag_present():
+    page = _StubPage({"form": {"count": 1}})
+    result = wait_for_form_ready(page, timeout_ms=500, poll_interval_s=0.01)
+    assert result == {"ready": True, "signal": "form_tag"}
+
+
+def test_wait_for_form_ready_times_out_when_neither_ever_appears():
+    """Neither a required-field element nor a `<form>` tag ever shows up —
+    a distinct, named ``ready: False`` outcome (NOT a silent ``except:
+    pass``), bounded by the (test-scale) timeout, with a short settle sleep
+    on the way out."""
+    page = _StubPage({})
+    result = wait_for_form_ready(
+        page, timeout_ms=50, poll_interval_s=0.01, settle_s=0.01,
+    )
+    assert result == {"ready": False, "signal": None}
+
+
+def test_wait_for_form_ready_swallows_locator_exceptions():
+    class _BoomPage:
+        def locator(self, selector):
+            raise RuntimeError("selector engine blew up")
+
+    result = wait_for_form_ready(
+        _BoomPage(), timeout_ms=50, poll_interval_s=0.01, settle_s=0.01,
+    )
+    assert result == {"ready": False, "signal": None}
 
 
 def test_frame_locator_missing_entirely_is_swallowed():

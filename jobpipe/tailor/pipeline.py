@@ -632,7 +632,16 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
     # down once at end-of-run.
     page = context.new_page()
 
-    def _handoff(reason, unfilled=None, screenshot_key=None, summary=None):
+    # Bound up front (not just assigned in the try body) so every ``_handoff``
+    # call site — including the ones that fire BEFORE the adapter's
+    # fill_form/apply_with_page ever runs (page-load failure, materials-hash
+    # mismatch) — can safely read ``result.get("fill_report")`` without an
+    # UnboundLocalError/NameError closure hazard. Those early call sites see
+    # ``None`` (no fill was attempted yet), which is correct.
+    result = None
+
+    def _handoff(reason, unfilled=None, screenshot_key=None, summary=None,
+                 fill_report=None):
         """Degrade to assisted-manual: tab open, files staged, checklist."""
         nonlocal attempt_closed
         ho = assisted_manual_handoff(
@@ -648,6 +657,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                     "materials_dir": ho.get("materials_dir"),
                     "prefill_screenshot_path": screenshot_key,
                     "verification": summary,
+                    "fill_report": fill_report,
                 },
             )
             attempt_closed = True
@@ -745,6 +755,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                     "filled_fields": result.get("fields_filled"),
                     "notes": result.get("notes"),
                     "verification": verification["summary"],
+                    "fill_report": result.get("fill_report"),
                 },
             )
             attempt_closed = True
@@ -774,6 +785,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                 unfilled=verification["still_needs"],
                 screenshot_key=screenshot_storage_key,
                 summary=verification["summary"],
+                fill_report=result.get("fill_report"),
             )
 
         _wait_for_human_decision(
@@ -785,7 +797,10 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
         # than emit a bare failure.
         logger.exception(f"Pre-fill exception for {company}: {exc}")
         try:
-            _handoff(f"adapter exception: {exc}")
+            _handoff(
+                f"adapter exception: {exc}",
+                fill_report=(result or {}).get("fill_report"),
+            )
         except Exception:
             logger.exception("assisted_manual_handoff failed for %s", job_id)
             if not attempt_closed:

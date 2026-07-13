@@ -27,16 +27,24 @@ from jobpipe.submit.adapters.prepare_dom.ashby import AshbyApplicant
 class _StubLocator:
     """Always invisible — fill_text/upload_file/paste_textarea fall through
     on every selector. The PR-22 tests only care about pre-fill navigation;
-    they don't exercise field filling."""
+    they don't exercise field filling.
 
-    def __init__(self) -> None:
+    ``count`` defaults to 0 (every field-fill selector falls through), but
+    the ``"form"`` selector below reports ``count=1`` — a fast, byte-cheap
+    "the form tag exists" signal that lets ``wait_for_form_ready`` (Task 3
+    / #4) return immediately instead of really waiting out its poll timeout
+    on every one of these navigation-only tests.
+    """
+
+    def __init__(self, count: int = 0) -> None:
         self.first = self
+        self._count = count
 
     def is_visible(self, timeout: int = 1000) -> bool:
         return False
 
     def count(self) -> int:
-        return 0
+        return self._count
 
     def click(self) -> None:  # pragma: no cover - never reached
         pass
@@ -71,7 +79,7 @@ class _StubPage:
         return None
 
     def locator(self, selector: str) -> _StubLocator:
-        return _StubLocator()
+        return _StubLocator(count=1 if selector == "form" else 0)
 
     def screenshot(self, **kwargs):  # pragma: no cover - never reached
         self.screenshot_calls.append(kwargs)
@@ -248,7 +256,13 @@ class _FillLocator:
 class _FillPage:
     def __init__(self, behaviors,
                  url="https://jobs.ashbyhq.com/acme/123/application"):
-        self.behaviors, self.url = behaviors, url
+        # Default "form" -> count=1 (unless a test overrides it) so
+        # ``wait_for_form_ready`` (Task 3 / #4) returns immediately instead
+        # of really waiting out its poll timeout on every fill-parity test
+        # here — orthogonal to what's actually being exercised (field
+        # dispatch), and not worth 8+ real seconds per test.
+        self.behaviors = {"form": {"count": 1}, **behaviors}
+        self.url = url
         self.fills: list = []
         self.uploads: list = []
         self.goto_calls: list = []
@@ -311,3 +325,37 @@ def test_ashby_required_empty_surfaced(monkeypatch):
 
     for label in ("First Name", "Email", "Phone", "Resume"):
         assert label in result["required_empty"]
+
+
+# ── Tolerant readiness wait wiring (Task 3 / #4) ────────────────────────────
+
+def test_ashby_surfaces_readiness_timeout_when_form_never_appears(monkeypatch):
+    """``wait_for_form_ready`` never sees positive evidence — the adapter
+    must still proceed with the fill (never blocks), but flag
+    ``result["readiness_timeout"] = True`` so it's distinguishable from a
+    fill that ran against a confirmed-present form. Monkeypatches the
+    imported name directly so the test doesn't have to really wait out a
+    poll timeout."""
+    import jobpipe.submit.adapters.prepare_dom.ashby as ashby_module
+
+    _patch_screenshot(monkeypatch)
+    monkeypatch.setattr(
+        ashby_module, "wait_for_form_ready",
+        lambda page, log=None: {"ready": False, "signal": None},
+    )
+    page = _FillPage({})
+    job = {"id": "ash-3", "form_answers": {}}
+
+    result = AshbyApplicant().fill_form(page, job)
+
+    assert result["readiness_timeout"] is True
+
+
+def test_ashby_readiness_timeout_false_when_form_appears(monkeypatch):
+    _patch_screenshot(monkeypatch)
+    page = _FillPage({})  # default "form": count=1 fast-path
+    job = {"id": "ash-4", "form_answers": {}}
+
+    result = AshbyApplicant().fill_form(page, job)
+
+    assert result["readiness_timeout"] is False

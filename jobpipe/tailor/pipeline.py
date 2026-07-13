@@ -98,6 +98,7 @@ from tailor.cover_letter import generate_cover_letter  # noqa: E402
 from tailor.cover_letter_pdf import render_cover_letter_pdf  # noqa: E402
 from tailor.latex_resume import generate_tailored_latex  # noqa: E402
 from tailor.form_answers import generate_form_answers  # noqa: E402
+from tailor.ats_qa import resume_text_from_tailored, run_ats_qa  # noqa: E402
 from jobpipe.shared.ats_detect import detect_ats, get_applicant  # noqa: E402
 from jobpipe.shared import cost  # noqa: E402  (cost-event attribution context)
 from interview_prep.generator import generate_stories  # noqa: E402
@@ -256,6 +257,26 @@ def _process_one_approved_job(job_id: str) -> None:
         resume_storage_path = upload_pdf(job_id, "resume", resume_pdf_bytes)
         cover_storage_path = upload_pdf(job_id, "cover_letter", cover_pdf_bytes)
 
+        # ── Post-tailor ATS keyword gate + humanizer (P2) ────────────
+        # One Sonnet call over (JD, rendered resume text): top-15 JD
+        # keywords, missing coverage, /100 score, single highest-impact
+        # fix, robotic-bullet rewrites. Stored on the row for the
+        # cockpit to render next to the materials-review gate — never
+        # auto-applied. Non-fatal: run_ats_qa() itself never raises (a
+        # QA hiccup must not block ready_for_review), but the call site
+        # still guards in case resume-text flattening throws.
+        try:
+            resume_text = resume_text_from_tailored(latex_result.get("tailored_data"))
+            ats_qa_result = run_ats_qa(job, resume_text)
+            logger.info(
+                f"ATS QA for {company}: score={ats_qa_result['ats_score']} "
+                f"missing={len(ats_qa_result['missing'])} "
+                f"robotic_bullets={len(ats_qa_result['robotic_bullets'])}"
+            )
+        except Exception as exc:
+            logger.warning(f"ATS QA skipped for {company}: {exc}")
+            ats_qa_result = None
+
         # ── Resolve apply URL (cheap — no agent loop) ───────────────
         # If the job URL is an aggregator (Remotive, CareerVault, etc.),
         # find the real ATS apply link via httpx + BeautifulSoup.
@@ -369,6 +390,8 @@ def _process_one_approved_job(job_id: str) -> None:
             cover_letter_pdf_path=cover_storage_path,
             archetype=archetype_meta.get("archetype"),
             archetype_confidence=archetype_meta.get("confidence"),
+            resume_variant=latex_result.get("style"),
+            ats_qa=ats_qa_result,
         )
 
         send_awaiting_review(job)

@@ -19,7 +19,8 @@ Respond with ONLY a JSON object (no prose, no code fences) of the form:
   "reasoning": "<2-3 sentences on fit>",
   "recommended_action": "notify" | "skip" | "disqualify",
   "legitimacy": "high_confidence" | "proceed_with_caution" | "suspicious",
-  "legitimacy_reasoning": "<2-3 sentences listing the observations>"
+  "legitimacy_reasoning": "<2-3 sentences listing the observations>",
+  "company_type": "frontier_lab" | "ai_startup" | "enterprise" | "consultancy" | "other"
 }}
 ```
 
@@ -91,3 +92,26 @@ explanations.* A re-posted job, a generic JD, or a missing salary band
 could indicate any number of benign internal-process reasons in addition
 to ghost-posting. List the observations in `legitimacy_reasoning` and
 let the reader interpret. Do not speculate about intent.
+
+## Company type
+
+Classify the posting company into exactly one bucket, used later to
+find which resume version performs best per company type:
+
+- **frontier_lab** — a frontier AI research lab (e.g. builds/trains
+  foundation models as its core business: Anthropic, OpenAI, Google
+  DeepMind, Meta AI/FAIR-style orgs, etc.).
+- **ai_startup** — a venture-backed startup whose product is centrally
+  AI/ML/agents (not just "uses AI internally").
+- **enterprise** — a large, established non-AI-native company
+  (Fortune 500, public, or clearly big-co scale) hiring for an
+  AI/ML/engineering role.
+- **consultancy** — an agency, consultancy, or staffing/services firm
+  placing candidates at client companies.
+- **other** — anything that doesn't clearly fit the above (small
+  non-AI startup, nonprofit, government-adjacent-but-not-disqualified,
+  unclear from the JD).
+
+Base this on the company name and any context in the JD — do not
+fabricate detail the posting doesn't support; when genuinely unclear,
+use `other`.

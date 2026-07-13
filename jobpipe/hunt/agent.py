@@ -54,6 +54,7 @@ import argparse
 import logging
 import os
 import traceback
+from collections import defaultdict
 
 from dotenv import load_dotenv
 
@@ -80,8 +81,13 @@ from sources import (  # noqa: E402
 from scorer import score_job, should_notify  # noqa: E402
 from jobpipe.notify import send_digest  # noqa: E402
 from jobpipe.shared.validator import validate_url  # noqa: E402
+from jobpipe.shared.jobid import normalize_text  # noqa: E402
 from enricher import enrich_description  # noqa: E402  (PR-3 flatten of utils/enricher.py)
-from jobpipe.db import get_seen_ids, upsert_job  # noqa: E402
+from jobpipe.db import (  # noqa: E402
+    get_seen_ids,
+    upsert_job,
+    get_recent_company_activity,
+)
 # Direct-listing discovery gate: resolve aggregator links to the real ATS
 # and check posting openness at discovery time (one shared HTTP fetch).
 from jobpipe.tailor.url_resolver import (  # noqa: E402
@@ -206,6 +212,39 @@ def _resolve_link_and_liveness(job: dict) -> tuple[str, str | None]:
     return "ok", fetched_html
 
 
+def _tag_company_dedup(job: dict, recent_by_company: dict[str, list[dict]]) -> None:
+    """30-day company dedup window (P2, callback feedback loop). Mutates
+    ``job`` in place with one of:
+
+      - ``reposting_of_job_id`` — set when the SAME role (same
+        normalized title, same normalized company) has a row with
+        recent ``applied``/``awaiting_human_submit`` activity. Links to
+        that prior row's id so the cockpit can render "reposting of
+        <link>".
+      - ``duplicate_recent_company`` — set (no link) when the company
+        has recent activity but this is a DIFFERENT role. Soft flag
+        only: a different role at a company he's already deep into can
+        still be worth it, so the row still surfaces — just demoted/
+        flagged in the cockpit rather than hard-dropped.
+
+    Neither key is set when the company has no recent activity — the
+    common case, left as the column defaults (NULL / false).
+    """
+    company_key = normalize_text(job.get("company", ""))
+    candidates = recent_by_company.get(company_key) or []
+    if not candidates:
+        return
+    title_key = normalize_text(job.get("title", ""))
+    reposting = next(
+        (r for r in candidates if normalize_text(r.get("title", "")) == title_key),
+        None,
+    )
+    if reposting:
+        job["reposting_of_job_id"] = reposting["id"]
+    else:
+        job["duplicate_recent_company"] = True
+
+
 def _drop_as_suspicious(job: dict, result: dict) -> bool:
     """Post-score gate: drop an aggregator link we couldn't verify AND the
     scorer rated ``suspicious``. Everything else (including unverified +
@@ -222,11 +261,23 @@ def _execute() -> None:
     logger.info("hunter run starting (mode=%s)", mode)
 
     seen = get_seen_ids()
+
+    # 30-day company dedup window (P2). One bounded query up front
+    # (only applied/awaiting_human_submit rows from the last 30 days —
+    # see get_recent_company_activity), keyed by normalized company so
+    # every new posting this run is checked in-process instead of one
+    # query per job.
+    recent_by_company: dict[str, list[dict]] = defaultdict(list)
+    for row in get_recent_company_activity():
+        recent_by_company[normalize_text(row.get("company", ""))].append(row)
+
     new_count = 0
     skipped_dead = 0
     skipped_closed = 0
     skipped_suspicious = 0
     enriched_count = 0
+    duplicate_recent_company_count = 0
+    reposting_count = 0
     to_notify: list[dict] = []
     by_source: dict[str, int] = {}
 
@@ -272,6 +323,16 @@ def _execute() -> None:
         if len(job.get("description", "")) > original_len:
             enriched_count += 1
 
+        # ── 30-day company dedup window (P2) ─────────────────────────
+        # Tag, don't drop — a different role at a company he's already
+        # deep into can still be worth it, so this only demotes/flags
+        # what still surfaces below.
+        _tag_company_dedup(job, recent_by_company)
+        if job.get("reposting_of_job_id"):
+            reposting_count += 1
+        elif job.get("duplicate_recent_company"):
+            duplicate_recent_company_count += 1
+
         # ── Score ────────────────────────────────────────────────────
         try:
             result = score_job(
@@ -310,13 +371,17 @@ def _execute() -> None:
 
     logger.info(
         "done. mode=%s new=%d enriched=%d dead_skipped=%d closed_skipped=%d "
-        "suspicious_skipped=%d notified=%d by_source=%s",
+        "suspicious_skipped=%d duplicate_recent_company=%d reposting=%d "
+        "notified=%d by_source=%s",
         mode, new_count, enriched_count, skipped_dead, skipped_closed,
-        skipped_suspicious, len(to_notify), by_source,
+        skipped_suspicious, duplicate_recent_company_count, reposting_count,
+        len(to_notify), by_source,
     )
     print(f"done. mode={mode} new jobs: {new_count}, enriched: {enriched_count}, "
           f"dead links skipped: {skipped_dead}, closed dropped: {skipped_closed}, "
-          f"suspicious dropped: {skipped_suspicious}, notified: {len(to_notify)}")
+          f"suspicious dropped: {skipped_suspicious}, "
+          f"duplicate_recent_company: {duplicate_recent_company_count}, "
+          f"reposting: {reposting_count}, notified: {len(to_notify)}")
 
 
 def run() -> None:

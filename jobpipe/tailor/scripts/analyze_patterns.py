@@ -60,6 +60,14 @@ OFFER_RESPONSES = {"offer"}
 # Default group-by dimensions. Any of these can be overridden at the CLI.
 DEFAULT_DIMENSIONS = ("archetype", "ats_kind")
 
+# Callback feedback loop (P2, feat/callback-feedback-loop) — resume_variant
+# (latex_resume.py style lane) and company_type (hunt scorer taxonomy) are
+# plain jobs columns, so `_project_dimensions`'s generic `job.get(d)` branch
+# already groups by them; no special-casing needed there. This tuple drives
+# the always-on "which resume version wins where" report below, independent
+# of whatever --dimensions the caller picked for the primary pattern scan.
+VARIANT_TYPE_DIMENSIONS = ("company_type", "resume_variant")
+
 # Effect-size threshold: a group's response rate must differ from the
 # overall mean by at least this much to be flagged as a pattern. 5pp is
 # usually enough to be interesting without drowning the report in noise
@@ -223,11 +231,63 @@ def find_patterns(stats: dict[str, GroupStats], threshold_pp: float) -> list[dic
     return flagged
 
 
+def which_wins_where(jobs: list[dict]) -> list[dict]:
+    """"Which resume version wins where / which to retire" — P2 adoption
+    of the doc's Resume Intelligence module, done with jobpipe's actual
+    reply/interview data instead of vibes.
+
+    Groups by (company_type, resume_variant), keeps only variant groups
+    within a company_type that clear ``MIN_GROUP_SIZE`` applications,
+    and for each company_type with >=2 comparable variants reports the
+    best- and worst-performing variant by response rate. A
+    ``retire_candidate`` is named only when the best/worst gap clears
+    ``DEFAULT_EFFECT_SIZE_PP`` — otherwise the difference is noise, not
+    a real signal to act on.
+
+    A company_type with 0 or 1 qualifying variants is omitted — there's
+    nothing to compare a single variant (or none) against.
+    """
+    stats = aggregate(jobs, VARIANT_TYPE_DIMENSIONS)
+    by_type: dict[str, list[GroupStats]] = defaultdict(list)
+    for key, s in stats.items():
+        if s.n < MIN_GROUP_SIZE or s.applied < 1:
+            continue
+        company_type, _, variant = key.partition(" · ")
+        by_type[company_type].append(
+            GroupStats(name=variant, n=s.n, applied=s.applied,
+                       responded=s.responded, interviewed=s.interviewed,
+                       offered=s.offered)
+        )
+
+    report: list[dict] = []
+    for company_type in sorted(by_type):
+        variants = by_type[company_type]
+        if len(variants) < 2:
+            continue
+        ranked = sorted(variants, key=lambda v: -v.response_rate)
+        best, worst = ranked[0], ranked[-1]
+        delta_pp = (best.response_rate - worst.response_rate) * 100
+        report.append({
+            "company_type": company_type,
+            "variants_compared": [v.as_dict() for v in ranked],
+            "best_variant": best.name,
+            "best_response_rate": round(best.response_rate, 4),
+            "worst_variant": worst.name,
+            "worst_response_rate": round(worst.response_rate, 4),
+            "delta_pp": round(delta_pp, 1),
+            "retire_candidate": (
+                worst.name if delta_pp >= DEFAULT_EFFECT_SIZE_PP else None
+            ),
+        })
+    return report
+
+
 def render_markdown(
     stats: dict[str, GroupStats],
     patterns: list[dict],
     dimensions: tuple[str, ...],
     total_jobs: int,
+    wins_where: list[dict] | None = None,
 ) -> str:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     lines = [
@@ -238,6 +298,34 @@ def render_markdown(
         f"_Group-by: {', '.join(dimensions)}._",
         "",
     ]
+
+    if wins_where:
+        lines.append("## Which resume version wins where / which to retire")
+        lines.append("")
+        lines.append(
+            f"Resume variant compared within each company_type, n ≥ {MIN_GROUP_SIZE} "
+            "applications per variant. `retire_candidate` is named only when the "
+            f"best/worst response-rate gap clears {DEFAULT_EFFECT_SIZE_PP:.0f}pp."
+        )
+        lines.append("")
+        lines.append("| Company type | Best variant | Best rate | Worst variant | Worst rate | Retire? |")
+        lines.append("|---|---|---:|---|---:|---|")
+        for w in wins_where:
+            lines.append(
+                f"| `{w['company_type']}` | `{w['best_variant']}` | "
+                f"{w['best_response_rate']:.0%} | `{w['worst_variant']}` | "
+                f"{w['worst_response_rate']:.0%} | "
+                f"{'`' + w['retire_candidate'] + '`' if w['retire_candidate'] else '—'} |"
+            )
+        lines.append("")
+    elif wins_where is not None:
+        lines.append(
+            "_Not enough data yet to compare resume variants within a "
+            "company_type (need >=2 variants at n >= "
+            f"{MIN_GROUP_SIZE} applications each)._"
+        )
+        lines.append("")
+
     if patterns:
         lines.append("## Flagged patterns")
         lines.append("")
@@ -285,10 +373,12 @@ def write_supabase_row(
     dimensions: tuple[str, ...],
     total_jobs: int,
     summary_md: str,
+    wins_where: list[dict] | None = None,
 ) -> int:
     payload = {
         "groups": [s.as_dict() for s in stats.values()],
         "flagged_patterns": patterns,
+        "which_wins_where": wins_where or [],
     }
     row = {
         "num_jobs_analyzed": total_jobs,
@@ -333,7 +423,12 @@ def main() -> None:
 
     stats = aggregate(jobs, dims)
     patterns = find_patterns(stats, args.threshold)
-    md = render_markdown(stats, patterns, dims, len(jobs))
+    # Always-on P2 callback feedback loop: resume_variant × company_type
+    # "which version wins where" runs regardless of the caller's chosen
+    # --dimensions, since it answers a different question (materials
+    # comparison, not archetype/ATS pattern-hunting).
+    wins_where = which_wins_where(jobs)
+    md = render_markdown(stats, patterns, dims, len(jobs), wins_where=wins_where)
 
     if args.no_write:
         print(md)
@@ -341,7 +436,7 @@ def main() -> None:
 
     out_path = write_report(md)
     logger.info("Wrote markdown report -> %s", out_path)
-    row_id = write_supabase_row(stats, patterns, dims, len(jobs), md)
+    row_id = write_supabase_row(stats, patterns, dims, len(jobs), md, wins_where=wins_where)
     logger.info("Wrote Supabase pattern_analyses row id=%s", row_id)
 
 

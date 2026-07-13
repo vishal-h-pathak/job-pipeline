@@ -48,6 +48,7 @@ _EXPECTED_DB_SIGNATURES: dict[str, tuple[str, ...]] = {
         "job_id", "resume_path", "cover_letter_path", "application_url",
         "application_notes", "resume_pdf_path", "cover_letter_pdf_path",
         "archetype", "archetype_confidence", "submission_url",
+        "resume_variant", "ats_qa",
     ),
     "mark_prefilling":          ("job_id",),
     "mark_awaiting_submit":     ("job_id", "screenshot_path"),

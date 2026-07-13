@@ -156,6 +156,13 @@ def upsert_job(job: dict, result: dict | None = None, *, status: str | None = No
         for k in ("application_url", "ats_kind", "link_status")
         if job.get(k) is not None
     }
+    # 30-day company dedup fields (P2), written only when the discovery
+    # gate's company-recency check set them (jobpipe.hunt.agent).
+    dedup_fields = {
+        k: job[k]
+        for k in ("duplicate_recent_company", "reposting_of_job_id")
+        if job.get(k) is not None
+    }
 
     existing = (
         client.table("jobs").select("id").eq("id", job["id"]).execute().data or []
@@ -170,7 +177,10 @@ def upsert_job(job: dict, result: dict | None = None, *, status: str | None = No
             "legitimacy": result.get("legitimacy"),
             "legitimacy_reasoning": result.get("legitimacy_reasoning"),
             **link_fields,
+            **dedup_fields,
         }
+        if result.get("company_type"):
+            update_payload["company_type"] = result["company_type"]
         if status is not None:
             update_payload["status"] = status
         client.table("jobs").update(update_payload).eq("id", job["id"]).execute()
@@ -191,9 +201,11 @@ def upsert_job(job: dict, result: dict | None = None, *, status: str | None = No
                 "action": result.get("recommended_action"),
                 "legitimacy": result.get("legitimacy"),
                 "legitimacy_reasoning": result.get("legitimacy_reasoning"),
+                "company_type": result.get("company_type"),
                 "status": status or "new",
                 "created_at": _utcnow(),
                 **link_fields,
+                **dedup_fields,
             },
             on_conflict="id",
         ).execute()
@@ -203,6 +215,31 @@ def get_seen_ids() -> set[str]:
     """All canonical job ids the hunter has already seen — for cross-source dedup."""
     rows = _get_client().table("jobs").select("id").execute().data or []
     return {r["id"] for r in rows}
+
+
+def get_recent_company_activity(since_days: int = 30) -> list[dict]:
+    """Rows with recent activity at a company the hunter is actively
+    applying to — the 30-day company dedup window (P2).
+
+    Returns ``id``/``company``/``title``/``status``/``status_updated_at``
+    for every row whose status is ``applied`` or ``awaiting_human_submit``
+    and whose ``status_updated_at`` falls within the last ``since_days``
+    days. Small, bounded result set (only two active-application
+    statuses) — the hunter loads this once per run and matches new
+    postings against it in-process rather than querying per-job.
+    """
+    from datetime import timedelta
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
+    rows = (
+        _get_client().table("jobs")
+        .select("id,company,title,status,status_updated_at")
+        .in_("status", ["applied", "awaiting_human_submit"])
+        .gte("status_updated_at", cutoff)
+        .execute()
+        .data or []
+    )
+    return rows
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -305,7 +342,9 @@ def mark_ready_for_review(job_id: str, resume_path: str = None,
                           cover_letter_pdf_path: str = None,
                           archetype: str = None,
                           archetype_confidence: float = None,
-                          submission_url: str = None) -> dict:
+                          submission_url: str = None,
+                          resume_variant: str = None,
+                          ats_qa: dict = None) -> dict:
     """Mark a job ready for human review in the cockpit (M-2/M-6).
 
     Args:
@@ -322,6 +361,15 @@ def mark_ready_for_review(job_id: str, resume_path: str = None,
         submission_url: Real ATS apply URL post-resolution (M-3 column).
             Defaults to application_url if not supplied so callers that
             haven't been updated still get a value.
+        resume_variant: LaTeX style/archetype lane actually rendered
+            (``latex_resume.py::STYLES`` — "classic"|"modern"|"compact").
+            P2 callback feedback loop — analyze_patterns.py groups by
+            this to find which resume version wins where.
+        ats_qa: Post-tailor ATS keyword-gate + humanizer verdict (P2,
+            ``tailor/ats_qa.py``) — ``{top_keywords, missing, ats_score,
+            highest_impact_fix, robotic_bullets}``. Stored for the
+            cockpit to render next to the materials-review gate; never
+            auto-applied.
     """
     extras: dict[str, Any] = {}
     if resume_path:
@@ -340,6 +388,10 @@ def mark_ready_for_review(job_id: str, resume_path: str = None,
         extras["archetype"] = archetype
     if archetype_confidence is not None:
         extras["archetype_confidence"] = archetype_confidence
+    if resume_variant:
+        extras["resume_variant"] = resume_variant
+    if ats_qa is not None:
+        extras["ats_qa"] = ats_qa
     sub_url = submission_url or application_url
     if sub_url:
         extras["submission_url"] = sub_url
@@ -405,7 +457,7 @@ def mark_skipped(job_id: str, reason: str = None) -> dict:
 
 def mark_applied(job_id: str, application_notes: str = None,
                  submission_notes: str = None,
-                 clear_materials: bool = True) -> dict:
+                 clear_materials: bool = False) -> dict:
     """Mark a job as applied — ALWAYS the result of a human click on the
     cockpit's "Mark Applied" button. Stamps both ``applied_at`` (legacy)
     and ``submitted_at`` (M-3) so analytics can rely on either.
@@ -417,9 +469,16 @@ def mark_applied(job_id: str, application_notes: str = None,
         submission_notes: Free-text notes the human added in the cockpit
             modal. Persisted to the M-3 ``submission_notes`` column.
             Read by analytics + insights.
-        clear_materials: When True (default), also deletes the generated
-            PDFs from Supabase Storage and nulls the storage-path
-            columns on the row.
+        clear_materials: When False (default — P2, callback feedback
+            loop), keeps the generated PDFs in Supabase Storage. An
+            applied row's resume is exactly the artifact the callback
+            feedback loop (resume_variant × company_type analysis,
+            analyze_patterns.py) needs later to correlate materials with
+            replies; deleting it on "Mark Applied" destroyed the
+            evidence before it could ever be used. Pass True explicitly
+            for callers that genuinely want to reclaim storage (e.g. a
+            skipped/expired-row cleanup pass) — this default only
+            changes the "applied" transition's behavior.
     """
     now = _utcnow()
     extras: dict[str, Any] = {"applied_at": now, "submitted_at": now}

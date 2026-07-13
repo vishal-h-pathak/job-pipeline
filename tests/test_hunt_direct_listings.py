@@ -216,6 +216,9 @@ def test_execute_drops_dead_before_score_and_skips_suspicious(monkeypatch):
     ]
 
     monkeypatch.setattr(agent, "get_seen_ids", lambda: set())
+    # P2 company dedup window — one bounded query per run; no recent
+    # activity in this scenario.
+    monkeypatch.setattr(agent, "get_recent_company_activity", lambda: [])
     monkeypatch.setattr(agent, "iter_all_jobs", lambda: iter(jobs))
     monkeypatch.setattr(agent, "validate_url", lambda url: True)
     monkeypatch.setattr(agent, "enrich_description",

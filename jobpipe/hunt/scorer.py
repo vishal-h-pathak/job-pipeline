@@ -102,6 +102,16 @@ def score_job(title: str, company: str, description: str, location: str) -> dict
         legitimacy = "proceed_with_caution"
     result["legitimacy"] = legitimacy
     result["legitimacy_reasoning"] = (result.get("legitimacy_reasoning") or "").strip()
+    # Company-type taxonomy (P2, callback feedback loop). Defaults to
+    # "other" if the model omitted it or emitted an unrecognized value —
+    # never None — so downstream code (upsert_job, analyze_patterns.py)
+    # can always rely on a known categorical value.
+    company_type = (result.get("company_type") or "").strip().lower()
+    if company_type not in {
+        "frontier_lab", "ai_startup", "enterprise", "consultancy", "other",
+    }:
+        company_type = "other"
+    result["company_type"] = company_type
     return result
 
 

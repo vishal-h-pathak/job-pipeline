@@ -91,6 +91,18 @@ def canonical_url(url: str) -> str:
         return (url or "").lower().split("?", 1)[0].rstrip("/")
 
 
+def normalize_text(text: str) -> str:
+    """Public wrapper around the same normalization :func:`make_job_id`
+    applies to its company/title components — lowercased, punctuation
+    stripped, whitespace collapsed. Used by the hunt's 30-day company
+    dedup window (jobpipe.hunt.agent) to compare company names and
+    titles for recency/reposting checks so "Acme Inc." and "ACME, Inc"
+    collapse to the same comparison instead of silently missing each
+    other.
+    """
+    return _normalise_text(text)
+
+
 def make_job_id(url: str, title: str, company: str) -> str:
     """Stable 16-char hex id for a (url, title, company) tuple, source-agnostic.
 

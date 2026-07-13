@@ -78,11 +78,15 @@ class _FakeClient:
         return self._table
 
 
-def _row(row_id: int, *, adapter: str, fill_report: list[dict]) -> dict:
+def _row(row_id: int, *, adapter: str, fill_report: list[dict],
+         readiness_timeout: bool = False) -> dict:
+    notes = {"fill_report": fill_report}
+    if readiness_timeout:
+        notes["readiness_timeout"] = True
     return {
         "id": row_id,
         "adapter": adapter,
-        "notes": {"fill_report": fill_report},
+        "notes": notes,
     }
 
 
@@ -285,3 +289,117 @@ def test_detect_fill_drift_sweeps_multiple_ats_and_skips_failures(patch_db_clien
     assert results[0]["ats"] == "greenhouse"
     assert results[0]["notified"] is True
     assert len(fake_notify.calls) == 1
+
+
+def test_compute_window_stats_counts_readiness_timeouts_separately_from_fill_rate(patch_db_client):
+    """readiness_timeout is a per-ATTEMPT flag (not per fill_report entry)
+    — a window with 2 of 10 attempts flagged must report
+    readiness_timeouts=2 without perturbing the attempted/verified fill-
+    rate math those same rows would have contributed anyway."""
+    rows = [_row(i, adapter="ashby", fill_report=_fields(2, 2)) for i in range(1, 9)]
+    rows.append(_row(9, adapter="ashby", fill_report=_fields(2, 2), readiness_timeout=True))
+    rows.append(_row(10, adapter="ashby", fill_report=_fields(2, 2), readiness_timeout=True))
+
+    stats = drift.compute_window_stats(rows)
+    assert stats.readiness_timeouts == 2
+    assert stats.attempted == 20
+    assert stats.verified == 20
+    assert stats.rate == 1.0
+
+
+def test_check_drift_for_ats_result_includes_readiness_timeout_counts(patch_db_client):
+    """The result dict surfaces both windows' readiness-timeout counts —
+    not just the notification message — so a caller inspecting results
+    programmatically (not just reading the log line) can see them too."""
+    rows = []
+    for i in range(1, 11):
+        rows.append(_row(i, adapter="greenhouse", fill_report=_fields(1, 1)))
+    for i in range(11, 20):
+        rows.append(_row(i, adapter="greenhouse", fill_report=_fields(1, 1)))
+    rows.append(_row(
+        20, adapter="greenhouse", fill_report=_fields(1, 0),
+        readiness_timeout=True,
+    ))
+
+    fake_client = _FakeClient(rows)
+    patch_db_client(fake_client)
+    result = drift.check_drift_for_ats("greenhouse")
+
+    assert result is not None
+    assert result["current_readiness_timeouts"] == 1
+    assert result["baseline_readiness_timeouts"] == 0
+
+
+def test_notify_drift_message_includes_readiness_timeout_note_when_present(patch_db_client):
+    """The same 39pp real-drift scenario as the worked-example test above,
+    but with 3 of the 10 current-window attempts flagged as readiness
+    timeouts — the notification message must call this out separately
+    from the raw fill-rate numbers, not bury it or omit it."""
+    rows = []
+    for i in range(1, 10):
+        rows.append(_row(i, adapter="greenhouse", fill_report=_fields(10, 10)))
+    rows.append(_row(10, adapter="greenhouse", fill_report=_fields(10, 1)))
+
+    for i in range(11, 16):
+        rows.append(_row(i, adapter="greenhouse", fill_report=_fields(10, 10)))
+    rows.append(_row(16, adapter="greenhouse", fill_report=_fields(10, 2)))
+    for i in range(17, 20):
+        rows.append(_row(
+            i, adapter="greenhouse", fill_report=_fields(10, 0),
+            readiness_timeout=True,
+        ))
+    rows.append(_row(20, adapter="greenhouse", fill_report=_fields(10, 0)))
+
+    fake_client = _FakeClient(rows)
+    patch_db_client(fake_client)
+    fake_notify = _FakeNotify()
+    original_notify = drift.create_notification
+    drift.create_notification = fake_notify
+    try:
+        result = drift.check_drift_for_ats("greenhouse")
+    finally:
+        drift.create_notification = original_notify
+
+    assert result is not None
+    assert result["notified"] is True
+    assert result["current_readiness_timeouts"] == 3
+    ntype, job, message = fake_notify.calls[0]
+    assert "3/10 recent attempts had a readiness timeout" in message
+    # The core drift message is still present, unchanged, ahead of the
+    # readiness-timeout note — this is an addition, not a replacement.
+    assert message.startswith(
+        "Greenhouse fill rate 52% over last 10 attempts (baseline 91%) "
+        "— selectors likely drifted"
+    )
+
+
+def test_notify_drift_message_unchanged_when_no_readiness_timeouts(patch_db_client):
+    """Byte-for-byte regression guard: the exact worked-example message
+    from the original Task 4 test must be unaffected when no attempt in
+    the window ever timed out on readiness — this fix is additive."""
+    rows = []
+    for i in range(1, 10):
+        rows.append(_row(i, adapter="greenhouse", fill_report=_fields(10, 10)))
+    rows.append(_row(10, adapter="greenhouse", fill_report=_fields(10, 1)))
+    for i in range(11, 16):
+        rows.append(_row(i, adapter="greenhouse", fill_report=_fields(10, 10)))
+    rows.append(_row(16, adapter="greenhouse", fill_report=_fields(10, 2)))
+    for i in range(17, 21):
+        rows.append(_row(i, adapter="greenhouse", fill_report=_fields(10, 0)))
+
+    fake_client = _FakeClient(rows)
+    patch_db_client(fake_client)
+    fake_notify = _FakeNotify()
+    original_notify = drift.create_notification
+    drift.create_notification = fake_notify
+    try:
+        result = drift.check_drift_for_ats("greenhouse")
+    finally:
+        drift.create_notification = original_notify
+
+    assert result["current_readiness_timeouts"] == 0
+    ntype, job, message = fake_notify.calls[0]
+    assert message == (
+        "Greenhouse fill rate 52% over last 10 attempts (baseline 91%) "
+        "— selectors likely drifted"
+    )

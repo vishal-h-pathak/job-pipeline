@@ -151,9 +151,11 @@ class _FakeApplicant:
 
     name = "greenhouse"
 
-    def __init__(self, success: bool = True, notes: str = ""):
+    def __init__(self, success: bool = True, notes: str = "",
+                 readiness_timeout: bool = False):
         self._success = success
         self._notes = notes
+        self._readiness_timeout = readiness_timeout
 
     def fill_form(self, page, job, resume_path=None, cover_letter_path=None):
         if self._success:
@@ -168,6 +170,7 @@ class _FakeApplicant:
                      "matched_selector": 'input[name="first_name"]',
                      "value_verified": True, "misses": []},
                 ],
+                "readiness_timeout": self._readiness_timeout,
             }
         return {
             "success": False,
@@ -179,6 +182,7 @@ class _FakeApplicant:
                  "matched_selector": None, "value_verified": False,
                  "misses": []},
             ],
+            "readiness_timeout": self._readiness_timeout,
         }
 
 
@@ -428,6 +432,101 @@ def test_failure_branch_degrades_to_assisted_manual_handoff(
     # No bare failure: mark_tailor_failed must NOT fire for a non-success
     # adapter result once the tab is open.
     assert not any(o == "mark_tailor_failed" for o in ops)
+
+
+def test_readiness_timeout_persists_into_notes_on_success_branch(
+    monkeypatch, tmp_resume_pdf,
+):
+    """A clean fill that nonetheless never saw positive form-readiness
+    evidence (Task 3's ``wait_for_form_ready`` timed out but the adapter
+    proceeded anyway) must surface ``readiness_timeout`` in the closed
+    attempt's notes — this is what lets the drift aggregator (Task 4)
+    distinguish "the page was slow to confirm ready" from a genuine
+    selector-drift miss, rather than the flag silently vanishing at the
+    exact point it's written to durable storage."""
+    call_log: list = []
+    job = _make_job("audit-readiness-timeout-success")
+    fake_page = _FakePage()
+    _install_fake_playwright(monkeypatch, fake_page)
+
+    p = _stub_pipeline_surface(
+        monkeypatch,
+        applicant=_FakeApplicant(success=True, readiness_timeout=True),
+        call_log=call_log,
+        tmp_resume_path=tmp_resume_pdf,
+    )
+    monkeypatch.setattr(p, "get_prefill_requested_jobs", lambda: [job])
+
+    p.process_prefill_requested_jobs()
+
+    close_call = next(c for c in call_log if c[0] == "close_attempt")
+    _, _attempt_id, outcome, kwargs = close_call
+    assert outcome == "prefilled"
+    notes = kwargs.get("notes") or {}
+    assert notes.get("readiness_timeout") is True
+
+
+def test_readiness_timeout_persists_into_notes_on_handoff_branch(
+    monkeypatch, tmp_resume_pdf,
+):
+    """Same guarantee as the success-branch test above, for the
+    assisted-manual hand-off path — ``_handoff`` must thread
+    ``readiness_timeout`` into ``close_attempt``'s notes too, not just the
+    clean-success branch."""
+    call_log: list = []
+    job = _make_job("audit-readiness-timeout-handoff")
+    fake_page = _FakePage()
+    _install_fake_playwright(monkeypatch, fake_page)
+
+    p = _stub_pipeline_surface(
+        monkeypatch,
+        applicant=_FakeApplicant(
+            success=False, notes="no fields matched", readiness_timeout=True,
+        ),
+        call_log=call_log,
+        tmp_resume_path=tmp_resume_pdf,
+    )
+    monkeypatch.setattr(p, "get_prefill_requested_jobs", lambda: [job])
+
+    p.process_prefill_requested_jobs()
+
+    close_call = next(c for c in call_log if c[0] == "close_attempt")
+    _, _attempt_id, outcome, kwargs = close_call
+    assert outcome == "needs_review"
+    notes = kwargs.get("notes") or {}
+    assert notes.get("readiness_timeout") is True
+
+
+def test_materials_hash_mismatch_handoff_has_no_readiness_timeout_flag(
+    monkeypatch, tmp_resume_pdf,
+):
+    """A hand-off that fires BEFORE any fill ever runs (materials hash
+    mismatch) has no readiness info to report — ``readiness_timeout``
+    must be ``None``, not fabricated as ``True``/``False``."""
+    call_log: list = []
+    job = _make_job("audit-readiness-timeout-prefill-failure")
+    fake_page = _FakePage()
+    _install_fake_playwright(monkeypatch, fake_page)
+
+    p = _stub_pipeline_surface(
+        monkeypatch,
+        applicant=_FakeApplicant(success=True),
+        call_log=call_log,
+        tmp_resume_path=tmp_resume_pdf,
+    )
+    monkeypatch.setattr(p, "get_prefill_requested_jobs", lambda: [job])
+    monkeypatch.setattr(
+        p, "verify_materials_hash",
+        lambda job, resume_bytes, cover_letter_text: False,
+    )
+
+    p.process_prefill_requested_jobs()
+
+    close_call = next(c for c in call_log if c[0] == "close_attempt")
+    _, _attempt_id, outcome, kwargs = close_call
+    assert outcome == "needs_review"
+    notes = kwargs.get("notes") or {}
+    assert notes.get("readiness_timeout") is None
 
 
 def test_open_attempt_uses_correct_adapter_name_for_each_ats(

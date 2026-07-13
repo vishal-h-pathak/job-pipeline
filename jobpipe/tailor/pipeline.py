@@ -648,7 +648,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
     result = None
 
     def _handoff(reason, unfilled=None, screenshot_key=None, summary=None,
-                 fill_report=None):
+                 fill_report=None, readiness_timeout=None):
         """Degrade to assisted-manual: tab open, files staged, checklist."""
         nonlocal attempt_closed
         ho = assisted_manual_handoff(
@@ -665,6 +665,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                     "prefill_screenshot_path": screenshot_key,
                     "verification": summary,
                     "fill_report": fill_report,
+                    "readiness_timeout": readiness_timeout,
                 },
             )
             attempt_closed = True
@@ -763,6 +764,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                     "notes": result.get("notes"),
                     "verification": verification["summary"],
                     "fill_report": result.get("fill_report"),
+                    "readiness_timeout": result.get("readiness_timeout"),
                 },
             )
             attempt_closed = True
@@ -793,6 +795,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
                 screenshot_key=screenshot_storage_key,
                 summary=verification["summary"],
                 fill_report=result.get("fill_report"),
+                readiness_timeout=result.get("readiness_timeout"),
             )
 
         _wait_for_human_decision(
@@ -807,6 +810,7 @@ def _prefill_one_job(job, context, *, detect_ats, get_applicant,
             _handoff(
                 f"adapter exception: {exc}",
                 fill_report=(result or {}).get("fill_report"),
+                readiness_timeout=(result or {}).get("readiness_timeout"),
             )
         except Exception:
             logger.exception("assisted_manual_handoff failed for %s", job_id)

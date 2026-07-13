@@ -119,6 +119,19 @@ class WindowStats:
     n_attempts: int
     attempted: int
     verified: int
+    # Count of attempts in this window whose ``notes.readiness_timeout``
+    # was true (Task 3 / #4: the adapter proceeded without ever seeing
+    # positive form-readiness evidence). Tracked SEPARATELY from the
+    # attempted/verified fill-rate math below — a batch of readiness
+    # timeouts (a slow analytics-heavy site that week) and a batch of
+    # genuine selector misses (an ATS redesign) both drag the raw rate
+    # down the same way, but they call for very different human
+    # responses. This count rides alongside the rate as a diagnostic
+    # signal rather than being excluded from it: a readiness timeout does
+    # NOT stop the adapter from attempting the fill (Task 3's design), so
+    # the fill_report entries from a timed-out attempt are still real
+    # evidence — just evidence worth reading with this context attached.
+    readiness_timeouts: int = 0
 
     @property
     def rate(self) -> Optional[float]:
@@ -159,9 +172,14 @@ def compute_window_stats(rows: list[dict]) -> WindowStats:
     definition. Rows with no ``notes.fill_report`` (e.g. an attempt that
     predates Task 3, or a row some other code path wrote without one)
     contribute nothing, not a crash.
+
+    Also counts ``readiness_timeouts`` — the number of ROWS (not
+    fill_report entries; this is a per-attempt flag, not per-field) whose
+    ``notes.readiness_timeout`` is true.
     """
     attempted = 0
     verified = 0
+    readiness_timeouts = 0
     for row in rows:
         notes = row.get("notes") or {}
         for entry in notes.get("fill_report") or []:
@@ -169,7 +187,12 @@ def compute_window_stats(rows: list[dict]) -> WindowStats:
                 attempted += 1
                 if entry.get("value_verified"):
                     verified += 1
-    return WindowStats(n_attempts=len(rows), attempted=attempted, verified=verified)
+        if notes.get("readiness_timeout"):
+            readiness_timeouts += 1
+    return WindowStats(
+        n_attempts=len(rows), attempted=attempted, verified=verified,
+        readiness_timeouts=readiness_timeouts,
+    )
 
 
 def _notify_drift(ats: str, current: WindowStats, baseline: WindowStats) -> str:
@@ -179,6 +202,18 @@ def _notify_drift(ats: str, current: WindowStats, baseline: WindowStats) -> str:
         f"{current.n_attempts} attempts (baseline {baseline.rate:.0%}) "
         "— selectors likely drifted"
     )
+    # Surface readiness-timeout attempts SEPARATELY from the fill-rate
+    # numbers above — a batch of slow-page timeouts and a batch of genuine
+    # selector misses both drag the same rate down, but a human deciding
+    # whether to go fix field_maps.yml needs to know which one they're
+    # looking at. Only appended when non-zero so the message stays
+    # byte-identical to before this fix in the common (no timeouts) case.
+    if current.readiness_timeouts:
+        message += (
+            f" ({current.readiness_timeouts}/{current.n_attempts} recent "
+            "attempts had a readiness timeout — some of this drop may "
+            "reflect slow page loads, not selector drift)"
+        )
     # Synthetic "job" dict — same non-job-specific infra-notification
     # pattern as RealtimeSubscriptionGuard._notify_realtime_gap in
     # jobpipe/submit/watch.py (create_notification's signature expects a
@@ -238,6 +273,8 @@ def check_drift_for_ats(
         "drop_pp": round(drop_pp, 1),
         "n_current": current.n_attempts,
         "n_baseline": baseline.n_attempts,
+        "current_readiness_timeouts": current.readiness_timeouts,
+        "baseline_readiness_timeouts": baseline.readiness_timeouts,
         "notified": False,
     }
     if drop_pp >= drop_threshold_pp:
@@ -311,9 +348,10 @@ def main() -> None:
     for r in results:
         flag = "DRIFT — notified" if r["notified"] else "ok"
         logger.info(
-            "%-12s current=%.0f%% baseline=%.0f%% drop=%.1fpp [%s]",
+            "%-12s current=%.0f%% baseline=%.0f%% drop=%.1fpp "
+            "readiness_timeouts=%d/%d [%s]",
             r["ats"], r["current_rate"] * 100, r["baseline_rate"] * 100,
-            r["drop_pp"], flag,
+            r["drop_pp"], r["current_readiness_timeouts"], r["n_current"], flag,
         )
 
 

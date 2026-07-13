@@ -7,7 +7,8 @@ a fake Supabase row, fake browser, fake applicant, and fake terminal
   - ``next_attempt_n`` is called per job.
   - ``open_attempt`` is called with the picked applicant's ``name``.
   - On the success branch, ``close_attempt`` is called with
-    ``outcome="submitted"`` and a ``notes`` dict carrying the
+    ``outcome="prefilled"`` (P0 rename — a clean pre-fill close, not an
+    actual ATS submission) and a ``notes`` dict carrying the
     ``prefill_screenshot_path`` key.
   - On the failure branch, ``close_attempt`` is called with
     ``outcome="failed"`` and an ``error`` key in ``notes``.
@@ -240,7 +241,7 @@ def _stub_pipeline_surface(monkeypatch, *, applicant, call_log: list,
     # Part B verification write — record-only (no DB).
     monkeypatch.setattr(
         p, "record_prefill_verification",
-        lambda jid, v: call_log.append(("record_verification", jid)),
+        lambda jid, v, **kw: call_log.append(("record_verification", jid)),
     )
 
     # Storage.
@@ -299,7 +300,7 @@ def tmp_resume_pdf(tmp_path):
 # ── Tests ────────────────────────────────────────────────────────────────
 
 
-def test_success_branch_closes_attempt_with_submitted_before_input(
+def test_success_branch_closes_attempt_with_prefilled_before_input(
     monkeypatch, tmp_resume_pdf,
 ):
     call_log: list = []
@@ -334,11 +335,11 @@ def test_success_branch_closes_attempt_with_submitted_before_input(
     assert open_call[2] == 1
     assert open_call[3] == "greenhouse"
 
-    # close_attempt: outcome="submitted", notes contains the screenshot key.
+    # close_attempt: outcome="prefilled", notes contains the screenshot key.
     close_call = next(c for c in call_log if c[0] == "close_attempt")
     _, attempt_id, outcome, kwargs = close_call
     assert attempt_id == 4242
-    assert outcome == "submitted"
+    assert outcome == "prefilled"
     notes = kwargs.get("notes") or {}
     assert notes.get("prefill_screenshot_path") == "audit-success/prefill.png"
     assert notes.get("filled_fields") == ["First Name", "Email"]
@@ -430,3 +431,77 @@ def test_open_attempt_uses_correct_adapter_name_for_each_ats(
 
     open_call = next(c for c in call_log if c[0] == "open_attempt")
     assert open_call[3] == "lever"
+
+
+# ── Materials-hash gate (hygiene #3) ────────────────────────────────────────
+
+def test_materials_hash_mismatch_routes_to_handoff_without_filling(
+    monkeypatch, tmp_resume_pdf,
+):
+    """A materials_hash mismatch (resume/cover letter drifted since
+    approval) must degrade to the assisted-manual hand-off BEFORE the
+    adapter's fill_form ever runs — filling with stale materials would
+    silently present outdated content for the human to submit."""
+    call_log: list = []
+    job = _make_job("audit-hash-mismatch")
+    fake_page = _FakePage()
+    _install_fake_playwright(monkeypatch, fake_page)
+
+    fill_form_called: list = []
+
+    class _TrackingApplicant(_FakeApplicant):
+        def fill_form(self, *a, **kw):
+            fill_form_called.append(True)
+            return super().fill_form(*a, **kw)
+
+    p = _stub_pipeline_surface(
+        monkeypatch,
+        applicant=_TrackingApplicant(success=True),
+        call_log=call_log,
+        tmp_resume_path=tmp_resume_pdf,
+    )
+    monkeypatch.setattr(p, "get_prefill_requested_jobs", lambda: [job])
+    monkeypatch.setattr(
+        p, "verify_materials_hash",
+        lambda job, resume_bytes, cover_letter_text: False,
+    )
+
+    p.process_prefill_requested_jobs()
+
+    ops = [entry[0] for entry in call_log]
+    assert "handoff" in ops
+    assert not fill_form_called, "fill_form must not run after a materials_hash mismatch"
+
+    handoff_call = next(c for c in call_log if c[0] == "handoff")
+    assert "materials hash mismatch" in handoff_call[1]
+
+    close_call = next(c for c in call_log if c[0] == "close_attempt")
+    _, attempt_id, outcome, kwargs = close_call
+    assert outcome == "needs_review"
+
+
+def test_materials_hash_match_proceeds_to_fill(monkeypatch, tmp_resume_pdf):
+    """A matching hash (the common case) must NOT block the fill."""
+    call_log: list = []
+    job = _make_job("audit-hash-match")
+    fake_page = _FakePage()
+    _install_fake_playwright(monkeypatch, fake_page)
+
+    p = _stub_pipeline_surface(
+        monkeypatch,
+        applicant=_FakeApplicant(success=True),
+        call_log=call_log,
+        tmp_resume_path=tmp_resume_pdf,
+    )
+    monkeypatch.setattr(p, "get_prefill_requested_jobs", lambda: [job])
+    monkeypatch.setattr(
+        p, "verify_materials_hash",
+        lambda job, resume_bytes, cover_letter_text: True,
+    )
+
+    p.process_prefill_requested_jobs()
+
+    ops = [entry[0] for entry in call_log]
+    assert "handoff" not in ops
+    close_call = next(c for c in call_log if c[0] == "close_attempt")
+    assert close_call[2] == "prefilled"

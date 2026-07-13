@@ -438,6 +438,42 @@ def send_failed(job: dict, reason: str) -> bool:
     return create_notification("failed", job, f"Reason: {reason}")
 
 
+def send_truth_mismatch(job: dict, truth: dict) -> bool:
+    """Loud notification (P0 #1): the human clicked "Submitted ✓ → Next"
+    but the post-decision browser-truth capture found no success signal AND
+    at least one visible validation error on the page. Does NOT change
+    ``jobs.status`` — the human stays authoritative — this only makes the
+    mismatch impossible to miss in the cockpit.
+    """
+    company = job.get("company", "Unknown")
+    title = job.get("title", "Unknown")
+    errors = truth.get("error_signals") or []
+    body_lines = [
+        f"[VERIFY] Marked applied but the page showed no confirmation for "
+        f"{company} - {title} — verify manually.",
+        f"Final URL: {truth.get('final_url') or '(unknown)'}",
+    ]
+    if errors:
+        body_lines.append("Visible errors: " + "; ".join(errors[:5]))
+    body_lines.append(f"Cockpit: {cockpit_url(job.get('id'))}")
+    return create_notification("failed", job, "\n".join(body_lines))
+
+
+def send_decision_timeout(job: dict) -> bool:
+    """Notify that a pre-filled tab timed out with no human decision
+    (P0 hygiene #3) — the row was returned to ``prefilling`` so the queue
+    could unblock; this is the "come back to this one" nudge.
+    """
+    company = job.get("company", "Unknown")
+    title = job.get("title", "Unknown")
+    body_lines = [
+        f"[ACTION] Pre-filled tab for {company} - {title} timed out with no "
+        f"decision — returned to the prefilling queue for another pass.",
+        f"Cockpit: {cockpit_url(job.get('id'))}",
+    ]
+    return create_notification("failed", job, "\n".join(body_lines))
+
+
 # The PR-8 deprecated ``notify_*`` → ``send_*`` aliases lived here until
 # Session C verified (by grep across code, scripts, and workflows) that
 # no callers remained and removed them. ``send_*`` is the only surface.

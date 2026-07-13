@@ -176,7 +176,7 @@ def _wire(monkeypatch, *, applicant, tmp_path):
     # Return a terminal decision so the wait resolves on the first poll and
     # closes the tab. record_prefill_verification is a no-op DB write here.
     monkeypatch.setattr(p, "get_job", lambda jid: {"id": jid, "status": "applied"})
-    monkeypatch.setattr(p, "record_prefill_verification", lambda jid, v: None)
+    monkeypatch.setattr(p, "record_prefill_verification", lambda jid, v, **kw: None)
     return p, status_calls, closes
 
 

@@ -47,6 +47,48 @@ def test_verification_unknown_ats_has_no_field_map():
     assert "work_authorization" in v["summary"]
 
 
+# ── build_prefill_verification: form-derived required set (P0 #2) ─────────
+
+def test_verification_prefers_required_total_over_static_yaml_count():
+    """``run_field_map_fill`` widens the denominator with DOM-scanned custom
+    questions via ``required_total`` — the verification pass must use that,
+    not the static 5-label YAML count, once it's present."""
+    result = {
+        "success": False,
+        "required_empty": ["Are you authorized to work in the US?"],
+        "required_total": 6,  # 5 YAML fields + 1 DOM-scanned custom question
+    }
+    v = build_prefill_verification(result, "greenhouse")
+    assert v["required"] == 6
+    assert v["filled"] == 5
+
+
+def test_verification_surfaces_unanswered_custom_questions_as_first_class():
+    """A custom/role-specific question the YAML map never declared required
+    gets its own clause ("N required custom question(s) unanswered"), not
+    buried in the same comma list as missing standard fields."""
+    result = {
+        "success": False,
+        "required_empty": ["Phone", "Are you authorized to work in the US?"],
+        "required_total": 6,
+    }
+    v = build_prefill_verification(result, "greenhouse")
+    assert "still needs: Phone" in v["summary"]
+    assert "1 required custom question unanswered" in v["summary"]
+
+
+def test_verification_pluralizes_multiple_unanswered_custom_questions():
+    result = {
+        "success": False,
+        "required_empty": ["Q1", "Q2", "Q3"],
+        "required_total": 8,
+    }
+    v = build_prefill_verification(result, "greenhouse")
+    assert "3 required custom questions unanswered" in v["summary"]
+    # No standard fields missing -> no "still needs:" clause at all.
+    assert "still needs:" not in v["summary"]
+
+
 # ── _wait_for_human_decision ───────────────────────────────────────────────
 
 class _StubPage:
@@ -186,7 +228,7 @@ def test_prefill_writes_verification_summary_and_advances(monkeypatch, tmp_path)
     )
     monkeypatch.setattr(
         p, "record_prefill_verification",
-        lambda jid, v: recorded.setdefault("verification", (jid, v)),
+        lambda jid, v, **kw: recorded.setdefault("verification", (jid, v)),
     )
     monkeypatch.setattr(p, "send_awaiting_submit", lambda *a, **k: None)
     # Advance: the human flipped the row to applied.

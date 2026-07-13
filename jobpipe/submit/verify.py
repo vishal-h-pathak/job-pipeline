@@ -36,35 +36,59 @@ def build_prefill_verification(result: dict, ats: str) -> dict:
 
     ``result`` is the adapter return dict — ``required_empty`` (deterministic
     adapters) or ``uncertain_fields`` (agent fallback) name the fields still
-    empty on the form. ``required`` is the field map's required count, or
-    ``None`` when there is no deterministic map for the ATS.
+    empty on the form. The denominator prefers ``result["required_total"]``
+    (P0 #2 — ``run_field_map_fill``'s form-derived required-set: the YAML
+    map's required labels UNION whatever ``scan_required_fields`` found live
+    on the page, custom/role-specific questions included) and falls back to
+    the static YAML-only count for callers that don't set it. ``required`` is
+    ``None`` when there is no deterministic map for the ATS at all.
+
+    Unanswered custom/role-specific questions (``still_needs`` entries the
+    YAML map never declared required) are surfaced as their own clause —
+    "N required custom question(s) unanswered" — instead of buried in the
+    same comma list as missing standard fields, so a form with 5/5 standard
+    fields filled but 3 unanswered custom questions doesn't read as clean.
     """
-    req = _required_labels(ats)
+    yaml_required = _required_labels(ats)
     still = list(result.get("required_empty") or [])
     if not still:
         # Universal/agent path carries no required_empty; fall back to the
         # agent's own flagged-uncertain fields.
         still = list(result.get("uncertain_fields") or [])
 
-    if req:
-        required = len(req)
-        # ``required_empty`` entries are required labels; keep only those that
-        # actually belong to the required set (defensive against agent hints
-        # bleeding in), but never let filtering hide a real gap.
-        missing = [s for s in still if s in req] or still
-        filled = max(0, required - len(missing))
-        still_needs = missing
+    required = result.get("required_total")
+    if required is None and yaml_required:
+        required = len(yaml_required)
+
+    if required:
+        filled = max(0, required - len(still))
+        still_needs = still
         summary = f"filled {filled} of {required} required field(s)"
+        if still_needs:
+            yaml_set = set(yaml_required)
+            standard_missing = [s for s in still_needs if s in yaml_set]
+            custom_missing = [s for s in still_needs if s not in yaml_set]
+            clauses = []
+            if standard_missing:
+                clauses.append("still needs: " + ", ".join(standard_missing))
+            if custom_missing:
+                n = len(custom_missing)
+                clauses.append(
+                    f"{n} required custom question"
+                    f"{'s' if n != 1 else ''} unanswered"
+                )
+            summary += "; " + "; ".join(clauses)
+        else:
+            summary += "; all required fields present"
     else:
         required = None
         filled = None
         still_needs = still
         summary = "prepared (no deterministic field map for this ATS)"
-
-    if still_needs:
-        summary += "; still needs: " + ", ".join(still_needs)
-    else:
-        summary += "; all required fields present"
+        if still_needs:
+            summary += "; still needs: " + ", ".join(still_needs)
+        else:
+            summary += "; all required fields present"
 
     return {
         "filled": filled,

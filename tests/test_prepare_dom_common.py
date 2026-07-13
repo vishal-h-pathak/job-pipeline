@@ -19,6 +19,8 @@ from jobpipe.submit.adapters.prepare_dom._common import (
     name_attr_selectors,
     note_unfilled_custom_questions,
     paste_textarea,
+    read_value,
+    scan_required_fields,
     select_option,
     upload_file,
 )
@@ -35,6 +37,8 @@ class _StubLocator:
         visible: bool = False,
         count: int = 0,
         raise_on_visible: bool = False,
+        discard_fill: bool = False,
+        attrs: Optional[dict] = None,
     ):
         self.selector = selector
         self.page = page
@@ -44,6 +48,11 @@ class _StubLocator:
         self.clicked = False
         self.filled_with: Optional[str] = None
         self.uploaded: Optional[str] = None
+        # honest-fill-verification hook (P0 #2): a discarded fill is
+        # recorded as attempted but never persists, so a later
+        # ``input_value()`` read-back reports empty (fill didn't stick).
+        self.discard_fill = discard_fill
+        self._attrs = attrs or {}
 
     @property
     def first(self):
@@ -57,12 +66,17 @@ class _StubLocator:
     def count(self) -> int:
         return self._count
 
+    def nth(self, i: int) -> "_StubLocator":
+        return self
+
     def click(self) -> None:
         self.clicked = True
 
     def fill(self, value: str) -> None:
         self.filled_with = value
         self.page.fills.append((self.selector, value))
+        if not self.discard_fill:
+            self.page.values[self.selector] = value
 
     def set_input_files(self, file_path: str) -> None:
         self.uploaded = file_path
@@ -71,6 +85,17 @@ class _StubLocator:
     def select_option(self, value: str) -> None:
         self.selected = value
         self.page.selects.append((self.selector, value))
+        if not self.discard_fill:
+            self.page.values[self.selector] = value
+
+    def input_value(self) -> str:
+        return self.page.values.get(self.selector, "")
+
+    def get_attribute(self, name: str) -> Optional[str]:
+        return self._attrs.get(name)
+
+    def text_content(self) -> str:
+        return self._attrs.get("_text", "")
 
 
 class _StubPage:
@@ -86,6 +111,9 @@ class _StubPage:
         self.uploads: list[tuple[str, str]] = []
         self.selects: list[tuple[str, str]] = []
         self.locator_calls: list[str] = []
+        # Persists filled/selected values across separately-constructed
+        # locator instances for the same selector (mirrors a real DOM).
+        self.values: dict[str, str] = {}
 
     def locator(self, selector: str) -> _StubLocator:
         self.locator_calls.append(selector)
@@ -405,3 +433,136 @@ def test_note_unfilled_custom_questions_noop_when_empty():
     note_unfilled_custom_questions({"form_answers": {}}, notes)
     note_unfilled_custom_questions({}, notes)
     assert notes == []
+
+
+# ── read_value (honest fill verification, P0 #2) ───────────────────────────
+
+def test_read_value_returns_value_from_matching_selector():
+    page = _StubPage({})
+    page.values["sel-a"] = "hello"
+    assert read_value(page, ["sel-a", "sel-b"]) == "hello"
+
+
+def test_read_value_falls_through_to_next_selector_when_first_is_empty():
+    page = _StubPage({})
+    page.values["sel-b"] = "world"
+    assert read_value(page, ["sel-a", "sel-b"]) == "world"
+
+
+def test_read_value_returns_empty_string_when_nothing_matches():
+    page = _StubPage({})
+    assert read_value(page, ["sel-a", "sel-b"]) == ""
+
+
+def test_read_value_swallows_exceptions_per_selector():
+    class _BoomLocator:
+        def input_value(self):
+            raise RuntimeError("not an input element")
+
+        @property
+        def first(self):
+            return self
+
+    class _BoomPage:
+        def locator(self, selector):
+            return _BoomLocator()
+
+    assert read_value(_BoomPage(), ["sel-a"]) == ""
+
+
+# ── scan_required_fields (form-derived required-set, P0 #2) ────────────────
+
+class _ReqLocator:
+    """Duck-typed Locator over a fixed node list — supports the subset
+    ``scan_required_fields`` / ``_resolve_dom_label`` actually calls
+    (``count``, ``nth``, ``first``, ``get_attribute``, ``text_content``)."""
+
+    def __init__(self, nodes: list[dict]):
+        self._nodes = nodes
+
+    def count(self) -> int:
+        return len(self._nodes)
+
+    def nth(self, i: int) -> "_ReqLocator":
+        return _ReqLocator([self._nodes[i]])
+
+    @property
+    def first(self) -> "_ReqLocator":
+        return _ReqLocator(self._nodes[:1])
+
+    def get_attribute(self, name: str):
+        if not self._nodes:
+            return None
+        return self._nodes[0]["attrs"].get(name)
+
+    def text_content(self) -> str:
+        if not self._nodes:
+            return ""
+        return self._nodes[0].get("text", "")
+
+
+class _ReqPage:
+    """Page stand-in for the DOM-required scan: the combined
+    ``[required], [aria-required="true"]`` query returns a fixed node list;
+    ``label[for=id]`` queries resolve against a separate id->text map."""
+
+    def __init__(self, required_nodes: list[dict], label_by_id: Optional[dict] = None):
+        self._required_nodes = required_nodes
+        self._label_by_id = label_by_id or {}
+
+    def locator(self, selector: str) -> _ReqLocator:
+        if selector == '[required], [aria-required="true"]':
+            return _ReqLocator(self._required_nodes)
+        if selector.startswith('label[for="'):
+            el_id = selector.split('"')[1]
+            text = self._label_by_id.get(el_id)
+            if text is None:
+                return _ReqLocator([])
+            return _ReqLocator([{"attrs": {}, "text": text}])
+        return _ReqLocator([])
+
+
+def test_scan_required_fields_resolves_label_via_aria_label():
+    page = _ReqPage([{"attrs": {"aria-label": "Willing to relocate?", "id": "q1"}}])
+    result = scan_required_fields(page)
+    assert result == [{"label": "Willing to relocate?", "selectors": ['[id="q1"]']}]
+
+
+def test_scan_required_fields_falls_back_to_associated_label_element():
+    page = _ReqPage(
+        [{"attrs": {"id": "q2"}}],
+        label_by_id={"q2": "How did you hear about us?"},
+    )
+    result = scan_required_fields(page)
+    assert result == [
+        {"label": "How did you hear about us?", "selectors": ['[id="q2"]']}
+    ]
+
+
+def test_scan_required_fields_falls_back_to_name_attribute():
+    page = _ReqPage([{"attrs": {"name": "custom_question_1"}}])
+    result = scan_required_fields(page)
+    assert result == [
+        {"label": "custom_question_1", "selectors": ['[name="custom_question_1"]']}
+    ]
+
+
+def test_scan_required_fields_dedupes_by_resolved_label():
+    page = _ReqPage([
+        {"attrs": {"aria-label": "Phone", "id": "a"}},
+        {"attrs": {"aria-label": "Phone", "id": "b"}},
+    ])
+    assert len(scan_required_fields(page)) == 1
+
+
+def test_scan_required_fields_skips_element_with_no_resolvable_label():
+    page = _ReqPage([{"attrs": {}}])
+    assert scan_required_fields(page) == []
+
+
+def test_scan_required_fields_degrades_to_empty_on_scan_failure():
+    class _BoomPage:
+        def locator(self, selector):
+            raise RuntimeError("selector engine blew up")
+
+    assert scan_required_fields(_BoomPage()) == []

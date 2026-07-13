@@ -148,6 +148,124 @@ def select_option(page: Any, selectors: list[str], value: str,
     return False
 
 
+# ── DOM re-read verification (honest fill verification, P0 #2) ────────────
+#
+# ``fill_text`` / ``paste_textarea`` / ``select_option`` only report whether
+# a selector matched and the Playwright call didn't raise — a React form
+# that silently discards ``.fill()``, or a masked input that mangles the
+# value, still counts as "filled" under that contract. These helpers re-read
+# the LIVE DOM after a fill claims success so a fill that didn't stick can be
+# demoted back to unfilled.
+
+def read_value(page: Any, selectors: list[str],
+               *, log: logging.Logger | None = None) -> str:
+    """Re-read the current value at the first selector that yields one.
+
+    Tries each selector in the same order the fill primitives used, calling
+    ``input_value()`` (works for ``input`` / ``textarea`` / ``select``, not
+    ``input[type=file]`` — file inputs are verified via
+    ``upload_file``'s own count()-based check, not a DOM value read).
+    Any exception (no match, detached node, wrong element type) is
+    swallowed and the next selector gets a turn; returns ``""`` if nothing
+    yields a non-empty value.
+    """
+    log = log or logger
+    for selector in selectors:
+        try:
+            value = page.locator(selector).first.input_value()
+        except Exception:
+            continue
+        if value:
+            return value
+    return ""
+
+
+def _resolve_dom_label(page: Any, el: Any) -> str:
+    """Best-effort human label for a required-flagged DOM element: prefer
+    ``aria-label`` / ``placeholder`` / ``name``, then fall back to the text
+    of an associated ``<label for=id>``."""
+    for attr in ("aria-label", "placeholder", "name"):
+        try:
+            value = el.get_attribute(attr)
+        except Exception:
+            value = None
+        if value:
+            return value.strip()
+    try:
+        el_id = el.get_attribute("id")
+    except Exception:
+        el_id = None
+    if el_id:
+        try:
+            lbl = page.locator(f'label[for="{el_id}"]').first
+            if lbl.count() > 0:
+                text = lbl.text_content()
+                if text and text.strip():
+                    return text.strip()
+        except Exception:
+            pass
+    return ""
+
+
+def _resolve_dom_selector(el: Any) -> str:
+    """A selector that can re-find this exact element for a later value
+    read — ``#id`` when available, else ``[name=...]``, else ``""`` (the
+    field is still counted as required, just un-re-readable)."""
+    try:
+        el_id = el.get_attribute("id")
+    except Exception:
+        el_id = None
+    if el_id:
+        return f'[id="{el_id}"]'
+    try:
+        name = el.get_attribute("name")
+    except Exception:
+        name = None
+    if name:
+        return f'[name="{name}"]'
+    return ""
+
+
+def scan_required_fields(page: Any, *,
+                         log: logging.Logger | None = None) -> list[dict]:
+    """Scan the LIVE DOM for every element flagged required (the
+    ``required`` attribute or ``aria-required="true"``), deduped by
+    resolved label.
+
+    This is what lets the verification pass build the required-set from
+    the form itself instead of the ~5 hardcoded ``field_maps.yml`` labels
+    — custom / role-specific questions the ATS marks required show up here
+    even though the declarative field map never heard of them. Best-effort
+    throughout: a single element's read failing is skipped, and a total
+    scan failure (unsupported selector, detached page) degrades to "no
+    DOM-required fields found" rather than raising.
+
+    Returns ``[{"label": str, "selectors": [selector]}, ...]``.
+    """
+    log = log or logger
+    selector = '[required], [aria-required="true"]'
+    try:
+        count = page.locator(selector).count()
+    except Exception:
+        return []
+
+    found: dict[str, str] = {}
+    for i in range(count):
+        try:
+            el = page.locator(selector).nth(i)
+            label = _resolve_dom_label(page, el)
+            el_selector = _resolve_dom_selector(el)
+        except Exception:
+            continue
+        if label and label not in found:
+            found[label] = el_selector
+
+    return [
+        {"label": label, "selectors": [sel] if sel else []}
+        for label, sel in found.items()
+    ]
+
+
 # ── Cover-letter source resolution ─────────────────────────────────────────
 
 def load_cover_letter(cover_letter_path_or_text: str) -> str:

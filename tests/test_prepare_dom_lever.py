@@ -170,14 +170,24 @@ class _FillLocator:
     def count(self) -> int:
         return self._count
 
+    def nth(self, i: int) -> "_FillLocator":
+        return self
+
     def click(self) -> None:
         pass
 
     def fill(self, value: str) -> None:
         self.page.fills.append((self.selector, value))
+        self.page.values[self.selector] = value
 
     def set_input_files(self, file_path: str) -> None:
         self.page.uploads.append((self.selector, file_path))
+
+    def input_value(self) -> str:
+        return self.page.values.get(self.selector, "")
+
+    def get_attribute(self, name: str):
+        return None
 
 
 class _FillPage:
@@ -186,6 +196,7 @@ class _FillPage:
         self.fills: list = []
         self.uploads: list = []
         self.goto_calls: list = []
+        self.values: dict = {}
 
     def goto(self, target, **kw):
         self.goto_calls.append((target, kw))
